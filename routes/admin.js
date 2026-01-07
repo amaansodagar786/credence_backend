@@ -5,70 +5,988 @@ const jwt = require("jsonwebtoken");
 const Admin = require("../models/Admin");
 const ActivityLog = require("../models/ActivityLog");
 const auth = require("../middleware/authMiddleware");
+const adminOnly = require("../middleware/adminMiddleware");
+const EmployeeTaskLog = require("../models/EmployeeTaskLog");
 
 const router = express.Router();
 
-const log = async (name, action, details) => {
-  await ActivityLog.create({
-    userName: name,
-    role: "ADMIN",
-    action,
-    details,
-    dateTime: new Date().toLocaleString("en-IN")
-  });
+const Client = require("../models/Client");
+
+// Console logging utility
+const logToConsole = (type, operation, data) => {
+  const timestamp = new Date().toLocaleString("en-IN");
+  const logEntry = {
+    timestamp,
+    type,
+    operation,
+    data
+  };
+
+  // Color-coded console output for better visibility
+  const colors = {
+    INFO: '\x1b[36m',    // Cyan
+    SUCCESS: '\x1b[32m', // Green
+    WARN: '\x1b[33m',    // Yellow
+    ERROR: '\x1b[31m',   // Red
+    DEBUG: '\x1b[35m',   // Magenta
+    RESET: '\x1b[0m'     // Reset
+  };
+
+  const color = colors[type] || colors.RESET;
+  console.log(`${color}[${timestamp}] ${type}: ${operation}${colors.RESET}`, data);
+
+  return logEntry;
 };
 
-/* REGISTER */
+// Old log function for compatibility (saves to ActivityLog AND logs to console)
+const log = async (name, action, details) => {
+  try {
+    // Save to ActivityLog collection
+    await ActivityLog.create({
+      userName: name,
+      role: "ADMIN",
+      action,
+      details,
+      dateTime: new Date().toLocaleString("en-IN")
+    });
+
+    // Also log to console
+    logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+      userName: name,
+      action,
+      details
+    });
+  } catch (logError) {
+    logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
+      error: logError.message,
+      userName: name,
+      action
+    });
+  }
+};
+
+/* ===============================
+   ADMIN REGISTER
+================================ */
 router.post("/register", async (req, res) => {
-  const { name, email, password } = req.body;
+  try {
+    const { name, email, password } = req.body;
 
-  const exists = await Admin.findOne({ email });
-  if (exists) return res.status(400).json({ message: "Admin exists" });
+    // Console log: Admin registration attempt
+    logToConsole("INFO", "ADMIN_REGISTER_REQUEST", {
+      email,
+      ip: req.ip,
+      userAgent: req.get('User-Agent')
+    });
 
-  const hashed = await bcrypt.hash(password, 10);
-  await Admin.create({ name, email, password: hashed });
+    if (!name || !email || !password) {
+      logToConsole("WARN", "MISSING_FIELDS_ADMIN_REGISTER", {
+        name: !!name,
+        email: !!email,
+        password: !!password
+      });
 
-  await log(name, "ADMIN_REGISTER", `Admin ${email} registered`);
-  res.json({ message: "Admin registered" });
+      // Save warning to ActivityLog
+      await log("SYSTEM", "ADMIN_REGISTER_VALIDATION_FAILED", `Missing fields for admin register: ${email}`);
+
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const exists = await Admin.findOne({ email });
+    if (exists) {
+      logToConsole("WARN", "ADMIN_ALREADY_EXISTS", { email });
+
+      // Save warning to ActivityLog
+      await log("SYSTEM", "ADMIN_REGISTER_DUPLICATE", `Admin already exists: ${email}`);
+
+      return res.status(400).json({ message: "Admin exists" });
+    }
+
+    // Console log: Creating admin
+    logToConsole("INFO", "CREATING_ADMIN_ACCOUNT", { name, email });
+
+    const hashed = await bcrypt.hash(password, 10);
+    const admin = await Admin.create({ name, email, password: hashed });
+
+    // Console log: Admin created
+    logToConsole("SUCCESS", "ADMIN_CREATED_SUCCESSFULLY", {
+      adminId: admin._id,
+      name: admin.name,
+      email: admin.email
+    });
+
+    // Save success to ActivityLog
+    await log(name, "ADMIN_REGISTER", `Admin ${email} registered successfully`);
+
+    // Console log: Registration complete
+    logToConsole("SUCCESS", "ADMIN_REGISTRATION_COMPLETE", {
+      name,
+      email,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({ message: "Admin registered" });
+
+  } catch (error) {
+    // Console log: Registration error
+    logToConsole("ERROR", "ADMIN_REGISTER_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip,
+      endpoint: "/register",
+      body: req.body
+    });
+
+    // Save error to ActivityLog
+    await log("SYSTEM", "ADMIN_REGISTER_ERROR", `Error registering admin: ${error.message}`);
+
+    res.status(500).json({
+      message: "Error registering admin",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
-/* LOGIN */
+/* ===============================
+   ADMIN LOGIN
+================================ */
 router.post("/login", async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-  const admin = await Admin.findOne({ email });
-  if (!admin) return res.status(401).json({ message: "Invalid credentials" });
+    // Console log: Admin login attempt
+    logToConsole("INFO", "ADMIN_LOGIN_REQUEST", {
+      email,
+      ip: req.ip,
+      userAgent: req.get('User-Agent')
+    });
 
-  const ok = await bcrypt.compare(password, admin.password);
-  if (!ok) return res.status(401).json({ message: "Invalid credentials" });
+    if (!email || !password) {
+      logToConsole("WARN", "MISSING_CREDENTIALS_ADMIN_LOGIN", {
+        email: !!email,
+        password: !!password
+      });
 
-  const token = jwt.sign(
-    { id: admin._id, name: admin.name, role: admin.role },
-    process.env.JWT_SECRET,
-    { expiresIn: "1d" }
-  );
+      // Save warning to ActivityLog
+      await log("SYSTEM", "ADMIN_LOGIN_VALIDATION_FAILED", `Missing credentials for admin login: ${email}`);
 
-  res.cookie("accessToken", token, {
-    httpOnly: true,
-    sameSite: "strict",
-    maxAge: 24 * 60 * 60 * 1000
-  });
+      return res.status(400).json({ message: "Email and password are required" });
+    }
 
-  await log(admin.name, "ADMIN_LOGIN", "Admin logged in");
-  res.json({ message: "Login success" });
+    const admin = await Admin.findOne({ email });
+    if (!admin) {
+      logToConsole("WARN", "ADMIN_NOT_FOUND", { email });
+
+      // Save warning to ActivityLog
+      await log("SYSTEM", "ADMIN_LOGIN_NOT_FOUND", `Admin not found: ${email}`);
+
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // Console log: Admin found
+    logToConsole("DEBUG", "ADMIN_FOUND", {
+      adminId: admin._id,
+      name: admin.name
+    });
+
+    const ok = await bcrypt.compare(password, admin.password);
+    if (!ok) {
+      logToConsole("WARN", "INVALID_ADMIN_PASSWORD", {
+        email,
+        adminId: admin._id
+      });
+
+      // Save warning to ActivityLog
+      await log(admin.name, "ADMIN_LOGIN_FAILED", `Invalid password attempt for admin: ${email}`);
+
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // Console log: Password match successful
+    logToConsole("SUCCESS", "ADMIN_PASSWORD_MATCH", {
+      adminId: admin._id,
+      name: admin.name
+    });
+
+    const token = jwt.sign(
+      {
+        id: admin._id,
+        name: admin.name,
+        role: "ADMIN"
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    // Console log: JWT token created
+    logToConsole("DEBUG", "ADMIN_JWT_TOKEN_CREATED", {
+      adminId: admin._id,
+      expiresIn: "1d"
+    });
+
+    res.cookie("accessToken", token, {
+      httpOnly: true,
+      sameSite: "strict",
+      maxAge: 24 * 60 * 60 * 1000
+    });
+
+    // Console log: Cookie set
+    logToConsole("INFO", "ADMIN_COOKIE_SET", {
+      adminId: admin._id,
+      cookieName: "accessToken"
+    });
+
+    // Save success to ActivityLog
+    await log(admin.name, "ADMIN_LOGIN", "Admin logged in successfully");
+
+    // Console log: Login successful
+    logToConsole("SUCCESS", "ADMIN_LOGIN_SUCCESS", {
+      adminId: admin._id,
+      name: admin.name,
+      email: admin.email,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      message: "Login success",
+      admin: {
+        name: admin.name,
+        email: admin.email
+      }
+    });
+
+  } catch (error) {
+    // Console log: Login error
+    logToConsole("ERROR", "ADMIN_LOGIN_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip,
+      endpoint: "/login",
+      email: req.body?.email
+    });
+
+    // Save error to ActivityLog
+    await log("SYSTEM", "ADMIN_LOGIN_ERROR", `Error during admin login: ${error.message}`);
+
+    res.status(500).json({
+      message: "Error during login",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
-/* CHECK LOGIN */
+/* ===============================
+   CHECK ADMIN LOGIN (GET CURRENT USER)
+================================ */
 router.get("/me", auth, async (req, res) => {
-  const admin = await Admin.findById(req.user.id).select("-password");
-  res.json(admin);
+  try {
+    // Console log: Admin auth check request
+    logToConsole("INFO", "ADMIN_AUTH_CHECK_REQUEST", {
+      adminId: req.user?.id,
+      adminName: req.user?.name,
+      ip: req.ip
+    });
+
+    const admin = await Admin.findById(req.user.id).select("-password");
+
+    if (!admin) {
+      logToConsole("ERROR", "ADMIN_NOT_FOUND_IN_DB", {
+        requestedId: req.user.id,
+        adminName: req.user.name
+      });
+
+      // Save error to ActivityLog
+      await log("SYSTEM", "ADMIN_NOT_FOUND_IN_DB", `Admin not found in database: ${req.user.id}`);
+
+      // Clear invalid cookie
+      res.clearCookie("accessToken");
+
+      return res.status(404).json({
+        message: "Admin not found in database",
+        clearedCookie: true
+      });
+    }
+
+    // Console log: Admin data fetched
+    logToConsole("SUCCESS", "ADMIN_DATA_FETCHED", {
+      adminId: admin._id,
+      name: admin.name,
+      email: admin.email
+    });
+
+    // Save success to ActivityLog
+    await log(admin.name, "ADMIN_AUTH_CHECK", "Admin authentication checked successfully");
+
+    res.json(admin);
+
+  } catch (error) {
+    // Console log: Auth check error
+    logToConsole("ERROR", "ADMIN_ME_ENDPOINT_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip,
+      endpoint: "/me",
+      adminId: req.user?.id
+    });
+
+    // Save error to ActivityLog
+    await log("SYSTEM", "ADMIN_AUTH_CHECK_ERROR", `Error checking admin authentication: ${error.message}`);
+
+    res.status(500).json({
+      message: "Error checking authentication",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
-/* LOGOUT */
+/* ===============================
+   ADMIN LOGOUT
+================================ */
 router.post("/logout", auth, async (req, res) => {
-  res.clearCookie("accessToken");
-  await log(req.user.name, "ADMIN_LOGOUT", "Admin logged out");
-  res.json({ message: "Logged out" });
+  try {
+    // Console log: Admin logout request
+    logToConsole("INFO", "ADMIN_LOGOUT_REQUEST", {
+      adminId: req.user.id,
+      adminName: req.user.name,
+      ip: req.ip
+    });
+
+    res.clearCookie("accessToken");
+
+    // Console log: Cookie cleared
+    logToConsole("INFO", "ADMIN_COOKIE_CLEARED", {
+      adminId: req.user.id,
+      cookieName: "accessToken"
+    });
+
+    // Save success to ActivityLog
+    await log(req.user.name, "ADMIN_LOGOUT", "Admin logged out successfully");
+
+    // Console log: Logout successful
+    logToConsole("SUCCESS", "ADMIN_LOGOUT_SUCCESS", {
+      adminId: req.user.id,
+      adminName: req.user.name,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      message: "Logged out",
+      clearedCookie: true
+    });
+
+  } catch (error) {
+    // Console log: Logout error
+    logToConsole("ERROR", "ADMIN_LOGOUT_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip,
+      endpoint: "/logout",
+      adminId: req.user?.id
+    });
+
+    // Save error to ActivityLog
+    await log("SYSTEM", "ADMIN_LOGOUT_ERROR", `Error during admin logout: ${error.message}`);
+
+    res.status(500).json({
+      message: "Error during logout",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/* ===============================
+   GET ALL EMPLOYEE TASK LOGS (ADMIN ONLY)
+================================ */
+router.get("/task-logs", auth, async (req, res) => {
+  try {
+    // Console log: Admin task logs request
+    logToConsole("INFO", "ADMIN_TASK_LOGS_REQUEST", {
+      adminId: req.user.id,
+      adminName: req.user.name,
+      ip: req.ip
+    });
+
+    // Console log: Fetching task logs
+    logToConsole("INFO", "FETCHING_EMPLOYEE_TASK_LOGS", {
+      adminId: req.user.id
+    });
+
+    const logs = await EmployeeTaskLog.find()
+      .sort({ createdAt: -1 });
+
+    // Console log: Task logs fetched
+    logToConsole("SUCCESS", "TASK_LOGS_FETCHED_SUCCESSFULLY", {
+      adminId: req.user.id,
+      totalLogs: logs.length,
+      completedLogs: logs.filter(l => l.status === "COMPLETED").length,
+      inProgressLogs: logs.filter(l => l.status === "IN_PROGRESS").length,
+      uniqueEmployees: [...new Set(logs.map(l => l.employeeId))].length
+    });
+
+    // Save success to ActivityLog
+    await log(req.user.name, "FETCHED_EMPLOYEE_TASK_LOGS", `Fetched ${logs.length} employee task logs`);
+
+    // Console log: Response sent
+    logToConsole("SUCCESS", "TASK_LOGS_RESPONSE_SENT", {
+      adminId: req.user.id,
+      totalLogs: logs.length,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      total: logs.length,
+      logs
+    });
+
+  } catch (error) {
+    // Console log: Task logs error
+    logToConsole("ERROR", "ADMIN_TASK_LOGS_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip,
+      endpoint: "/task-logs",
+      adminId: req.user?.id
+    });
+
+    // Save error to ActivityLog
+    await log(req.user?.name || "SYSTEM", "TASK_LOGS_FETCH_ERROR", `Error fetching employee task logs: ${error.message}`);
+
+    res.status(500).json({
+      message: "Error fetching employee task logs",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/* ===============================
+   GET ALL CLIENTS
+================================ */
+router.get("/clients", auth, async (req, res) => {
+  try {
+    // Console log: Admin clients request
+    logToConsole("INFO", "ADMIN_CLIENTS_REQUEST", {
+      adminId: req.user.id,
+      adminName: req.user.name,
+      ip: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+
+    // Console log: Fetching all clients
+    logToConsole("INFO", "FETCHING_ALL_CLIENTS", {
+      adminId: req.user.id,
+      adminName: req.user.name
+    });
+
+    const clients = await Client.find()
+      .select("clientId name email phone isActive createdAt")
+      .sort({ createdAt: -1 });
+
+    // Console log: Clients fetched successfully
+    logToConsole("SUCCESS", "CLIENTS_FETCHED_SUCCESSFULLY", {
+      adminId: req.user.id,
+      totalClients: clients.length,
+      activeClients: clients.filter(c => c.isActive).length,
+      inactiveClients: clients.filter(c => !c.isActive).length
+    });
+
+    // Save success to ActivityLog
+    await log(req.user.name, "FETCHED_ALL_CLIENTS", `Fetched ${clients.length} clients`);
+
+    // Console log: Response sent
+    logToConsole("SUCCESS", "CLIENTS_RESPONSE_SENT", {
+      adminId: req.user.id,
+      totalClients: clients.length,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json(clients);
+
+  } catch (error) {
+    // Console log: Get clients error
+    logToConsole("ERROR", "GET_ALL_CLIENTS_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip,
+      endpoint: "/clients",
+      adminId: req.user?.id,
+      adminName: req.user?.name
+    });
+
+    // Save error to ActivityLog
+    await log(req.user?.name || "SYSTEM", "CLIENTS_FETCH_ERROR", `Error fetching clients: ${error.message}`);
+
+    res.status(500).json({
+      message: "Error fetching clients",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/* ===============================
+   GET SINGLE CLIENT (MONTH DATA)
+================================ */
+router.get("/clients/:clientId", auth, async (req, res) => {
+  try {
+    const { clientId } = req.params;
+
+    // Console log: Single client request
+    logToConsole("INFO", "SINGLE_CLIENT_REQUEST", {
+      adminId: req.user.id,
+      adminName: req.user.name,
+      clientId,
+      ip: req.ip
+    });
+
+    // Console log: Searching for client
+    logToConsole("INFO", "SEARCHING_FOR_CLIENT", {
+      clientId,
+      adminId: req.user.id
+    });
+
+    const client = await Client.findOne({ clientId });
+
+    if (!client) {
+      logToConsole("WARN", "CLIENT_NOT_FOUND", {
+        clientId,
+        adminId: req.user.id,
+        searchedAt: new Date().toISOString()
+      });
+
+      // Save warning to ActivityLog
+      await log(req.user.name, "CLIENT_NOT_FOUND", `Client not found: ${clientId}`);
+
+      return res.status(404).json({
+        message: "Client not found",
+        clientId
+      });
+    }
+
+    // Console log: Client found successfully
+    logToConsole("SUCCESS", "CLIENT_FOUND_SUCCESSFULLY", {
+      clientId,
+      adminId: req.user.id,
+      clientName: client.name,
+      clientEmail: client.email,
+      isActive: client.isActive,
+      totalYears: client.documents ? Object.keys(client.documents).length : 0
+    });
+
+    // Save success to ActivityLog
+    await log(req.user.name, "VIEWED_CLIENT_DETAILS", `Viewed details for client: ${client.name} (${clientId})`);
+
+    // Console log: Response sent
+    logToConsole("SUCCESS", "CLIENT_DETAILS_RESPONSE_SENT", {
+      adminId: req.user.id,
+      clientId,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json(client);
+
+  } catch (error) {
+    // Console log: Get single client error
+    logToConsole("ERROR", "GET_SINGLE_CLIENT_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip,
+      endpoint: "/clients/:clientId",
+      clientId: req.params.clientId,
+      adminId: req.user?.id
+    });
+
+    // Save error to ActivityLog
+    await log(req.user?.name || "SYSTEM", "CLIENT_DETAILS_ERROR", `Error fetching client details: ${clientId} - ${error.message}`);
+
+    res.status(500).json({
+      message: "Error fetching client details",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/* ===============================
+   LOCK / UNLOCK ENTIRE MONTH
+================================ */
+/* ===============================
+   LOCK / UNLOCK ENTIRE MONTH (UPDATED TO CASCADE TO FILES)
+================================ */
+router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { year, month, lock } = req.body;
+
+    // Console log: Month lock request
+    logToConsole("INFO", "MONTH_LOCK_REQUEST", {
+      adminId: req.user.id,
+      adminName: req.user.name,
+      clientId,
+      year,
+      month,
+      lockAction: lock ? "LOCK" : "UNLOCK",
+      ip: req.ip
+    });
+
+    // Validate required fields
+    if (!year || !month || typeof lock !== 'boolean') {
+      logToConsole("WARN", "INVALID_MONTH_LOCK_DATA", {
+        clientId,
+        year: !!year,
+        month: !!month,
+        lock: typeof lock,
+        providedData: req.body
+      });
+
+      // Save warning to ActivityLog
+      await log(req.user.name, "MONTH_LOCK_VALIDATION_FAILED", `Invalid month lock data for client: ${clientId}, year: ${year}, month: ${month}`);
+
+      return res.status(400).json({
+        message: "Year, month, and lock (boolean) are required"
+      });
+    }
+
+    // Console log: Searching for client
+    logToConsole("INFO", "SEARCHING_CLIENT_FOR_MONTH_LOCK", {
+      clientId,
+      adminId: req.user.id,
+      year,
+      month
+    });
+
+    const client = await Client.findOne({ clientId });
+
+    if (!client) {
+      logToConsole("ERROR", "CLIENT_NOT_FOUND_MONTH_LOCK", {
+        clientId,
+        adminId: req.user.id,
+        year,
+        month,
+        lockAction: lock ? "LOCK" : "UNLOCK"
+      });
+
+      // Save error to ActivityLog
+      await log(req.user.name, "CLIENT_NOT_FOUND_MONTH_LOCK", `Client not found for month lock: ${clientId}`);
+
+      return res.status(404).json({
+        message: "Client not found",
+        clientId
+      });
+    }
+
+    // Console log: Client found, processing month lock
+    logToConsole("INFO", "PROCESSING_MONTH_LOCK", {
+      clientId,
+      clientName: client.name,
+      year,
+      month,
+      lockAction: lock ? "LOCK" : "UNLOCK",
+      previousLockStatus: client.documents?.get(String(year))?.get(String(month))?.isLocked || false
+    });
+
+    const yearKey = String(year);
+    const monthKey = String(month);
+
+    // Initialize year and month if not exists
+    if (!client.documents.has(yearKey)) {
+      client.documents.set(yearKey, new Map());
+      logToConsole("DEBUG", "CREATED_NEW_YEAR_ENTRY", {
+        clientId,
+        year: yearKey
+      });
+    }
+
+    if (!client.documents.get(yearKey).has(monthKey)) {
+      client.documents.get(yearKey).set(monthKey, {});
+      logToConsole("DEBUG", "CREATED_NEW_MONTH_ENTRY", {
+        clientId,
+        year: yearKey,
+        month: monthKey
+      });
+    }
+
+    const monthData = client.documents.get(yearKey).get(monthKey);
+
+    // Track which files were locked/unlocked
+    const fileLockStatus = {
+      sales: false,
+      purchase: false,
+      bank: false,
+      otherCategories: []
+    };
+
+    // CASCADE LOCK/UNLOCK TO ALL FILES
+    // 1. Main document types (sales, purchase, bank)
+    const mainDocTypes = ['sales', 'purchase', 'bank'];
+
+    mainDocTypes.forEach(docType => {
+      if (monthData[docType]) {
+        monthData[docType].isLocked = lock;
+        monthData[docType].lockedAt = lock ? new Date() : null;
+        monthData[docType].lockedBy = lock ? req.user.adminId : null;
+        fileLockStatus[docType] = true;
+
+        logToConsole("DEBUG", `${docType.toUpperCase()}_FILE_${lock ? 'LOCKED' : 'UNLOCKED'}`, {
+          clientId,
+          year,
+          month,
+          docType
+        });
+      }
+    });
+
+    // 2. Other categories
+    if (monthData.other && Array.isArray(monthData.other)) {
+      monthData.other.forEach((otherCategory, index) => {
+        if (otherCategory.document) {
+          otherCategory.document.isLocked = lock;
+          otherCategory.document.lockedAt = lock ? new Date() : null;
+          otherCategory.document.lockedBy = lock ? req.user.adminId : null;
+          fileLockStatus.otherCategories.push(otherCategory.categoryName);
+
+          logToConsole("DEBUG", `OTHER_FILE_${lock ? 'LOCKED' : 'UNLOCKED'}`, {
+            clientId,
+            year,
+            month,
+            categoryName: otherCategory.categoryName,
+            index
+          });
+        }
+      });
+    }
+
+    // 3. Set month-level lock status
+    monthData.isLocked = lock;
+    monthData.lockedAt = lock ? new Date() : null;
+    monthData.lockedBy = lock ? req.user.adminId : null;
+
+    // Save the updated data
+    client.documents.get(yearKey).set(monthKey, monthData);
+    await client.save();
+
+    // Console log: Month lock successful
+    logToConsole("SUCCESS", "MONTH_LOCK_SUCCESSFUL_WITH_CASCADE", {
+      clientId,
+      clientName: client.name,
+      year,
+      month,
+      monthLockStatus: lock,
+      filesLocked: {
+        sales: fileLockStatus.sales,
+        purchase: fileLockStatus.purchase,
+        bank: fileLockStatus.bank,
+        otherCategoriesCount: fileLockStatus.otherCategories.length,
+        otherCategories: fileLockStatus.otherCategories
+      },
+      lockedAt: monthData.lockedAt,
+      lockedBy: monthData.lockedBy,
+      adminId: req.user.id
+    });
+
+    // Save success to ActivityLog
+    const actionType = lock ? "LOCKED_MONTH_CASCADE" : "UNLOCKED_MONTH_CASCADE";
+    const actionDetails = lock ?
+      `Locked month ${month}/${year} for client ${client.name} and ${fileLockStatus.otherCategories.length + (fileLockStatus.sales ? 1 : 0) + (fileLockStatus.purchase ? 1 : 0) + (fileLockStatus.bank ? 1 : 0)} files` :
+      `Unlocked month ${month}/${year} for client ${client.name} and ${fileLockStatus.otherCategories.length + (fileLockStatus.sales ? 1 : 0) + (fileLockStatus.purchase ? 1 : 0) + (fileLockStatus.bank ? 1 : 0)} files`;
+
+    await log(req.user.name, actionType, actionDetails);
+
+    // Console log: Response sent
+    logToConsole("SUCCESS", "MONTH_LOCK_RESPONSE_SENT", {
+      adminId: req.user.id,
+      clientId,
+      year,
+      month,
+      lockStatus: lock,
+      filesAffected: fileLockStatus.otherCategories.length + 3, // sales, purchase, bank + other categories
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      message: lock ?
+        "Month and all files locked successfully" :
+        "Month and all files unlocked successfully",
+      clientId,
+      year,
+      month,
+      isLocked: lock,
+      lockedAt: monthData.lockedAt,
+      lockedBy: monthData.lockedBy,
+      filesAffected: {
+        sales: fileLockStatus.sales,
+        purchase: fileLockStatus.purchase,
+        bank: fileLockStatus.bank,
+        otherCategories: fileLockStatus.otherCategories,
+        totalFiles: fileLockStatus.otherCategories.length +
+          (fileLockStatus.sales ? 1 : 0) +
+          (fileLockStatus.purchase ? 1 : 0) +
+          (fileLockStatus.bank ? 1 : 0)
+      }
+    });
+
+  } catch (error) {
+    // Console log: Month lock error
+    logToConsole("ERROR", "MONTH_LOCK_CASCADE_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip,
+      endpoint: "/clients/:clientId/month-lock",
+      clientId: req.params.clientId,
+      adminId: req.user?.id,
+      requestBody: req.body
+    });
+
+    // Save error to ActivityLog
+    await log(req.user?.name || "SYSTEM", "MONTH_LOCK_CASCADE_ERROR",
+      `Error processing month lock/unlock with cascade for client: ${clientId} - ${error.message}`);
+
+    res.status(500).json({
+      message: "Error processing month lock/unlock",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/* ===============================
+   LOCK / UNLOCK FILE - UPDATED TO HANDLE NON-EXISTENT FILES
+================================ */
+router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { year, month, type, categoryName, lock } = req.body;
+
+    // Validate required fields
+    if (!year || !month || !type || typeof lock !== 'boolean') {
+      return res.status(400).json({
+        message: "Year, month, type, and lock (boolean) are required"
+      });
+    }
+
+    // Additional validation for 'other' type
+    if (type === "other" && !categoryName) {
+      return res.status(400).json({
+        message: "categoryName is required when type is 'other'"
+      });
+    }
+
+    const client = await Client.findOne({ clientId });
+
+    if (!client) {
+      return res.status(404).json({
+        message: "Client not found",
+        clientId
+      });
+    }
+
+    const yearKey = String(year);
+    const monthKey = String(month);
+
+    // Initialize year and month if not exists
+    if (!client.documents.has(yearKey)) {
+      client.documents.set(yearKey, new Map());
+    }
+
+    if (!client.documents.get(yearKey).has(monthKey)) {
+      client.documents.get(yearKey).set(monthKey, {});
+    }
+
+    const monthData = client.documents.get(yearKey).get(monthKey);
+
+    // Handle file locking for different types
+    if (type === "other") {
+      // Handle other documents
+      if (!monthData.other) {
+        monthData.other = [];
+      }
+
+      let otherCategory = monthData.other.find(
+        (o) => o.categoryName === categoryName
+      );
+
+      if (!otherCategory) {
+        // Create the category if it doesn't exist
+        otherCategory = {
+          categoryName,
+          document: {
+            url: null,
+            fileName: null,
+            uploadedAt: null,
+            uploadedBy: null,
+            isLocked: false,
+            lockedAt: null,
+            lockedBy: null
+          }
+        };
+        monthData.other.push(otherCategory);
+      }
+
+      // Update lock status
+      otherCategory.document.isLocked = lock;
+      otherCategory.document.lockedAt = lock ? new Date() : null;
+      otherCategory.document.lockedBy = lock ? req.user.adminId : null;
+
+    } else {
+      // Handle main document types (sales, purchase, bank)
+      if (!monthData[type]) {
+        // Create the file structure if it doesn't exist
+        monthData[type] = {
+          url: null,
+          fileName: null,
+          uploadedAt: null,
+          uploadedBy: null,
+          isLocked: false,
+          lockedAt: null,
+          lockedBy: null
+        };
+      }
+
+      // Update lock status
+      monthData[type].isLocked = lock;
+      monthData[type].lockedAt = lock ? new Date() : null;
+      monthData[type].lockedBy = lock ? req.user.adminId : null;
+    }
+
+    // Save the updated data
+    client.documents.get(yearKey).set(monthKey, monthData);
+    await client.save();
+
+    // Log the action
+    const actionType = lock ? "LOCKED_FILE" : "UNLOCKED_FILE";
+    const actionDetails = lock ?
+      `Locked file ${type}${categoryName ? ' (' + categoryName + ')' : ''} for client ${client.name} (${month}/${year})` :
+      `Unlocked file ${type}${categoryName ? ' (' + categoryName + ')' : ''} for client ${client.name} (${month}/${year})`;
+
+    await log(req.user.name, actionType, actionDetails);
+
+    res.json({
+      message: lock ? "File locked successfully" : "File unlocked successfully",
+      clientId,
+      year,
+      month,
+      type,
+      categoryName,
+      isLocked: lock,
+      lockedAt: lock ? new Date() : null,
+      lockedBy: lock ? req.user.adminId : null
+    });
+
+  } catch (error) {
+    console.error("File lock error:", error);
+
+    await log(req.user?.name || "SYSTEM", "FILE_LOCK_ERROR",
+      `Error processing file lock/unlock for client: ${clientId} - ${error.message}`);
+
+    res.status(500).json({
+      message: "Error processing file lock/unlock",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 });
 
 module.exports = router;

@@ -32,7 +32,7 @@ const logToConsole = (type, operation, data) => {
 /* ===============================
    CREATE EMPLOYEE (ADMIN ONLY)
 ================================ */
-router.post("/create", auth, adminOnly, async (req, res) => {
+router.post("/create", auth, async (req, res) => {
     try {
         const { name, email, phone, password } = req.body;
         const employeeId = uuidv4();
@@ -136,7 +136,7 @@ router.post("/create", auth, adminOnly, async (req, res) => {
 /* ===============================
    LIST EMPLOYEES (ADMIN ONLY)
 ================================ */
-router.get("/all", auth, adminOnly, async (req, res) => {
+router.get("/all", auth, async (req, res) => {
     try {
         // Console log: Request received
         logToConsole("INFO", "LIST_EMPLOYEES_REQUEST", {
@@ -177,7 +177,7 @@ router.get("/all", auth, adminOnly, async (req, res) => {
 /* ===============================
    UPDATE EMPLOYEE (ADMIN ONLY)
 ================================ */
-router.put("/update/:employeeId", auth, adminOnly, async (req, res) => {
+router.put("/update/:employeeId", auth, async (req, res) => {
     try {
         const { name, email, phone, password } = req.body;
         const { employeeId } = req.params;
@@ -295,7 +295,7 @@ router.put("/update/:employeeId", auth, adminOnly, async (req, res) => {
 
 
 
-router.get("/all-clients", auth, adminOnly, async (req, res) => {
+router.get("/all-clients", auth, async (req, res) => {
     try {
         const clients = await Client.find()
             .select("clientId name email phone isActive createdAt")
@@ -317,7 +317,7 @@ router.get("/all-clients", auth, adminOnly, async (req, res) => {
 
 
 
-router.post("/assign-client", auth, adminOnly, async (req, res) => {
+router.post("/assign-client", auth, async (req, res) => {
     const { clientId, employeeId, year, month } = req.body;
 
     // ===== BASIC VALIDATION =====

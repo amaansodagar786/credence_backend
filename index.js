@@ -34,12 +34,21 @@ const ClientEnrollment = require("./routes/clientEnrollment");
 const ClientAuth = require("./routes/clientAuth");
 const AdminEmployee = require("./routes/adminEmployee");
 const EmployeeRoutes = require("./routes/employee");
+const EmployeeTasks = require("./routes/employeeTaskLog");
+const clientUpload = require("./routes/clientUpload");
 
-app.use("/admin", adminRoutes);
+
 app.use("/client-enrollment", ClientEnrollment);
 app.use("/client", ClientAuth);
+app.use("/client-upload", clientUpload);
+
+
+app.use("/admin", adminRoutes);
 app.use("/admin-employee", AdminEmployee);
+
+
 app.use("/employee", EmployeeRoutes);
+app.use("/employee-task", EmployeeTasks);
 
 
 

@@ -1,22 +1,44 @@
 const mongoose = require("mongoose");
 
-/**
- * Single document structure
- * (used for Sales, Purchase, Bank, and each Other category)
- */
-const singleDocumentSchema = new mongoose.Schema(
+/* ===============================
+   NOTE SCHEMA (REUSABLE)
+================================ */
+const noteSchema = new mongoose.Schema(
   {
-    url: { type: String }, // S3 / server URL
-    uploadedAt: { type: Date }
+    note: { type: String, required: true },
+    addedBy: { type: String }, // clientId / adminId
+    addedAt: { type: Date, default: Date.now }
   },
   { _id: false }
 );
 
-/**
- * Other category structure
- * - categoryName can be anything (TDS, Salary, Rent, etc.)
- * - ONLY ONE document allowed per category
- */
+/* ===============================
+   SINGLE DOCUMENT (FILE LEVEL)
+================================ */
+const singleDocumentSchema = new mongoose.Schema(
+  {
+    url: String,
+    uploadedAt: Date,
+    uploadedBy: String,
+
+    fileName: String,
+    fileSize: Number,
+    fileType: String,
+
+    // FILE LOCK
+    isLocked: { type: Boolean, default: false },
+    lockedAt: Date,
+    lockedBy: String,
+
+    // FILE UPDATE NOTES (ONLY ON RE-UPLOAD)
+    notes: [noteSchema]
+  },
+  { _id: false }
+);
+
+/* ===============================
+   OTHER CATEGORY
+================================ */
 const otherCategorySchema = new mongoose.Schema(
   {
     categoryName: { type: String, required: true },
@@ -25,69 +47,79 @@ const otherCategorySchema = new mongoose.Schema(
   { _id: false }
 );
 
-/**
- * Month-wise data structure
- */
+/* ===============================
+   MONTH DATA
+================================ */
 const monthDataSchema = new mongoose.Schema(
   {
-    sales: singleDocumentSchema,    // ONLY ONE
-    purchase: singleDocumentSchema, // ONLY ONE
-    bank: singleDocumentSchema,     // ONLY ONE
+    sales: singleDocumentSchema,
+    purchase: singleDocumentSchema,
+    bank: singleDocumentSchema,
 
-    other: [otherCategorySchema],   // MULTIPLE categories, ONE doc each
+    other: [otherCategorySchema],
 
+    // MONTH LOCK
     isLocked: { type: Boolean, default: false },
-    lockedAt: { type: Date },
-    autoLockDate: { type: Date }
+    wasLockedOnce: { type: Boolean, default: false },
+    lockedAt: Date,
+    lockedBy: String,
+    autoLockDate: Date,
+
+    // MONTH UPDATE NOTES (ONLY WHEN UPDATED AFTER UNLOCK)
+    monthNotes: [noteSchema],
+
+    accountingDone: { type: Boolean, default: false },
+    accountingDoneAt: Date,
+    accountingDoneBy: String
   },
   { _id: false }
 );
 
-/**
- * Employee assignment per month
- * - One client-month → one employee
- * - NEVER deleted
- */
+/* ===============================
+   EMPLOYEE ASSIGNMENT
+================================ */
 const employeeAssignmentSchema = new mongoose.Schema(
   {
-    year: { type: Number, required: true },
-    month: { type: Number, required: true }, // 1-12
-    employeeId: { type: String, required: true }, // UUID
-    assignedAt: { type: Date, default: Date.now },
-    assignedBy: { type: String } // adminId UUID
+    year: Number,
+    month: Number,
+    employeeId: String,
+    employeeName: String,
+    assignedAt: Date,
+    assignedBy: String,
+    adminName: String,
+
+    accountingDone: { type: Boolean, default: false },
+    accountingDoneAt: Date,
+    accountingDoneBy: String
   },
   { _id: false }
 );
 
+/* ===============================
+   CLIENT SCHEMA
+================================ */
 const clientSchema = new mongoose.Schema(
   {
-    clientId: { type: String, unique: true }, // UUID
+    clientId: { type: String, unique: true },
 
     name: String,
     email: String,
     phone: String,
     address: String,
 
-    password: String, // encrypted
+    password: String,
     isActive: { type: Boolean, default: true },
 
-    /**
-     * Documents stored year-wise and month-wise
-     * Example:
-     * documents["2026"]["1"] → January 2026
-     */
+    // Year → Month → Data
     documents: {
       type: Map,
       of: {
         type: Map,
         of: monthDataSchema
-      }
+      },
+      default: () => new Map()
     },
 
-    /**
-     * Month-wise employee assignments
-     * Permanent history
-     */
     employeeAssignments: [employeeAssignmentSchema]
   },
   { timestamps: true }

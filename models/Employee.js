@@ -7,10 +7,20 @@ const mongoose = require("mongoose");
 const assignedClientSchema = new mongoose.Schema(
   {
     clientId: { type: String, required: true }, // UUID
+    clientName: { type: String }, // Added for easy reference
     year: { type: Number, required: true },
     month: { type: Number, required: true }, // 1-12
     assignedAt: { type: Date, default: Date.now },
-    assignedBy: { type: String } // adminId UUID
+    assignedBy: { type: String }, // adminId UUID
+    adminName: { type: String }, // Added for easy reference
+    
+    // NEW FIELD: Accounting status
+    accountingDone: { 
+      type: Boolean, 
+      default: false 
+    },
+    accountingDoneAt: { type: Date },
+    accountingDoneBy: { type: String } // employeeId (self)
   },
   { _id: false }
 );

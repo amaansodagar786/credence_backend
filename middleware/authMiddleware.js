@@ -1,7 +1,7 @@
 const jwt = require("jsonwebtoken");
 
 const authMiddleware = (req, res, next) => {
-  const token = req.cookies?.accessToken;
+  const token = req.cookies?.accessToken || req.cookies?.clientToken ;
 
   if (!token) {
     return res.status(401).json({ message: "Unauthorized" });
