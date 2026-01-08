@@ -6,7 +6,7 @@ const mongoose = require("mongoose");
 const noteSchema = new mongoose.Schema(
   {
     note: { type: String, required: true },
-    addedBy: { type: String }, // clientId / adminId
+    addedBy: { type: String },
     addedAt: { type: Date, default: Date.now }
   },
   { _id: false }
@@ -20,17 +20,12 @@ const singleDocumentSchema = new mongoose.Schema(
     url: String,
     uploadedAt: Date,
     uploadedBy: String,
-
     fileName: String,
     fileSize: Number,
     fileType: String,
-
-    // FILE LOCK
     isLocked: { type: Boolean, default: false },
     lockedAt: Date,
     lockedBy: String,
-
-    // FILE UPDATE NOTES (ONLY ON RE-UPLOAD)
     notes: [noteSchema]
   },
   { _id: false }
@@ -55,19 +50,13 @@ const monthDataSchema = new mongoose.Schema(
     sales: singleDocumentSchema,
     purchase: singleDocumentSchema,
     bank: singleDocumentSchema,
-
     other: [otherCategorySchema],
-
-    // MONTH LOCK
     isLocked: { type: Boolean, default: false },
     wasLockedOnce: { type: Boolean, default: false },
     lockedAt: Date,
     lockedBy: String,
     autoLockDate: Date,
-
-    // MONTH UPDATE NOTES (ONLY WHEN UPDATED AFTER UNLOCK)
     monthNotes: [noteSchema],
-
     accountingDone: { type: Boolean, default: false },
     accountingDoneAt: Date,
     accountingDoneBy: String
@@ -76,21 +65,39 @@ const monthDataSchema = new mongoose.Schema(
 );
 
 /* ===============================
-   EMPLOYEE ASSIGNMENT
+   EMPLOYEE ASSIGNMENT (UPDATED WITH TASK)
 ================================ */
 const employeeAssignmentSchema = new mongoose.Schema(
   {
-    year: Number,
-    month: Number,
-    employeeId: String,
-    employeeName: String,
-    assignedAt: Date,
-    assignedBy: String,
-    adminName: String,
-
+    year: { type: Number, required: true },
+    month: { type: Number, required: true },
+    employeeId: { type: String, required: true },
+    employeeName: { type: String },
+    assignedAt: { type: Date, default: Date.now },
+    assignedBy: { type: String },
+    adminName: { type: String },
+    
+    // NEW: TASK FIELD (REQUIRED)
+    task: {
+      type: String,
+      enum: [
+        'Bookkeeping',
+        'VAT Filing Computation', 
+        'VAT Filing',
+        'Financial Statement Generation'
+      ],
+      // required: true 
+    },
+    
     accountingDone: { type: Boolean, default: false },
     accountingDoneAt: Date,
-    accountingDoneBy: String
+    accountingDoneBy: String,
+    
+    // NEW: Track if assignment was removed
+    isRemoved: { type: Boolean, default: false },
+    removedAt: Date,
+    removedBy: String,
+    removalReason: String
   },
   { _id: false }
 );
@@ -101,16 +108,13 @@ const employeeAssignmentSchema = new mongoose.Schema(
 const clientSchema = new mongoose.Schema(
   {
     clientId: { type: String, unique: true },
-
     name: String,
     email: String,
     phone: String,
     address: String,
-
     password: String,
     isActive: { type: Boolean, default: true },
-
-    // Year → Month → Data
+    
     documents: {
       type: Map,
       of: {
@@ -119,7 +123,7 @@ const clientSchema = new mongoose.Schema(
       },
       default: () => new Map()
     },
-
+    
     employeeAssignments: [employeeAssignmentSchema]
   },
   { timestamps: true }

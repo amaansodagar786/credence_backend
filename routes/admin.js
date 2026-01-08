@@ -184,9 +184,19 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    // ===== DEBUG: Check what's actually in admin document =====
+    console.log("DEBUG ADMIN DATA:", {
+      _id: admin._id,
+      adminId: admin.adminId, // This should be "a22c72f6-9f23-4200-ba88-941290e300dc"
+      hasAdminIdField: !!admin.adminId,
+      name: admin.name,
+      email: admin.email
+    });
+
     // Console log: Admin found
     logToConsole("DEBUG", "ADMIN_FOUND", {
-      adminId: admin._id,
+      _id: admin._id, // Changed from adminId to _id for clarity
+      adminId: admin.adminId, // Add this to see actual adminId
       name: admin.name
     });
 
@@ -209,19 +219,37 @@ router.post("/login", async (req, res) => {
       name: admin.name
     });
 
+    // ===== FIXED JWT GENERATION =====
+    // Use admin.adminId if it exists, otherwise fallback to admin._id
+    const tokenAdminId = admin.adminId || admin._id.toString();
+
+    console.log("JWT PAYLOAD WILL CONTAIN:", {
+      adminId: tokenAdminId,
+      type: typeof tokenAdminId,
+      isUUID: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tokenAdminId),
+      isObjectId: /^[0-9a-f]{24}$/i.test(tokenAdminId)
+    });
+
     const token = jwt.sign(
       {
-        id: admin._id,
+        adminId: tokenAdminId, // This should be the UUID
         name: admin.name,
-        role: "ADMIN"
+        role: "ADMIN",
+        email: admin.email // Add email for extra verification
       },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
+    // ===== DEBUG: Verify what's in the token =====
+    const decodedToken = jwt.decode(token);
+    console.log("ACTUAL JWT DECODED:", decodedToken);
+
     // Console log: JWT token created
     logToConsole("DEBUG", "ADMIN_JWT_TOKEN_CREATED", {
-      adminId: admin._id,
+      adminIdInToken: decodedToken.adminId, // Log what's actually in token
+      adminIdFromDB: admin.adminId,
+      _idFromDB: admin._id,
       expiresIn: "1d"
     });
 
@@ -243,6 +271,7 @@ router.post("/login", async (req, res) => {
     // Console log: Login successful
     logToConsole("SUCCESS", "ADMIN_LOGIN_SUCCESS", {
       adminId: admin._id,
+      adminUUID: admin.adminId, // Add UUID to log
       name: admin.name,
       email: admin.email,
       timestamp: new Date().toISOString()
@@ -252,7 +281,8 @@ router.post("/login", async (req, res) => {
       message: "Login success",
       admin: {
         name: admin.name,
-        email: admin.email
+        email: admin.email,
+        adminId: admin.adminId || admin._id // Send both to frontend for debugging
       }
     });
 
@@ -282,14 +312,22 @@ router.post("/login", async (req, res) => {
 ================================ */
 router.get("/me", auth, async (req, res) => {
   try {
+
+
+    console.log("🔍 /me ENDPOINT DEBUG:");
+    console.log("Full req.user:", req.user);
+    console.log("req.user.adminId:", req.user?.adminId);
+    console.log("req.user.id:", req.user?.id);
+    console.log("req.user type:", typeof req.user?.adminId);
+
     // Console log: Admin auth check request
     logToConsole("INFO", "ADMIN_AUTH_CHECK_REQUEST", {
-      adminId: req.user?.id,
+      adminId: req.user?.adminId || req.user?.id,  // ← FIXED!
       adminName: req.user?.name,
       ip: req.ip
     });
 
-    const admin = await Admin.findById(req.user.id).select("-password");
+    const admin = await Admin.findOne({ adminId: req.user.adminId }).select("-password");
 
     if (!admin) {
       logToConsole("ERROR", "ADMIN_NOT_FOUND_IN_DB", {
@@ -728,7 +766,7 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       if (monthData[docType]) {
         monthData[docType].isLocked = lock;
         monthData[docType].lockedAt = lock ? new Date() : null;
-        monthData[docType].lockedBy = lock ? req.user.adminId : null;
+        monthData[docType].lockedBy = lock ? req.user.name : null;
         fileLockStatus[docType] = true;
 
         logToConsole("DEBUG", `${docType.toUpperCase()}_FILE_${lock ? 'LOCKED' : 'UNLOCKED'}`, {
@@ -746,7 +784,7 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
         if (otherCategory.document) {
           otherCategory.document.isLocked = lock;
           otherCategory.document.lockedAt = lock ? new Date() : null;
-          otherCategory.document.lockedBy = lock ? req.user.adminId : null;
+          otherCategory.document.lockedBy = lock ? req.user.name : null;
           fileLockStatus.otherCategories.push(otherCategory.categoryName);
 
           logToConsole("DEBUG", `OTHER_FILE_${lock ? 'LOCKED' : 'UNLOCKED'}`, {
@@ -763,7 +801,7 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
     // 3. Set month-level lock status
     monthData.isLocked = lock;
     monthData.lockedAt = lock ? new Date() : null;
-    monthData.lockedBy = lock ? req.user.adminId : null;
+    monthData.lockedBy = lock ? req.user.name : null;
 
     // Save the updated data
     client.documents.get(yearKey).set(monthKey, monthData);
@@ -949,7 +987,7 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
       // Update lock status
       monthData[type].isLocked = lock;
       monthData[type].lockedAt = lock ? new Date() : null;
-      monthData[type].lockedBy = lock ? req.user.adminId : null;
+      monthData[type].lockedBy = lock ? req.user.name : null;
     }
 
     // Save the updated data
