@@ -36,6 +36,7 @@ const AdminEmployee = require("./routes/adminEmployee");
 const EmployeeRoutes = require("./routes/employee");
 const EmployeeTasks = require("./routes/employeeTaskLog");
 const clientUpload = require("./routes/clientUpload");
+const Employee_task_info = require("./routes/employee-task");
 
 
 app.use("/client-enrollment", ClientEnrollment);
@@ -49,6 +50,11 @@ app.use("/admin-employee", AdminEmployee);
 
 app.use("/employee", EmployeeRoutes);
 app.use("/employee-task", EmployeeTasks);
+
+
+app.use("/admin", Employee_task_info);
+
+
 
 
 

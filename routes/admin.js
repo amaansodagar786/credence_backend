@@ -567,7 +567,7 @@ router.get("/clients", auth, async (req, res) => {
 });
 
 /* ===============================
-   GET SINGLE CLIENT (MONTH DATA)
+   GET SINGLE CLIENT (MONTH DATA) - UPDATED FOR MULTIPLE FILES STRUCTURE
 ================================ */
 router.get("/clients/:clientId", auth, async (req, res) => {
   try {
@@ -581,77 +581,340 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       ip: req.ip
     });
 
-    // Console log: Searching for client
-    logToConsole("INFO", "SEARCHING_FOR_CLIENT", {
-      clientId,
-      adminId: req.user.id
-    });
-
+    // Find client
     const client = await Client.findOne({ clientId });
 
     if (!client) {
-      logToConsole("WARN", "CLIENT_NOT_FOUND", {
-        clientId,
-        adminId: req.user.id,
-        searchedAt: new Date().toISOString()
-      });
-
-      // Save warning to ActivityLog
+      logToConsole("WARN", "CLIENT_NOT_FOUND", { clientId });
       await log(req.user.name, "CLIENT_NOT_FOUND", `Client not found: ${clientId}`);
-
-      return res.status(404).json({
-        message: "Client not found",
-        clientId
-      });
+      return res.status(404).json({ message: "Client not found", clientId });
     }
 
-    // Console log: Client found successfully
-    logToConsole("SUCCESS", "CLIENT_FOUND_SUCCESSFULLY", {
+    // Convert client to plain object to modify - THIS IS IMPORTANT!
+    let clientData = client.toObject();
+
+    console.log("🔍 DEBUG: Original client data documents:",
+      clientData.documents ? Object.keys(clientData.documents) : "No documents");
+
+    // Get all unique employeeIds from ALL notes in the entire document structure
+    const employeeIds = new Set();
+
+    // Helper function to collect employeeIds from notes
+    const collectEmployeeIds = (notesArray) => {
+      if (!notesArray || !Array.isArray(notesArray)) return;
+      notesArray.forEach(note => {
+        if (note.employeeId) {
+          employeeIds.add(note.employeeId);
+        }
+        // Also check addedBy field (some notes might have employeeId in addedBy)
+        if (note.addedBy && !note.employeeId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(note.addedBy)) {
+          employeeIds.add(note.addedBy);
+        }
+      });
+    };
+
+    // Traverse through the ENTIRE documents structure to collect ALL employeeIds
+    if (clientData.documents) {
+      // Convert Map to object if needed
+      if (clientData.documents instanceof Map) {
+        const documentsObj = {};
+        for (const [yearKey, yearMap] of clientData.documents.entries()) {
+          if (yearMap instanceof Map) {
+            const monthObj = {};
+            for (const [monthKey, monthData] of yearMap.entries()) {
+              monthObj[monthKey] = monthData;
+            }
+            documentsObj[yearKey] = monthObj;
+          } else {
+            documentsObj[yearKey] = yearMap;
+          }
+        }
+        clientData.documents = documentsObj;
+      }
+
+      console.log("🔍 DEBUG: Converted documents structure:",
+        Object.keys(clientData.documents).length, "years found");
+
+      // Iterate through all years
+      for (const yearKey in clientData.documents) {
+        const yearData = clientData.documents[yearKey];
+
+        // Iterate through all months
+        for (const monthKey in yearData) {
+          const monthData = yearData[monthKey];
+
+          console.log(`🔍 DEBUG: Processing ${yearKey}-${monthKey}:`,
+            monthData ? "Has data" : "No data");
+
+          // Process main categories: sales, purchase, bank
+          ['sales', 'purchase', 'bank'].forEach(category => {
+            if (monthData[category]) {
+              const categoryData = monthData[category];
+
+              // 1. Collect employeeIds from category-level notes (client notes)
+              if (categoryData.categoryNotes && Array.isArray(categoryData.categoryNotes)) {
+                collectEmployeeIds(categoryData.categoryNotes);
+              }
+
+              // 2. Process each file in the category
+              if (categoryData.files && Array.isArray(categoryData.files)) {
+                categoryData.files.forEach(file => {
+                  // Collect employeeIds from file-level notes (employee notes)
+                  if (file.notes && Array.isArray(file.notes)) {
+                    collectEmployeeIds(file.notes);
+                  }
+                });
+              }
+            }
+          });
+
+          // Process 'other' categories
+          if (monthData.other && Array.isArray(monthData.other)) {
+            monthData.other.forEach(otherCategory => {
+              if (otherCategory.document) {
+                const otherDoc = otherCategory.document;
+
+                // 1. Collect employeeIds from other category-level notes
+                if (otherDoc.categoryNotes && Array.isArray(otherDoc.categoryNotes)) {
+                  collectEmployeeIds(otherDoc.categoryNotes);
+                }
+
+                // 2. Process each file in other category
+                if (otherDoc.files && Array.isArray(otherDoc.files)) {
+                  otherDoc.files.forEach(file => {
+                    // Collect employeeIds from file-level notes
+                    if (file.notes && Array.isArray(file.notes)) {
+                      collectEmployeeIds(file.notes);
+                    }
+                  });
+                }
+              }
+            });
+          }
+        }
+      }
+    }
+
+    console.log("🔍 DEBUG: Found employeeIds:", Array.from(employeeIds));
+
+    // Fetch employee names for all collected IDs
+    const employeeIdArray = Array.from(employeeIds);
+    let employeeMap = new Map();
+
+    if (employeeIdArray.length > 0) {
+      try {
+        const Employee = require("../models/Employee");
+        const employees = await Employee.find(
+          { employeeId: { $in: employeeIdArray } },
+          { employeeId: 1, name: 1 }
+        );
+
+        console.log("🔍 DEBUG: Fetched employees:", employees.map(e => ({ id: e.employeeId, name: e.name })));
+
+        employees.forEach(emp => {
+          employeeMap.set(emp.employeeId, emp.name);
+        });
+
+        logToConsole("DEBUG", "EMPLOYEES_FETCHED_FOR_NOTES", {
+          totalEmployeesFound: employees.length,
+          employeeIdsRequested: employeeIdArray.length
+        });
+      } catch (empError) {
+        logToConsole("ERROR", "EMPLOYEE_FETCH_ERROR", {
+          error: empError.message,
+          employeeIds: employeeIdArray
+        });
+      }
+    }
+
+    // Helper function to populate employee names in notes
+    const populateEmployeeNames = (notesArray) => {
+      if (!notesArray || !Array.isArray(notesArray)) return;
+
+      notesArray.forEach(note => {
+        // First try to get name from employeeId
+        if (note.employeeId && employeeMap.has(note.employeeId)) {
+          note.employeeName = employeeMap.get(note.employeeId);
+        }
+        // If no employeeName found, check addedBy (might be employeeId)
+        else if (!note.employeeName && note.addedBy) {
+          // Check if addedBy is an employeeId UUID
+          if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(note.addedBy)) {
+            if (employeeMap.has(note.addedBy)) {
+              note.employeeName = employeeMap.get(note.addedBy);
+            }
+          }
+          // If addedBy is already a name, keep it
+          else if (typeof note.addedBy === 'string' && note.addedBy.trim().length > 0) {
+            note.employeeName = note.addedBy;
+          }
+        }
+
+        // Ensure we have at least some display name
+        if (!note.employeeName) {
+          note.employeeName = note.addedBy || 'Unknown Employee';
+        }
+      });
+    };
+
+    // Traverse AGAIN to populate employee names in ALL notes
+    if (clientData.documents) {
+      // Iterate through all years
+      for (const yearKey in clientData.documents) {
+        const yearData = clientData.documents[yearKey];
+
+        // Iterate through all months
+        for (const monthKey in yearData) {
+          const monthData = yearData[monthKey];
+
+          // Process main categories
+          ['sales', 'purchase', 'bank'].forEach(category => {
+            if (monthData[category]) {
+              const categoryData = monthData[category];
+
+              // 1. Populate employee names in category-level notes (client notes)
+              if (categoryData.categoryNotes && Array.isArray(categoryData.categoryNotes)) {
+                populateEmployeeNames(categoryData.categoryNotes);
+              }
+
+              // 2. Process each file in the category
+              if (categoryData.files && Array.isArray(categoryData.files)) {
+                categoryData.files.forEach(file => {
+                  // Populate employee names in file-level notes
+                  if (file.notes && Array.isArray(file.notes)) {
+                    populateEmployeeNames(file.notes);
+                  }
+                });
+              }
+            }
+          });
+
+          // Process 'other' categories
+          if (monthData.other && Array.isArray(monthData.other)) {
+            monthData.other.forEach(otherCategory => {
+              if (otherCategory.document) {
+                const otherDoc = otherCategory.document;
+
+                // 1. Populate employee names in other category-level notes
+                if (otherDoc.categoryNotes && Array.isArray(otherDoc.categoryNotes)) {
+                  populateEmployeeNames(otherDoc.categoryNotes);
+                }
+
+                // 2. Process each file in other category
+                if (otherDoc.files && Array.isArray(otherDoc.files)) {
+                  otherDoc.files.forEach(file => {
+                    // Populate employee names in file-level notes
+                    if (file.notes && Array.isArray(file.notes)) {
+                      populateEmployeeNames(file.notes);
+                    }
+                  });
+                }
+              }
+            });
+          }
+        }
+      }
+    }
+
+    // Also process employee assignments to get employee names
+    if (clientData.employeeAssignments && Array.isArray(clientData.employeeAssignments)) {
+      const assignmentEmployeeIds = clientData.employeeAssignments
+        .filter(assignment => assignment.employeeId)
+        .map(assignment => assignment.employeeId);
+
+      if (assignmentEmployeeIds.length > 0) {
+        try {
+          const Employee = require("../models/Employee");
+          const assignmentEmployees = await Employee.find(
+            { employeeId: { $in: assignmentEmployeeIds } },
+            { employeeId: 1, name: 1 }
+          );
+
+          const assignmentEmployeeMap = new Map();
+          assignmentEmployees.forEach(emp => {
+            assignmentEmployeeMap.set(emp.employeeId, emp.name);
+          });
+
+          // Populate employee names in assignments
+          clientData.employeeAssignments.forEach(assignment => {
+            if (assignment.employeeId && assignmentEmployeeMap.has(assignment.employeeId)) {
+              assignment.employeeName = assignmentEmployeeMap.get(assignment.employeeId);
+            }
+          });
+        } catch (empError) {
+          logToConsole("WARN", "ASSIGNMENT_EMPLOYEE_FETCH_ERROR", {
+            error: empError.message
+          });
+        }
+      }
+    }
+
+    // Log success
+    logToConsole("SUCCESS", "CLIENT_DATA_WITH_EMPLOYEE_NAMES", {
       clientId,
-      adminId: req.user.id,
-      clientName: client.name,
-      clientEmail: client.email,
-      isActive: client.isActive,
-      totalYears: client.documents ? Object.keys(client.documents).length : 0
+      clientName: clientData.name,
+      totalEmployeesFound: employeeMap.size,
+      uniqueEmployeeIds: employeeIdArray.length,
+      noteTypesProcessed: ['file-level notes', 'category-level notes'],
+      monthNotesExcluded: true // As per requirement
     });
 
-    // Save success to ActivityLog
-    await log(req.user.name, "VIEWED_CLIENT_DETAILS", `Viewed details for client: ${client.name} (${clientId})`);
+    // Save to ActivityLog
+    await log(req.user.name, "VIEWED_CLIENT_DETAILS",
+      `Viewed details for client: ${clientData.name} with ${employeeMap.size} employee names populated for notes`);
 
-    // Console log: Response sent
-    logToConsole("SUCCESS", "CLIENT_DETAILS_RESPONSE_SENT", {
-      adminId: req.user.id,
-      clientId,
-      timestamp: new Date().toISOString()
+    // FIX: Create a clean response object that includes all processed data
+    const responseData = {
+      _id: clientData._id,
+      clientId: clientData.clientId,
+      name: clientData.name,
+      email: clientData.email,
+      phone: clientData.phone,
+      isActive: clientData.isActive,
+      documents: clientData.documents || {}, // THIS IS THE KEY FIX - include processed documents
+      employeeAssignments: clientData.employeeAssignments || [],
+      createdAt: clientData.createdAt,
+      updatedAt: clientData.updatedAt,
+      __v: clientData.__v
+    };
+
+    // Send response - Use the processed clientData
+    res.json({
+      success: true,
+      client: responseData, // Send the FULL processed data including documents
+      metadata: {
+        employeeNamesPopulated: employeeMap.size,
+        totalEmployeeIdsFound: employeeIdArray.length,
+        noteTypes: {
+          fileLevelNotes: true,
+          categoryLevelNotes: true,
+          monthLevelNotes: false // Excluded as per requirement
+        }
+      }
     });
-
-    res.json(client);
 
   } catch (error) {
-    // Console log: Get single client error
+    // Console log: Error
     logToConsole("ERROR", "GET_SINGLE_CLIENT_ERROR", {
       error: error.message,
       stack: error.stack,
-      ip: req.ip,
-      endpoint: "/clients/:clientId",
       clientId: req.params.clientId,
       adminId: req.user?.id
     });
 
     // Save error to ActivityLog
-    await log(req.user?.name || "SYSTEM", "CLIENT_DETAILS_ERROR", `Error fetching client details: ${clientId} - ${error.message}`);
+    await log(req.user?.name || "SYSTEM", "CLIENT_DETAILS_ERROR",
+      `Error fetching client details: ${error.message}`);
 
     res.status(500).json({
+      success: false,
       message: "Error fetching client details",
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      timestamp: new Date().toISOString()
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
-/* ===============================
-   LOCK / UNLOCK ENTIRE MONTH
-================================ */
+
 /* ===============================
    LOCK / UNLOCK ENTIRE MONTH (UPDATED TO CASCADE TO FILES)
 ================================ */
@@ -1026,5 +1289,9 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
     });
   }
 });
+
+
+
+
 
 module.exports = router;

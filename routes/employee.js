@@ -6,7 +6,6 @@ const Employee = require("../models/Employee");
 const ActivityLog = require("../models/ActivityLog");
 const Client = require("../models/Client");
 
-
 const router = express.Router();
 
 // Console logging utility
@@ -33,6 +32,43 @@ const logToConsole = (type, operation, data) => {
   console.log(`${color}[${timestamp}] ${type}: ${operation}${colors.RESET}`, data);
 
   return logEntry;
+};
+
+/* ===============================
+   HELPER: GET FILE FROM CATEGORY
+================================ */
+const getFileFromCategory = (category, fileName) => {
+  if (!category || !category.files || !Array.isArray(category.files)) {
+    return null;
+  }
+
+  return category.files.find(file => file.fileName === fileName);
+};
+
+/* ===============================
+   HELPER: GET TOTAL FILES COUNT
+================================ */
+const getTotalFilesCount = (monthData) => {
+  let count = 0;
+
+  // Count files from main categories
+  ['sales', 'purchase', 'bank'].forEach(categoryType => {
+    const category = monthData[categoryType];
+    if (category && category.files && Array.isArray(category.files)) {
+      count += category.files.length;
+    }
+  });
+
+  // Count files from other categories
+  if (monthData.other && Array.isArray(monthData.other)) {
+    monthData.other.forEach(otherCat => {
+      if (otherCat.document && otherCat.document.files && Array.isArray(otherCat.document.files)) {
+        count += otherCat.document.files.length;
+      }
+    });
+  }
+
+  return count;
 };
 
 /* ===============================
@@ -341,12 +377,9 @@ router.post("/logout", async (req, res) => {
   }
 });
 
-
-
 /* ===============================
-   EMPLOYEE GET ASSIGNED CLIENTS
+   EMPLOYEE GET ASSIGNED CLIENTS (UPDATED FOR MULTIPLE FILES)
 ================================ */
-
 router.get("/assigned-clients", async (req, res) => {
   try {
     const token = req.cookies?.employeeToken;
@@ -453,9 +486,9 @@ router.get("/assigned-clients", async (req, res) => {
 
         // Get month data from client documents
         let monthData = {
-          sales: null,
-          purchase: null,
-          bank: null,
+          sales: { files: [], isLocked: false },
+          purchase: { files: [], isLocked: false },
+          bank: { files: [], isLocked: false },
           other: [],
           isLocked: false,
           lockedAt: null,
@@ -476,12 +509,22 @@ router.get("/assigned-clients", async (req, res) => {
             monthData.other = Array.from(monthData.other?.values() || []);
           }
 
+          // Ensure all categories have files array
+          ['sales', 'purchase', 'bank'].forEach(categoryType => {
+            if (monthData[categoryType] && !monthData[categoryType].files) {
+              monthData[categoryType].files = [];
+            }
+          });
+
           // Ensure accountingDone is boolean
           monthData.accountingDone = Boolean(monthData.accountingDone);
         }
 
         // Determine if this is the current active month
         const isCurrentMonth = (assign.year === currentYear && assign.month === currentMonth);
+
+        // Get total files count
+        const totalFiles = getTotalFilesCount(monthData);
 
         // Create assignment object
         const assignmentObj = {
@@ -499,16 +542,19 @@ router.get("/assigned-clients", async (req, res) => {
           assignedAt: assign.assignedAt,
           assignedBy: assign.assignedBy,
           adminName: assign.adminName,
+          task: assign.task,
           clientName: assign.clientName || client.name,
           isLocked: assign.isLocked || monthData.isLocked || false,
           accountingDone: assign.accountingDone || monthData.accountingDone || false,
           accountingDoneAt: assign.accountingDoneAt || monthData.accountingDoneAt,
           accountingDoneBy: assign.accountingDoneBy || monthData.accountingDoneBy,
           isCurrentMonth: isCurrentMonth,
-          documentsCount: monthData.other?.length || 0,
-          hasSalesDoc: !!monthData.sales?.url,
-          hasPurchaseDoc: !!monthData.purchase?.url,
-          hasBankDoc: !!monthData.bank?.url,
+          totalFiles: totalFiles,
+          // NEW: Individual category file counts
+          salesFilesCount: monthData.sales?.files?.length || 0,
+          purchaseFilesCount: monthData.purchase?.files?.length || 0,
+          bankFilesCount: monthData.bank?.files?.length || 0,
+          otherCategoriesCount: monthData.other?.length || 0,
           monthData
         };
 
@@ -520,7 +566,8 @@ router.get("/assigned-clients", async (req, res) => {
           year: assign.year,
           month: assign.month,
           isCurrentMonth: isCurrentMonth,
-          accountingDone: assignmentObj.accountingDone
+          accountingDone: assignmentObj.accountingDone,
+          totalFiles: totalFiles
         });
 
       } catch (assignError) {
@@ -552,7 +599,7 @@ router.get("/assigned-clients", async (req, res) => {
         role: "EMPLOYEE",
         employeeId: employee.employeeId,
         action: "FETCHED_ASSIGNED_CLIENTS",
-        details: `Fetched ${response.length} assigned clients`,
+        details: `Fetched ${response.length} assigned clients with multiple files support`,
         dateTime: new Date().toLocaleString("en-IN")
       });
 
@@ -574,6 +621,7 @@ router.get("/assigned-clients", async (req, res) => {
       totalAssignments: response.length,
       currentMonthAssignments: response.filter(a => a.isCurrentMonth).length,
       accountingDoneCount: response.filter(a => a.accountingDone).length,
+      totalFilesAcrossAll: response.reduce((sum, a) => sum + (a.totalFiles || 0), 0),
       timestamp: new Date().toISOString()
     });
 
@@ -594,8 +642,6 @@ router.get("/assigned-clients", async (req, res) => {
     });
   }
 });
-
-
 
 /* ===============================
    TOGGLE ACCOUNTING DONE STATUS
@@ -800,5 +846,733 @@ router.put("/toggle-accounting-done", async (req, res) => {
     });
   }
 });
+
+/* ===============================
+   ADD NOTE TO FILE
+================================ */
+router.post("/add-file-note", async (req, res) => {
+  try {
+    const {
+      clientId,
+      year,
+      month,
+      categoryType,   // 'sales', 'purchase', 'bank', 'other'
+      categoryName,   // Required only for 'other'
+      fileName,       // The specific file to add note to
+      note            // Note text
+    } = req.body;
+
+    // Console log: Add note request
+    logToConsole("INFO", "ADD_FILE_NOTE_REQUEST", {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName,
+      noteLength: note?.length || 0,
+      ip: req.ip
+    });
+
+    // Validation
+    if (!clientId || !year || !month || !categoryType || !fileName || !note?.trim()) {
+      logToConsole("WARN", "MISSING_PARAMETERS_ADD_NOTE", {
+        clientId: !!clientId,
+        year: !!year,
+        month: !!month,
+        categoryType: !!categoryType,
+        fileName: !!fileName,
+        note: !!note?.trim()
+      });
+      return res.status(400).json({
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName, note"
+      });
+    }
+
+    // Get employee info from token (for activity log)
+    const token = req.cookies?.employeeToken;
+    let employeeId = "unknown";
+    let employeeName = "Employee";
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        employeeId = decoded.employeeId;
+        employeeName = decoded.name;
+      } catch (error) {
+        // If token fails, still proceed but with unknown employee
+      }
+    }
+
+    // Find client
+    const client = await Client.findOne({ clientId });
+    if (!client) {
+      logToConsole("ERROR", "CLIENT_NOT_FOUND_FOR_NOTE", { clientId });
+      return res.status(404).json({ message: "Client not found" });
+    }
+
+    // Get month data
+    const yearKey = String(year);
+    const monthKey = String(month);
+
+    if (!client.documents ||
+      !client.documents.get(yearKey) ||
+      !client.documents.get(yearKey).get(monthKey)) {
+      logToConsole("WARN", "MONTH_DATA_NOT_FOUND", {
+        clientId,
+        year,
+        month
+      });
+      return res.status(404).json({
+        message: `No data found for ${month}/${year}`
+      });
+    }
+
+    const monthData = client.documents.get(yearKey).get(monthKey);
+
+    let file = null;
+    let categoryPath = "";
+
+    // Find the file based on category type
+    if (categoryType === 'other') {
+      if (!categoryName) {
+        return res.status(400).json({
+          message: "categoryName is required for 'other' category"
+        });
+      }
+
+      const otherCategory = monthData.other?.find(
+        cat => cat.categoryName === categoryName
+      );
+
+      if (!otherCategory || !otherCategory.document) {
+        return res.status(404).json({
+          message: `Category '${categoryName}' not found`
+        });
+      }
+
+      file = getFileFromCategory(otherCategory.document, fileName);
+      categoryPath = `other.${categoryName}`;
+
+    } else {
+      // Main categories: sales, purchase, bank
+      const category = monthData[categoryType];
+      if (!category) {
+        return res.status(404).json({
+          message: `Category '${categoryType}' not found`
+        });
+      }
+
+      file = getFileFromCategory(category, fileName);
+      categoryPath = categoryType;
+    }
+
+    if (!file) {
+      logToConsole("WARN", "FILE_NOT_FOUND", {
+        clientId,
+        year,
+        month,
+        categoryType,
+        fileName
+      });
+      return res.status(404).json({
+        message: `File '${fileName}' not found in ${categoryPath}`
+      });
+    }
+
+    // Add note to file
+    if (!file.notes) {
+      file.notes = [];
+    }
+
+    const newNote = {
+      note: note.trim(),
+      addedBy: employeeName,
+      employeeId: employeeId,
+      addedAt: new Date()
+    };
+
+    file.notes.push(newNote);
+
+    // Update the client document
+    await client.save();
+
+    logToConsole("DEBUG", "FILE_NOTE_ADDED", {
+      clientId,
+      year,
+      month,
+      categoryPath,
+      fileName,
+      employeeId: employeeId,
+      noteId: newNote._id || "generated"
+    });
+
+    // Log activity
+    try {
+      await ActivityLog.create({
+        userName: employeeName,
+        role: "EMPLOYEE",
+        employeeId: employeeId,
+        clientId: clientId,
+        action: "ADDED_FILE_NOTE",
+        details: `Added note to file ${fileName} in ${categoryPath} for ${month}/${year}`,
+        dateTime: new Date().toLocaleString("en-IN")
+      });
+
+      logToConsole("INFO", "ADD_NOTE_ACTIVITY_LOG_CREATED", {
+        employeeId: employeeId,
+        clientId: clientId
+      });
+    } catch (logError) {
+      logToConsole("ERROR", "ADD_NOTE_ACTIVITY_LOG_FAILED", {
+        error: logError.message,
+        employeeId: employeeId
+      });
+    }
+
+    logToConsole("SUCCESS", "FILE_NOTE_ADDED_SUCCESS", {
+      clientId,
+      year,
+      month,
+      categoryPath,
+      fileName,
+      employeeId: employeeId,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      message: "Note added successfully",
+      note: newNote,
+      file: {
+        fileName: file.fileName,
+        totalNotes: file.notes.length
+      }
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "ADD_FILE_NOTE_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      body: req.body,
+      ip: req.ip
+    });
+
+    res.status(500).json({
+      message: "Error adding note to file",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/* ===============================
+   GET ALL FILES FOR ASSIGNMENT (WITH NOTES)
+================================ */
+/* ===============================
+   GET ALL FILES FOR ASSIGNMENT (WITH NOTES) - UPDATED WITH CATEGORY NOTES
+================================ */
+router.get("/assignment-files", async (req, res) => {
+  try {
+    const { clientId, year, month } = req.query;
+
+    // Console log: Get assignment files request
+    logToConsole("INFO", "GET_ASSIGNMENT_FILES_REQUEST", {
+      clientId,
+      year,
+      month,
+      ip: req.ip
+    });
+
+    // Validation
+    if (!clientId || !year || !month) {
+      logToConsole("WARN", "MISSING_PARAMETERS_ASSIGNMENT_FILES", {
+        clientId: !!clientId,
+        year: !!year,
+        month: !!month
+      });
+      return res.status(400).json({
+        message: "Missing required parameters: clientId, year, month"
+      });
+    }
+
+    // Get employee info from token (for logging)
+    const token = req.cookies?.employeeToken;
+    let employeeId = "unknown";
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        employeeId = decoded.employeeId;
+      } catch (error) {
+        // If token fails, still proceed
+      }
+    }
+
+    // Find client
+    const client = await Client.findOne({ clientId });
+    if (!client) {
+      logToConsole("ERROR", "CLIENT_NOT_FOUND_FILES", { clientId });
+      return res.status(404).json({ message: "Client not found" });
+    }
+
+    // Get month data
+    const yearKey = String(year);
+    const monthKey = String(month);
+
+    if (!client.documents ||
+      !client.documents.get(yearKey) ||
+      !client.documents.get(yearKey).get(monthKey)) {
+      logToConsole("WARN", "MONTH_DATA_NOT_FOUND_FILES", {
+        clientId,
+        year,
+        month
+      });
+      return res.status(404).json({
+        message: `No data found for ${month}/${year}`
+      });
+    }
+
+    const monthData = client.documents.get(yearKey).get(monthKey);
+
+    // NEW: Get employee names for all notes
+    const Employee = require("../models/Employee");
+    const employeeMap = new Map();
+
+    // Collect all employeeIds from ALL notes (file notes + category notes)
+    const employeeIds = new Set();
+
+    // Helper to collect employeeIds from notes array
+    const collectEmployeeIds = (notesArray) => {
+      if (!notesArray || !Array.isArray(notesArray)) return;
+      notesArray.forEach(note => {
+        if (note.employeeId) employeeIds.add(note.employeeId);
+        if (note.addedBy && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(note.addedBy)) {
+          employeeIds.add(note.addedBy);
+        }
+      });
+    };
+
+    // Collect from category notes (sales, purchase, bank)
+    ['sales', 'purchase', 'bank'].forEach(categoryType => {
+      const category = monthData[categoryType];
+      if (category && category.categoryNotes) {
+        collectEmployeeIds(category.categoryNotes);
+      }
+    });
+
+    // Collect from other category notes
+    if (monthData.other && Array.isArray(monthData.other)) {
+      monthData.other.forEach(otherCat => {
+        if (otherCat.document && otherCat.document.categoryNotes) {
+          collectEmployeeIds(otherCat.document.categoryNotes);
+        }
+      });
+    }
+
+    // Collect from file notes
+    ['sales', 'purchase', 'bank'].forEach(categoryType => {
+      const category = monthData[categoryType];
+      if (category && category.files && Array.isArray(category.files)) {
+        category.files.forEach(file => {
+          collectEmployeeIds(file.notes);
+        });
+      }
+    });
+
+    // Collect from other category file notes
+    if (monthData.other && Array.isArray(monthData.other)) {
+      monthData.other.forEach(otherCat => {
+        if (otherCat.document && otherCat.document.files && Array.isArray(otherCat.document.files)) {
+          otherCat.document.files.forEach(file => {
+            collectEmployeeIds(file.notes);
+          });
+        }
+      });
+    }
+
+    // Fetch employee names for all collected IDs
+    if (employeeIds.size > 0) {
+      const employees = await Employee.find(
+        { employeeId: { $in: Array.from(employeeIds) } },
+        { employeeId: 1, name: 1 }
+      );
+
+      employees.forEach(emp => {
+        employeeMap.set(emp.employeeId, emp.name);
+      });
+
+      logToConsole("DEBUG", "EMPLOYEES_FETCHED_FOR_NOTES", {
+        totalEmployeesFound: employees.length,
+        employeeIdsRequested: employeeIds.size
+      });
+    }
+
+    // Helper to populate employee names in notes
+    const populateEmployeeNames = (notesArray) => {
+      if (!notesArray || !Array.isArray(notesArray)) return;
+
+      notesArray.forEach(note => {
+        // First try to get name from employeeId
+        if (note.employeeId && employeeMap.has(note.employeeId)) {
+          note.employeeName = employeeMap.get(note.employeeId);
+        }
+        // If no employeeName found, check addedBy (might be employeeId)
+        else if (!note.employeeName && note.addedBy) {
+          // Check if addedBy is an employeeId UUID
+          if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(note.addedBy)) {
+            if (employeeMap.has(note.addedBy)) {
+              note.employeeName = employeeMap.get(note.addedBy);
+            }
+          }
+          // If addedBy is already a name, keep it
+          else if (typeof note.addedBy === 'string' && note.addedBy.trim().length > 0) {
+            note.employeeName = note.addedBy;
+          }
+        }
+
+        // Ensure we have at least some display name
+        if (!note.employeeName) {
+          note.employeeName = note.addedBy || 'Unknown';
+        }
+      });
+    };
+
+    // Prepare response with all files and notes
+    const response = {
+      period: `${month}/${year}`,
+      clientId,
+      clientName: client.name,
+      categories: {}
+    };
+
+    // Process each main category
+    const mainCategories = ['sales', 'purchase', 'bank'];
+    mainCategories.forEach(categoryType => {
+      const category = monthData[categoryType];
+      if (category) {
+        // Process category-level notes first
+        let categoryNotes = [];
+        let totalCategoryNotes = 0;
+
+        if (category.categoryNotes && Array.isArray(category.categoryNotes)) {
+          // Create a copy to avoid modifying original
+          categoryNotes = [...category.categoryNotes];
+          totalCategoryNotes = categoryNotes.length;
+
+          // Populate employee names in category notes
+          populateEmployeeNames(categoryNotes);
+
+          logToConsole("DEBUG", "CATEGORY_NOTES_FOUND", {
+            categoryType,
+            notesCount: totalCategoryNotes
+          });
+        }
+
+        // Process file-level notes
+        let filesData = [];
+        let totalFileNotes = 0;
+
+        if (category.files && Array.isArray(category.files)) {
+          filesData = category.files.map(file => {
+            // Create a copy of file notes
+            const fileNotes = file.notes ? [...file.notes] : [];
+            totalFileNotes += fileNotes.length;
+
+            // Populate employee names in file notes
+            populateEmployeeNames(fileNotes);
+
+            return {
+              fileName: file.fileName,
+              url: file.url,
+              uploadedAt: file.uploadedAt,
+              uploadedBy: file.uploadedBy,
+              fileSize: file.fileSize,
+              fileType: file.fileType,
+              notes: fileNotes,
+              totalNotes: fileNotes.length
+            };
+          });
+        }
+
+        response.categories[categoryType] = {
+          files: filesData,
+          totalFiles: filesData.length,
+          // NEW: Include category-level notes
+          categoryNotes: categoryNotes,
+          totalCategoryNotes: totalCategoryNotes,
+          totalFileNotes: totalFileNotes,
+          totalNotes: totalCategoryNotes + totalFileNotes,
+          isLocked: category.isLocked || false
+        };
+      }
+    });
+
+    // Process other categories
+    if (monthData.other && Array.isArray(monthData.other)) {
+      response.categories.other = monthData.other.map(otherCat => {
+        const document = otherCat.document || {};
+
+        // Process category-level notes for other categories
+        let categoryNotes = [];
+        let totalCategoryNotes = 0;
+
+        if (document.categoryNotes && Array.isArray(document.categoryNotes)) {
+          categoryNotes = [...document.categoryNotes];
+          totalCategoryNotes = categoryNotes.length;
+
+          // Populate employee names in category notes
+          populateEmployeeNames(categoryNotes);
+        }
+
+        // Process file-level notes
+        let filesData = [];
+        let totalFileNotes = 0;
+
+        if (document.files && Array.isArray(document.files)) {
+          filesData = document.files.map(file => {
+            const fileNotes = file.notes ? [...file.notes] : [];
+            totalFileNotes += fileNotes.length;
+
+            // Populate employee names in file notes
+            populateEmployeeNames(fileNotes);
+
+            return {
+              fileName: file.fileName,
+              url: file.url,
+              uploadedAt: file.uploadedAt,
+              uploadedBy: file.uploadedBy,
+              fileSize: file.fileSize,
+              fileType: file.fileType,
+              notes: fileNotes,
+              totalNotes: fileNotes.length
+            };
+          });
+        }
+
+        return {
+          categoryName: otherCat.categoryName,
+          files: filesData,
+          totalFiles: filesData.length,
+          // NEW: Include category-level notes for other categories
+          categoryNotes: categoryNotes,
+          totalCategoryNotes: totalCategoryNotes,
+          totalFileNotes: totalFileNotes,
+          totalNotes: totalCategoryNotes + totalFileNotes,
+          isLocked: document.isLocked || false
+        };
+      });
+    }
+
+    // Calculate totals
+    let totalFiles = 0;
+    let totalFileNotes = 0;
+    let totalCategoryNotes = 0;
+
+    Object.values(response.categories).forEach(cat => {
+      if (Array.isArray(cat)) {
+        // For other categories array
+        cat.forEach(otherCat => {
+          totalFiles += otherCat.totalFiles || 0;
+          totalFileNotes += otherCat.totalFileNotes || 0;
+          totalCategoryNotes += otherCat.totalCategoryNotes || 0;
+        });
+      } else {
+        totalFiles += cat.totalFiles || 0;
+        totalFileNotes += cat.totalFileNotes || 0;
+        totalCategoryNotes += cat.totalCategoryNotes || 0;
+      }
+    });
+
+    response.totalFiles = totalFiles;
+    response.totalFileNotes = totalFileNotes;
+    response.totalCategoryNotes = totalCategoryNotes;
+    response.totalNotes = totalFileNotes + totalCategoryNotes;
+
+    logToConsole("SUCCESS", "ASSIGNMENT_FILES_FETCHED_WITH_CATEGORY_NOTES", {
+      clientId,
+      year,
+      month,
+      totalFiles,
+      totalFileNotes,
+      totalCategoryNotes,
+      employeeId: employeeId,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json(response);
+
+  } catch (error) {
+    logToConsole("ERROR", "GET_ASSIGNMENT_FILES_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      query: req.query,
+      ip: req.ip
+    });
+
+    res.status(500).json({
+      message: "Error fetching assignment files",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/* ===============================
+   GET NOTES FOR SPECIFIC FILE
+================================ */
+router.get("/file-notes", async (req, res) => {
+  try {
+    const {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName
+    } = req.query;
+
+    // Console log: Get notes request
+    logToConsole("INFO", "GET_FILE_NOTES_REQUEST", {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName,
+      ip: req.ip
+    });
+
+    // Validation
+    if (!clientId || !year || !month || !categoryType || !fileName) {
+      logToConsole("WARN", "MISSING_PARAMETERS_GET_NOTES", {
+        clientId: !!clientId,
+        year: !!year,
+        month: !!month,
+        categoryType: !!categoryType,
+        fileName: !!fileName
+      });
+      return res.status(400).json({
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName"
+      });
+    }
+
+    // Find client
+    const client = await Client.findOne({ clientId });
+    if (!client) {
+      logToConsole("ERROR", "CLIENT_NOT_FOUND_GET_NOTES", { clientId });
+      return res.status(404).json({ message: "Client not found" });
+    }
+
+    // Get month data
+    const yearKey = String(year);
+    const monthKey = String(month);
+
+    if (!client.documents ||
+      !client.documents.get(yearKey) ||
+      !client.documents.get(yearKey).get(monthKey)) {
+      logToConsole("WARN", "MONTH_DATA_NOT_FOUND_GET_NOTES", {
+        clientId,
+        year,
+        month
+      });
+      return res.status(404).json({
+        message: `No data found for ${month}/${year}`
+      });
+    }
+
+    const monthData = client.documents.get(yearKey).get(monthKey);
+
+    let file = null;
+    let categoryPath = "";
+
+    // Find the file based on category type
+    if (categoryType === 'other') {
+      if (!categoryName) {
+        return res.status(400).json({
+          message: "categoryName is required for 'other' category"
+        });
+      }
+
+      const otherCategory = monthData.other?.find(
+        cat => cat.categoryName === categoryName
+      );
+
+      if (!otherCategory || !otherCategory.document) {
+        return res.status(404).json({
+          message: `Category '${categoryName}' not found`
+        });
+      }
+
+      file = getFileFromCategory(otherCategory.document, fileName);
+      categoryPath = `other.${categoryName}`;
+
+    } else {
+      // Main categories: sales, purchase, bank
+      const category = monthData[categoryType];
+      if (!category) {
+        return res.status(404).json({
+          message: `Category '${categoryType}' not found`
+        });
+      }
+
+      file = getFileFromCategory(category, fileName);
+      categoryPath = categoryType;
+    }
+
+    if (!file) {
+      logToConsole("WARN", "FILE_NOT_FOUND_GET_NOTES", {
+        clientId,
+        year,
+        month,
+        categoryType,
+        fileName
+      });
+      return res.status(404).json({
+        message: `File '${fileName}' not found in ${categoryPath}`
+      });
+    }
+
+    // Return file with notes
+    const response = {
+      file: {
+        fileName: file.fileName,
+        url: file.url,
+        uploadedAt: file.uploadedAt,
+        uploadedBy: file.uploadedBy,
+        fileSize: file.fileSize,
+        fileType: file.fileType
+      },
+      notes: file.notes || [],
+      totalNotes: file.notes ? file.notes.length : 0,
+      category: categoryPath,
+      period: `${month}/${year}`
+    };
+
+    logToConsole("SUCCESS", "FILE_NOTES_FETCHED", {
+      clientId,
+      year,
+      month,
+      categoryPath,
+      fileName,
+      totalNotes: response.totalNotes,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json(response);
+
+  } catch (error) {
+    logToConsole("ERROR", "GET_FILE_NOTES_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      query: req.query,
+      ip: req.ip
+    });
+
+    res.status(500).json({
+      message: "Error fetching file notes",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+
 
 module.exports = router;
