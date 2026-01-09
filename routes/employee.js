@@ -137,9 +137,11 @@ router.post("/login", async (req, res) => {
 
     res.cookie("employeeToken", token, {
       httpOnly: true,
-      sameSite: "strict",
+      secure: true,        // REQUIRED on HTTPS
+      sameSite: "none",    // REQUIRED for cross-origin
       maxAge: 24 * 60 * 60 * 1000
     });
+
 
     // Console log: Cookie set
     logToConsole("INFO", "COOKIE_SET", {
