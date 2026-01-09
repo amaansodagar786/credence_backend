@@ -19,10 +19,14 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 app.use(
     cors({
-        origin: "http://localhost:5173",
+        origin: [
+            "http://localhost:5173",
+            "https://credence-two.vercel.app"
+        ],
         credentials: true
     })
 );
+
 
 app.use(cookieParser());
 
