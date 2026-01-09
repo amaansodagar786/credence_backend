@@ -255,9 +255,11 @@ router.post("/login", async (req, res) => {
 
     res.cookie("accessToken", token, {
       httpOnly: true,
-      sameSite: "strict",
+      secure: true,        // REQUIRED on HTTPS
+      sameSite: "none",    // REQUIRED for Vercel ↔ Render
       maxAge: 24 * 60 * 60 * 1000
     });
+
 
     // Console log: Cookie set
     logToConsole("INFO", "ADMIN_COOKIE_SET", {
