@@ -1066,9 +1066,7 @@ router.post("/add-file-note", async (req, res) => {
   }
 });
 
-/* ===============================
-   GET ALL FILES FOR ASSIGNMENT (WITH NOTES)
-================================ */
+
 /* ===============================
    GET ALL FILES FOR ASSIGNMENT (WITH NOTES) - UPDATED WITH CATEGORY NOTES
 ================================ */
