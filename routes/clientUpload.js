@@ -38,23 +38,23 @@ const getMonthData = (client, year, month) => {
 
     if (!client.documents.get(y).has(m)) {
         client.documents.get(y).set(m, {
-            sales: { 
-                files: [], 
-                categoryNotes: [], 
-                isLocked: false, 
-                wasLockedOnce: false 
+            sales: {
+                files: [],
+                categoryNotes: [],
+                isLocked: false,
+                wasLockedOnce: false
             },
-            purchase: { 
-                files: [], 
-                categoryNotes: [], 
-                isLocked: false, 
-                wasLockedOnce: false 
+            purchase: {
+                files: [],
+                categoryNotes: [],
+                isLocked: false,
+                wasLockedOnce: false
             },
-            bank: { 
-                files: [], 
-                categoryNotes: [], 
-                isLocked: false, 
-                wasLockedOnce: false 
+            bank: {
+                files: [],
+                categoryNotes: [],
+                isLocked: false,
+                wasLockedOnce: false
             },
             other: [],
             isLocked: false,
@@ -82,14 +82,14 @@ router.get("/month-data", auth, async (req, res) => {
         }
 
         const monthData = getMonthData(client, year, month);
-        
+
         // NEW: Get employee names for notes
         const Employee = require("../models/Employee");
         const employeeMap = new Map();
-        
+
         // Collect all employeeIds from notes
         const employeeIds = new Set();
-        
+
         // Helper to collect employeeIds
         const collectEmployeeIds = (notesArray) => {
             if (!notesArray || !Array.isArray(notesArray)) return;
@@ -97,7 +97,7 @@ router.get("/month-data", auth, async (req, res) => {
                 if (note.employeeId) employeeIds.add(note.employeeId);
             });
         };
-        
+
         // Process main categories
         ['sales', 'purchase', 'bank'].forEach(category => {
             if (monthData[category]) {
@@ -112,7 +112,7 @@ router.get("/month-data", auth, async (req, res) => {
                 }
             }
         });
-        
+
         // Process other categories
         if (monthData.other && Array.isArray(monthData.other)) {
             monthData.other.forEach(otherCategory => {
@@ -126,19 +126,19 @@ router.get("/month-data", auth, async (req, res) => {
                 }
             });
         }
-        
+
         // Fetch employee names
         if (employeeIds.size > 0) {
             const employees = await Employee.find(
                 { employeeId: { $in: Array.from(employeeIds) } },
                 { employeeId: 1, name: 1 }
             );
-            
+
             employees.forEach(emp => {
                 employeeMap.set(emp.employeeId, emp.name);
             });
         }
-        
+
         // Helper to populate employee names
         const populateEmployeeNames = (notesArray) => {
             if (!notesArray || !Array.isArray(notesArray)) return;
@@ -150,7 +150,7 @@ router.get("/month-data", auth, async (req, res) => {
                 }
             });
         };
-        
+
         // Populate employee names in all notes
         ['sales', 'purchase', 'bank'].forEach(category => {
             if (monthData[category]) {
@@ -163,7 +163,7 @@ router.get("/month-data", auth, async (req, res) => {
                 }
             }
         });
-        
+
         if (monthData.other && Array.isArray(monthData.other)) {
             monthData.other.forEach(otherCategory => {
                 if (otherCategory.document) {
@@ -187,10 +187,7 @@ router.get("/month-data", auth, async (req, res) => {
 /* ===============================
    UPLOAD / UPDATE FILES (MULTIPLE)
 ================================ */
-router.post(
-    "/upload",
-    auth,
-    upload.array("files"),
+router.post("/upload", auth, upload.array("files"),
     async (req, res) => {
         try {
             const {
@@ -254,7 +251,7 @@ router.post(
             if (replacedFile) {
                 // Find and remove the old file
                 let oldFile = null;
-                
+
                 if (type === "other") {
                     const otherIndex = monthData.other?.findIndex(x => x.categoryName === categoryName);
                     if (otherIndex >= 0 && monthData.other[otherIndex].document) {
@@ -262,7 +259,7 @@ router.post(
                         if (fileIndex >= 0) {
                             oldFile = monthData.other[otherIndex].document.files[fileIndex];
                             monthData.other[otherIndex].document.files.splice(fileIndex, 1);
-                            
+
                             // Track deleted file
                             await DeletedFile.create({
                                 clientId: client.clientId,
@@ -288,7 +285,7 @@ router.post(
                     if (fileIndex >= 0) {
                         oldFile = monthData[type].files[fileIndex];
                         monthData[type].files.splice(fileIndex, 1);
-                        
+
                         // Track deleted file
                         await DeletedFile.create({
                             clientId: client.clientId,
@@ -312,7 +309,7 @@ router.post(
 
             // UPLOAD ALL FILES TO S3
             const uploadedFiles = [];
-            
+
             for (const file of req.files) {
                 const fileExt = file.originalname.split(".").pop();
                 const key = `clients/${client.clientId}/${year}/${month}/${uuidv4()}.${fileExt}`;
@@ -435,11 +432,11 @@ router.get("/deleted-files", auth, async (req, res) => {
 ================================ */
 router.delete("/delete-file", auth, async (req, res) => {
     try {
-        const { 
-            year, 
-            month, 
-            type, 
-            fileName, 
+        const {
+            year,
+            month,
+            type,
+            fileName,
             categoryName,
             deleteNote // NEW: Reason for deletion
         } = req.body;
