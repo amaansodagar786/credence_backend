@@ -874,4 +874,20 @@ router.get("/employee-assignment", auth, async (req, res) => {
     }
 });
 
+
+
+/* ===============================
+   SIMPLE TEST ROUTE TO CHECK IF FILE IS LOADED
+================================ */
+router.get("/test-simple", (req, res) => {
+    console.log("✓ Simple test route called from clientUpload.js");
+    res.json({ 
+        message: "SUCCESS: clientUpload.js route file is working!",
+        timestamp: new Date().toISOString(),
+        server: "Render Backend",
+        routeFile: "routes/clientUpload.js",
+        status: "active"
+    });
+});
+
 module.exports = router;
