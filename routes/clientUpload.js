@@ -87,17 +87,146 @@ const getMonthData = (client, year, month) => {
 /* ===============================
    GET MONTH DATA - UPDATED TO INCLUDE EMPLOYEE NOTES
 ================================ */
+// router.get("/month-data", auth, async (req, res) => {
+//     try {
+//         const { year, month } = req.query;
+
+//         const client = await Client.findOne({
+//             clientId: req.user.clientId
+//         });
+
+//         if (!client) {
+//             return res.status(404).json({ message: "Client not found" });
+//         }
+
+//         const monthData = getMonthData(client, year, month);
+
+//         // NEW: Get employee names for notes
+//         const Employee = require("../models/Employee");
+//         const employeeMap = new Map();
+
+//         // Collect all employeeIds from notes
+//         const employeeIds = new Set();
+
+//         // Helper to collect employeeIds
+//         const collectEmployeeIds = (notesArray) => {
+//             if (!notesArray || !Array.isArray(notesArray)) return;
+//             notesArray.forEach(note => {
+//                 if (note.employeeId) employeeIds.add(note.employeeId);
+//             });
+//         };
+
+//         // Process main categories
+//         ['sales', 'purchase', 'bank'].forEach(category => {
+//             if (monthData[category]) {
+//                 const categoryData = monthData[category];
+//                 // Collect from category notes
+//                 collectEmployeeIds(categoryData.categoryNotes);
+//                 // Collect from file notes
+//                 if (categoryData.files && Array.isArray(categoryData.files)) {
+//                     categoryData.files.forEach(file => {
+//                         collectEmployeeIds(file.notes);
+//                     });
+//                 }
+//             }
+//         });
+
+//         // Process other categories
+//         if (monthData.other && Array.isArray(monthData.other)) {
+//             monthData.other.forEach(otherCategory => {
+//                 if (otherCategory.document) {
+//                     collectEmployeeIds(otherCategory.document.categoryNotes);
+//                     if (otherCategory.document.files && Array.isArray(otherCategory.document.files)) {
+//                         otherCategory.document.files.forEach(file => {
+//                             collectEmployeeIds(file.notes);
+//                         });
+//                     }
+//                 }
+//             });
+//         }
+
+//         // Fetch employee names
+//         if (employeeIds.size > 0) {
+//             const employees = await Employee.find(
+//                 { employeeId: { $in: Array.from(employeeIds) } },
+//                 { employeeId: 1, name: 1 }
+//             );
+
+//             employees.forEach(emp => {
+//                 employeeMap.set(emp.employeeId, emp.name);
+//             });
+//         }
+
+//         // Helper to populate employee names
+//         const populateEmployeeNames = (notesArray) => {
+//             if (!notesArray || !Array.isArray(notesArray)) return;
+//             notesArray.forEach(note => {
+//                 if (note.employeeId && employeeMap.has(note.employeeId)) {
+//                     note.employeeName = employeeMap.get(note.employeeId);
+//                 } else {
+//                     note.employeeName = note.addedBy || 'Unknown';
+//                 }
+//             });
+//         };
+
+//         // Populate employee names in all notes
+//         ['sales', 'purchase', 'bank'].forEach(category => {
+//             if (monthData[category]) {
+//                 const categoryData = monthData[category];
+//                 populateEmployeeNames(categoryData.categoryNotes);
+//                 if (categoryData.files && Array.isArray(categoryData.files)) {
+//                     categoryData.files.forEach(file => {
+//                         populateEmployeeNames(file.notes);
+//                     });
+//                 }
+//             }
+//         });
+
+//         if (monthData.other && Array.isArray(monthData.other)) {
+//             monthData.other.forEach(otherCategory => {
+//                 if (otherCategory.document) {
+//                     populateEmployeeNames(otherCategory.document.categoryNotes);
+//                     if (otherCategory.document.files && Array.isArray(otherCategory.document.files)) {
+//                         otherCategory.document.files.forEach(file => {
+//                             populateEmployeeNames(file.notes);
+//                         });
+//                     }
+//                 }
+//             });
+//         }
+
+//         res.json(monthData);
+//     } catch (err) {
+//         console.error("GET_MONTH_DATA_ERROR:", err.message);
+//         res.status(500).json({ message: "Failed to fetch month data" });
+//     }
+// });
+
 router.get("/month-data", auth, async (req, res) => {
     try {
         const { year, month } = req.query;
+
+        // ADDED CONSOLE LOGS
+        console.log("=== MONTH-DATA ROUTE HIT ===");
+        console.log("Year:", year, "Month:", month);
+        console.log("req.user:", req.user);
+        console.log("req.user.clientId:", req.user?.clientId);
+        console.log("All cookies:", req.cookies);
+        console.log("clientToken cookie:", req.cookies?.clientToken);
 
         const client = await Client.findOne({
             clientId: req.user.clientId
         });
 
+        console.log("Client found in DB:", !!client);
+        console.log("Client ID searched:", req.user.clientId);
+
         if (!client) {
+            console.log("ERROR: No client found with ID:", req.user.clientId);
             return res.status(404).json({ message: "Client not found" });
         }
+
+        console.log("SUCCESS: Client found -", client.clientId, client.name);
 
         const monthData = getMonthData(client, year, month);
 
@@ -195,12 +324,16 @@ router.get("/month-data", auth, async (req, res) => {
             });
         }
 
+        console.log("=== MONTH-DATA RETURNING SUCCESS ===");
         res.json(monthData);
     } catch (err) {
         console.error("GET_MONTH_DATA_ERROR:", err.message);
         res.status(500).json({ message: "Failed to fetch month data" });
     }
 });
+
+
+
 
 /* ===============================
    UPLOAD / UPDATE FILES (MULTIPLE)
@@ -460,7 +593,7 @@ router.post("/upload", auth, upload.array("files"),
                     clientId: client.clientId,
                     clientName: client.name,
                     action: replacedFile ? "CLIENT_FILE_UPDATED" : "CLIENT_FILE_UPLOADED",
-                    details: replacedFile 
+                    details: replacedFile
                         ? `Client "${client.name}" updated file: ${replacedFile} → ${uploadedFiles.map(f => f.fileName).join(', ')} in ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`
                         : `Client "${client.name}" uploaded ${uploadedFiles.length} file(s): ${uploadedFiles.map(f => f.fileName).join(', ')} in ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`,
                     dateTime: new Date().toLocaleString("en-IN"),
@@ -881,7 +1014,7 @@ router.get("/employee-assignment", auth, async (req, res) => {
 ================================ */
 router.get("/test-simple", (req, res) => {
     console.log("✓ Simple test route called from clientUpload.js");
-    res.json({ 
+    res.json({
         message: "SUCCESS: clientUpload.js route file is working!",
         timestamp: new Date().toISOString(),
         server: "Render Backend",
