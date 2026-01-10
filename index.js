@@ -20,8 +20,9 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(
     cors({
         origin: [
+            "https://credence-two.vercel.app",
             "http://localhost:5173",
-            "https://credence-two.vercel.app"
+            
         ],
         credentials: true
     })
