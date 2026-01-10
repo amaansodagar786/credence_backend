@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const Client = require("../models/Client");
 const DeletedFile = require("../models/DeletedFile"); // NEW
+const ActivityLog = require("../models/ActivityLog"); // ADDED FOR ACTIVITY LOGS
 const auth = require("../middleware/authMiddleware");
 
 const router = express.Router();
@@ -24,6 +25,23 @@ const s3 = new S3Client({
    MULTER (MEMORY) - ALLOW MULTIPLE FILES
 ================================ */
 const upload = multer({ storage: multer.memoryStorage() });
+
+/* ===============================
+   CONSOLE LOGGING UTILITY
+================================ */
+const logToConsole = (type, operation, data) => {
+    const timestamp = new Date().toLocaleString("en-IN");
+    const logEntry = {
+        timestamp,
+        type,
+        operation,
+        data
+    };
+
+    console.log(`[${timestamp}] ${type}: ${operation}`, data);
+
+    return logEntry;
+};
 
 /* ===============================
    HELPER: GET MONTH DATA
@@ -247,9 +265,36 @@ router.post("/upload", auth, upload.array("files"),
                 });
             }
 
+            // ===== LOG 1: FILE UPLOAD/UPDATE REQUEST =====
+            logToConsole("INFO", "CLIENT_FILE_UPLOAD_REQUEST", {
+                clientId: client.clientId,
+                clientName: client.name,
+                year,
+                month,
+                type,
+                categoryName: categoryName || "N/A",
+                filesCount: req.files.length,
+                fileNames: req.files.map(f => f.originalname),
+                isUpdate: !!isUpdate,
+                isReplacement: !!replacedFile,
+                replacedFileName: replacedFile || null
+            });
+
             // NEW: Handle file replacement - track deleted file
             if (replacedFile) {
-                // Find and remove the old file
+                // ===== LOG 3: FILE UPDATE/REPLACEMENT =====
+                logToConsole("INFO", "CLIENT_FILE_UPDATE_REPLACEMENT", {
+                    clientId: client.clientId,
+                    clientName: client.name,
+                    year,
+                    month,
+                    oldFileName: replacedFile,
+                    newFilesCount: req.files.length,
+                    category: `${type}${categoryName ? ` (${categoryName})` : ''}`,
+                    note: note || "No note provided",
+                    deleteNote: deleteNote || "Replaced with new file"
+                });
+
                 let oldFile = null;
 
                 if (type === "other") {
@@ -392,12 +437,77 @@ router.post("/upload", auth, upload.array("files"),
 
             await client.save();
 
+            // ===== LOG 1: SUCCESSFUL FILE UPLOAD =====
+            logToConsole("SUCCESS", "CLIENT_FILE_UPLOAD_COMPLETE", {
+                clientId: client.clientId,
+                clientName: client.name,
+                year,
+                month,
+                type,
+                categoryName: categoryName || "N/A",
+                uploadedFilesCount: uploadedFiles.length,
+                uploadedFileNames: uploadedFiles.map(f => f.fileName),
+                wasReplacement: !!replacedFile,
+                noteProvided: !!note,
+                status: "success"
+            });
+
+            // ===== ACTIVITY LOG 1: FILE UPLOAD =====
+            try {
+                await ActivityLog.create({
+                    userName: client.name,
+                    role: "CLIENT",
+                    clientId: client.clientId,
+                    clientName: client.name,
+                    action: replacedFile ? "CLIENT_FILE_UPDATED" : "CLIENT_FILE_UPLOADED",
+                    details: replacedFile 
+                        ? `Client "${client.name}" updated file: ${replacedFile} → ${uploadedFiles.map(f => f.fileName).join(', ')} in ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`
+                        : `Client "${client.name}" uploaded ${uploadedFiles.length} file(s): ${uploadedFiles.map(f => f.fileName).join(', ')} in ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`,
+                    dateTime: new Date().toLocaleString("en-IN"),
+                    metadata: {
+                        year,
+                        month,
+                        type,
+                        categoryName: categoryName || "N/A",
+                        filesCount: uploadedFiles.length,
+                        fileNames: uploadedFiles.map(f => f.fileName),
+                        wasReplacement: !!replacedFile,
+                        replacedFile: replacedFile || null,
+                        noteProvided: !!note
+                    }
+                });
+
+                logToConsole("INFO", "ACTIVITY_LOG_CREATED_FILE_UPLOAD", {
+                    action: replacedFile ? "CLIENT_FILE_UPDATED" : "CLIENT_FILE_UPLOADED",
+                    clientId: client.clientId,
+                    filesCount: uploadedFiles.length
+                });
+            } catch (logError) {
+                logToConsole("ERROR", "ACTIVITY_LOG_FAILED_FILE_UPLOAD", {
+                    error: logError.message
+                });
+            }
+
             res.json({
                 message: `${req.files.length} file(s) uploaded successfully`,
                 filesCount: req.files.length,
                 monthData: monthData
             });
         } catch (err) {
+            // ===== LOG 1: FILE UPLOAD ERROR =====
+            logToConsole("ERROR", "CLIENT_FILE_UPLOAD_FAILED", {
+                clientId: req.user?.clientId,
+                error: err.message,
+                stack: err.stack,
+                requestBody: {
+                    year: req.body?.year,
+                    month: req.body?.month,
+                    type: req.body?.type,
+                    categoryName: req.body?.categoryName,
+                    filesCount: req.files?.length || 0
+                }
+            });
+
             console.error("CLIENT_UPLOAD_ERROR:", err.message);
             res.status(500).json({ message: "Upload failed" });
         }
@@ -460,6 +570,18 @@ router.delete("/delete-file", auth, async (req, res) => {
             return res.status(403).json({ message: "Category is locked" });
         }
 
+        // ===== LOG 2: FILE DELETE REQUEST =====
+        logToConsole("INFO", "CLIENT_FILE_DELETE_REQUEST", {
+            clientId: client.clientId,
+            clientName: client.name,
+            year,
+            month,
+            fileName,
+            type,
+            categoryName: categoryName || "N/A",
+            deleteNote: deleteNote || "No reason provided"
+        });
+
         let deletedFileData = null;
 
         // Find and remove file
@@ -483,6 +605,12 @@ router.delete("/delete-file", auth, async (req, res) => {
         }
 
         if (!deletedFileData) {
+            logToConsole("WARN", "FILE_NOT_FOUND_FOR_DELETION", {
+                clientId: client.clientId,
+                fileName,
+                type,
+                categoryName
+            });
             return res.status(404).json({ message: "File not found" });
         }
 
@@ -524,11 +652,70 @@ router.delete("/delete-file", auth, async (req, res) => {
 
         await client.save();
 
+        // ===== LOG 2: SUCCESSFUL FILE DELETE =====
+        logToConsole("SUCCESS", "CLIENT_FILE_DELETE_COMPLETE", {
+            clientId: client.clientId,
+            clientName: client.name,
+            year,
+            month,
+            fileName,
+            fileSize: deletedFileData.fileSize,
+            fileType: deletedFileData.fileType,
+            category: `${type}${categoryName ? ` (${categoryName})` : ''}`,
+            deleteNote: deleteNote || "No reason provided",
+            uploadedAt: deletedFileData.uploadedAt,
+            deletedAt: new Date(),
+            status: "success"
+        });
+
+        // ===== ACTIVITY LOG 2: FILE DELETE =====
+        try {
+            await ActivityLog.create({
+                userName: client.name,
+                role: "CLIENT",
+                clientId: client.clientId,
+                clientName: client.name,
+                action: "CLIENT_FILE_DELETED",
+                details: `Client "${client.name}" deleted file: ${fileName} from ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}. Reason: ${deleteNote || "No reason provided"}`,
+                dateTime: new Date().toLocaleString("en-IN"),
+                metadata: {
+                    year,
+                    month,
+                    type,
+                    categoryName: categoryName || "N/A",
+                    fileName,
+                    fileSize: deletedFileData.fileSize,
+                    fileType: deletedFileData.fileType,
+                    deleteNote: deleteNote || "No reason provided",
+                    uploadedAt: deletedFileData.uploadedAt,
+                    deletedAt: new Date()
+                }
+            });
+
+            logToConsole("INFO", "ACTIVITY_LOG_CREATED_FILE_DELETE", {
+                action: "CLIENT_FILE_DELETED",
+                clientId: client.clientId,
+                fileName
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "ACTIVITY_LOG_FAILED_FILE_DELETE", {
+                error: logError.message
+            });
+        }
+
         res.json({
             message: "File deleted successfully",
             monthData: monthData
         });
     } catch (err) {
+        // ===== LOG 2: FILE DELETE ERROR =====
+        logToConsole("ERROR", "CLIENT_FILE_DELETE_FAILED", {
+            clientId: req.user?.clientId,
+            error: err.message,
+            stack: err.stack,
+            requestBody: req.body
+        });
+
         console.error("DELETE_FILE_ERROR:", err.message);
         res.status(500).json({ message: "Failed to delete file" });
     }
@@ -550,6 +737,22 @@ router.post("/save-lock", auth, async (req, res) => {
         }
 
         const monthData = getMonthData(client, year, month);
+
+        // ===== LOG 4: MONTH LOCK REQUEST =====
+        logToConsole("INFO", "CLIENT_MONTH_LOCK_REQUEST", {
+            clientId: client.clientId,
+            clientName: client.name,
+            year,
+            month,
+            currentStatus: {
+                isLocked: monthData.isLocked,
+                wasLockedOnce: monthData.wasLockedOnce
+            },
+            categoriesCount: {
+                main: ['sales', 'purchase', 'bank'].filter(k => monthData[k]).length,
+                other: monthData.other?.length || 0
+            }
+        });
 
         // LOCK MONTH
         monthData.isLocked = true;
@@ -574,11 +777,70 @@ router.post("/save-lock", auth, async (req, res) => {
 
         await client.save();
 
+        // ===== LOG 4: SUCCESSFUL MONTH LOCK =====
+        logToConsole("SUCCESS", "CLIENT_MONTH_LOCK_COMPLETE", {
+            clientId: client.clientId,
+            clientName: client.name,
+            year,
+            month,
+            lockedAt: new Date(),
+            categoriesLocked: {
+                sales: !!monthData.sales,
+                purchase: !!monthData.purchase,
+                bank: !!monthData.bank,
+                other: monthData.other?.length || 0
+            },
+            status: "success"
+        });
+
+        // ===== ACTIVITY LOG 4: MONTH LOCK =====
+        try {
+            await ActivityLog.create({
+                userName: client.name,
+                role: "CLIENT",
+                clientId: client.clientId,
+                clientName: client.name,
+                action: "CLIENT_MONTH_LOCKED",
+                details: `Client "${client.name}" locked month ${year}-${month}. All categories (${['sales', 'purchase', 'bank'].filter(k => monthData[k]).length} main + ${monthData.other?.length || 0} other) have been locked.`,
+                dateTime: new Date().toLocaleString("en-IN"),
+                metadata: {
+                    year,
+                    month,
+                    lockedAt: new Date(),
+                    categoriesLocked: {
+                        sales: !!monthData.sales,
+                        purchase: !!monthData.purchase,
+                        bank: !!monthData.bank,
+                        other: monthData.other?.length || 0
+                    }
+                }
+            });
+
+            logToConsole("INFO", "ACTIVITY_LOG_CREATED_MONTH_LOCK", {
+                action: "CLIENT_MONTH_LOCKED",
+                clientId: client.clientId,
+                year,
+                month
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "ACTIVITY_LOG_FAILED_MONTH_LOCK", {
+                error: logError.message
+            });
+        }
+
         res.json({
             message: "Month saved and locked",
             monthData: monthData
         });
     } catch (err) {
+        // ===== LOG 4: MONTH LOCK ERROR =====
+        logToConsole("ERROR", "CLIENT_MONTH_LOCK_FAILED", {
+            clientId: req.user?.clientId,
+            error: err.message,
+            stack: err.stack,
+            requestBody: req.body
+        });
+
         console.error("SAVE_LOCK_ERROR:", err.message);
         res.status(500).json({ message: "Failed to lock month" });
     }
