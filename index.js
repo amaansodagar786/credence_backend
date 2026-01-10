@@ -46,7 +46,7 @@ const Employee_task_info = require("./routes/employee-task");
 
 app.use("/client-enrollment", ClientEnrollment);
 app.use("/client", ClientAuth);
-app.use("/client-upload", clientUpload);
+app.use("/clientupload", clientUpload);
 
 
 app.use("/admin", adminRoutes);
