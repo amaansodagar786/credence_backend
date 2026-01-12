@@ -1023,4 +1023,216 @@ router.get("/test-simple", (req, res) => {
     });
 });
 
+
+
+
+/* ===============================
+   UPLOAD & LOCK CATEGORY (NEW ENDPOINT)
+================================ */
+router.post("/upload-and-lock", auth, upload.array("files"),
+    async (req, res) => {
+        try {
+            const {
+                year,
+                month,
+                type,
+                categoryName,
+                note
+            } = req.body;
+
+            if (!req.files || req.files.length === 0) {
+                return res.status(400).json({ message: "No files uploaded" });
+            }
+
+            const client = await Client.findOne({
+                clientId: req.user.clientId
+            });
+
+            if (!client) {
+                return res.status(404).json({ message: "Client not found" });
+            }
+
+            const monthData = getMonthData(client, year, month);
+
+            // Check if category is already locked
+            if (type === "other") {
+                const o = monthData.other?.find(
+                    (x) => x.categoryName === categoryName
+                );
+                if (o?.document?.isLocked) {
+                    return res.status(403).json({
+                        message: "Category is already locked"
+                    });
+                }
+            } else {
+                if (monthData[type]?.isLocked) {
+                    return res.status(403).json({
+                        message: "Category is already locked"
+                    });
+                }
+            }
+
+            // ===== LOG: UPLOAD & LOCK REQUEST =====
+            logToConsole("INFO", "CLIENT_UPLOAD_AND_LOCK_REQUEST", {
+                clientId: client.clientId,
+                clientName: client.name,
+                year,
+                month,
+                type,
+                categoryName: categoryName || "N/A",
+                filesCount: req.files.length,
+                fileNames: req.files.map(f => f.originalname)
+            });
+
+            // UPLOAD FILES TO S3
+            const uploadedFiles = [];
+
+            for (const file of req.files) {
+                const fileExt = file.originalname.split(".").pop();
+                const key = `clients/${client.clientId}/${year}/${month}/${uuidv4()}.${fileExt}`;
+
+                await s3.send(
+                    new PutObjectCommand({
+                        Bucket: process.env.AWS_BUCKET,
+                        Key: key,
+                        Body: file.buffer,
+                        ContentType: file.mimetype
+                    })
+                );
+
+                uploadedFiles.push({
+                    url: `https://${process.env.AWS_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`,
+                    uploadedAt: new Date(),
+                    uploadedBy: client.clientId,
+                    fileName: file.originalname,
+                    fileSize: file.size,
+                    fileType: file.mimetype,
+                    notes: []
+                });
+            }
+
+            // ADD FILES TO CATEGORY
+            let targetCategory;
+
+            if (type === "other") {
+                let otherCategory = monthData.other?.find(
+                    (x) => x.categoryName === categoryName
+                );
+
+                if (otherCategory) {
+                    otherCategory.document.files.push(...uploadedFiles);
+                    targetCategory = otherCategory.document;
+                } else {
+                    const newCategory = {
+                        categoryName,
+                        document: {
+                            files: uploadedFiles,
+                            categoryNotes: [],
+                            isLocked: false,
+                            wasLockedOnce: false
+                        }
+                    };
+                    monthData.other = monthData.other || [];
+                    monthData.other.push(newCategory);
+                    targetCategory = newCategory.document;
+                }
+            } else {
+                if (!monthData[type]) {
+                    monthData[type] = {
+                        files: uploadedFiles,
+                        categoryNotes: [],
+                        isLocked: false,
+                        wasLockedOnce: false
+                    };
+                } else {
+                    monthData[type].files.push(...uploadedFiles);
+                }
+                targetCategory = monthData[type];
+            }
+
+            // ADD NOTE IF PROVIDED
+            if (note) {
+                targetCategory.categoryNotes = targetCategory.categoryNotes || [];
+                targetCategory.categoryNotes.push({
+                    note,
+                    addedBy: client.clientId,
+                    addedAt: new Date()
+                });
+
+                monthData.monthNotes = monthData.monthNotes || [];
+                monthData.monthNotes.push({
+                    note,
+                    addedBy: client.clientId,
+                    addedAt: new Date()
+                });
+            }
+
+            // LOCK THE CATEGORY
+            targetCategory.isLocked = true;
+            targetCategory.wasLockedOnce = true;
+            targetCategory.lockedAt = new Date();
+            targetCategory.lockedBy = client.clientId;
+
+            await client.save();
+
+            // ===== LOG: SUCCESSFUL UPLOAD & LOCK =====
+            logToConsole("SUCCESS", "CLIENT_UPLOAD_AND_LOCK_COMPLETE", {
+                clientId: client.clientId,
+                clientName: client.name,
+                year,
+                month,
+                type,
+                categoryName: categoryName || "N/A",
+                uploadedFilesCount: uploadedFiles.length,
+                uploadedFileNames: uploadedFiles.map(f => f.fileName),
+                status: "success",
+                categoryLocked: true
+            });
+
+            // ===== ACTIVITY LOG =====
+            try {
+                await ActivityLog.create({
+                    userName: client.name,
+                    role: "CLIENT",
+                    clientId: client.clientId,
+                    clientName: client.name,
+                    action: "CLIENT_FILE_UPLOADED_AND_LOCKED",
+                    details: `Client "${client.name}" uploaded ${uploadedFiles.length} file(s) and locked ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`,
+                    dateTime: new Date().toLocaleString("en-IN"),
+                    metadata: {
+                        year,
+                        month,
+                        type,
+                        categoryName: categoryName || "N/A",
+                        filesCount: uploadedFiles.length,
+                        fileNames: uploadedFiles.map(f => f.fileName),
+                        noteProvided: !!note,
+                        categoryLocked: true
+                    }
+                });
+            } catch (logError) {
+                logToConsole("ERROR", "ACTIVITY_LOG_FAILED_UPLOAD_LOCK", {
+                    error: logError.message
+                });
+            }
+
+            res.json({
+                message: `${req.files.length} file(s) uploaded and category locked successfully!`,
+                filesCount: req.files.length,
+                monthData: monthData
+            });
+        } catch (err) {
+            logToConsole("ERROR", "CLIENT_UPLOAD_AND_LOCK_FAILED", {
+                clientId: req.user?.clientId,
+                error: err.message,
+                stack: err.stack
+            });
+
+            console.error("UPLOAD_AND_LOCK_ERROR:", err.message);
+            res.status(500).json({ message: "Upload and lock failed" });
+        }
+    }
+);
+
+
 module.exports = router;
