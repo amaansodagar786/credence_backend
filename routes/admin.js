@@ -390,9 +390,9 @@ router.post("/logout", async (req, res) => {
   try {
     res.clearCookie("accessToken", {
       httpOnly: true,
-      secure: true,      // HTTPS
-      sameSite: "none",  // 🔥 MUST MATCH COOKIE
-      path: "/"
+      secure: true,
+      sameSite: "none",
+      path: "/api"   // 🔥 THIS IS THE FIX
     });
 
 
