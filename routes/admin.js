@@ -390,15 +390,19 @@ router.get("/me", auth, async (req, res) => {
 ================================ */
 
 router.post("/logout", async (req, res) => {
+  console.log("🔥 LOGOUT API HIT");
+
   try {
+    console.log("➡️ Cookies BEFORE clear:", req.headers.cookie);
+
     res.clearCookie("accessToken", {
       httpOnly: true,
       secure: true,
       sameSite: "none",
-      path: "/"                // ✅ MUST MATCH LOGIN
+      path: "/"
     });
 
-
+    console.log("✅ clearCookie() CALLED");
 
     res.setHeader("Cache-Control", "no-store");
 
@@ -407,14 +411,14 @@ router.post("/logout", async (req, res) => {
       message: "Logged out successfully"
     });
   } catch (error) {
-    // even if error, force clear
+    console.log("❌ LOGOUT ERROR:", error);
+
     res.clearCookie("accessToken", {
       httpOnly: true,
       secure: true,
       sameSite: "none",
-      path: "/"                // ✅ MUST MATCH LOGIN
+      path: "/"
     });
-
 
     return res.status(200).json({
       success: true,
@@ -422,6 +426,7 @@ router.post("/logout", async (req, res) => {
     });
   }
 });
+
 
 
 /* ===============================
