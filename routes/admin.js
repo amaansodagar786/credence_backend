@@ -255,10 +255,13 @@ router.post("/login", async (req, res) => {
 
     res.cookie("accessToken", token, {
       httpOnly: true,
-      secure: true,        // REQUIRED on HTTPS
-      sameSite: "none",    // REQUIRED for Vercel ↔ Render
+      secure: true,
+      sameSite: "none",
+      path: "/",
       maxAge: 24 * 60 * 60 * 1000
     });
+
+
 
 
     // Console log: Cookie set
@@ -392,8 +395,9 @@ router.post("/logout", async (req, res) => {
       httpOnly: true,
       secure: true,
       sameSite: "none",
-      path: "/api"   // 🔥 THIS IS THE FIX
+      path: "/"                // ✅ MUST MATCH LOGIN
     });
+
 
 
     res.setHeader("Cache-Control", "no-store");
@@ -406,10 +410,11 @@ router.post("/logout", async (req, res) => {
     // even if error, force clear
     res.clearCookie("accessToken", {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/"
+      secure: true,
+      sameSite: "none",
+      path: "/"                // ✅ MUST MATCH LOGIN
     });
+
 
     return res.status(200).json({
       success: true,
