@@ -178,7 +178,7 @@ router.post("/action", auth, async (req, res) => {
   try {
     const { enrollId, action, rejectionReason } = req.body;
 
-    console.log("🎯 ADMIN ACTION REQUEST:", {
+    logToConsole("INFO", "ADMIN_ACTION_REQUEST", {
       enrollId,
       action,
       adminId: req.user.adminId,
@@ -188,14 +188,18 @@ router.post("/action", auth, async (req, res) => {
     // 1. FIND ENROLLMENT
     const enrollment = await ClientEnrollment.findOne({ enrollId });
     if (!enrollment) {
-      console.log("❌ Enrollment not found:", enrollId);
+      logToConsole("WARN", "ENROLLMENT_NOT_FOUND", { enrollId });
       return res.status(404).json({
         success: false,
         message: "Enrollment not found"
       });
     }
 
-    console.log("📄 Enrollment found:", enrollment.enrollId);
+    logToConsole("DEBUG", "ENROLLMENT_FOUND", {
+      enrollId: enrollment.enrollId,
+      email: enrollment.email,
+      status: enrollment.status
+    });
 
     // 2. REJECT ENROLLMENT
     if (action === "REJECT") {
@@ -205,8 +209,48 @@ router.post("/action", auth, async (req, res) => {
       enrollment.rejectionReason = rejectionReason || "No reason provided";
 
       await enrollment.save();
-      console.log("❌ Enrollment rejected:", enrollment.enrollId);
+      logToConsole("INFO", "ENROLLMENT_REJECTED", {
+        enrollId: enrollment.enrollId,
+        email: enrollment.email
+      });
 
+      // Send rejection email
+      try {
+        await sendEmail(
+          enrollment.email,
+          "Enrollment Status Update - Credence Accounting Services",
+          `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #ff6b6b;">Enrollment Status Update</h2>
+              <p>Dear ${enrollment.firstName} ${enrollment.lastName},</p>
+              <p>We regret to inform you that your enrollment application has been reviewed and <strong>rejected</strong>.</p>
+              
+              <div style="background: #fff5f5; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ff6b6b;">
+                <h3 style="margin-top: 0;">Reason for Rejection:</h3>
+                <p>${enrollment.rejectionReason}</p>
+              </div>
+              
+              <p>If you believe this was a mistake or would like to provide additional information, please contact our support team.</p>
+              
+              <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+                <p style="color: #666; font-size: 14px;">
+                  Credence Accounting Services Support Team
+                </p>
+              </div>
+            </div>
+          `
+        );
+        logToConsole("INFO", "REJECTION_EMAIL_SENT", {
+          to: enrollment.email
+        });
+      } catch (emailError) {
+        logToConsole("ERROR", "REJECTION_EMAIL_FAILED", {
+          email: enrollment.email,
+          error: emailError.message
+        });
+      }
+
+      // Activity log
       await ActivityLog.create({
         userName: req.user.name,
         role: "ADMIN",
@@ -225,7 +269,7 @@ router.post("/action", auth, async (req, res) => {
       });
     }
 
-    // 3. APPROVE ENROLLMENT → CREATE CLIENT ACCOUNT
+    // 3. APPROVE ENROLLMENT
     if (action === "APPROVE") {
       // Check if client already exists with this email
       const existingClient = await Client.findOne({
@@ -233,7 +277,10 @@ router.post("/action", auth, async (req, res) => {
       });
 
       if (existingClient) {
-        console.log("⚠️ Client already exists:", enrollment.email);
+        logToConsole("WARN", "DUPLICATE_CLIENT_EMAIL", {
+          email: enrollment.email,
+          existingClientId: existingClient.clientId
+        });
         return res.status(409).json({
           success: false,
           message: "A client with this email already exists",
@@ -249,16 +296,12 @@ router.post("/action", auth, async (req, res) => {
       // Prepare client data
       const clientData = {
         clientId,
-
-        // EXISTING FIELDS (KEEP AS IS)
         name: `${enrollment.firstName} ${enrollment.lastName}`,
         email: enrollment.email.toLowerCase().trim(),
         phone: enrollment.mobile,
         address: enrollment.address,
         password: hashedPassword,
         isActive: true,
-
-        // ADDITIONAL FIELDS FROM ENROLLMENT
         firstName: enrollment.firstName,
         lastName: enrollment.lastName,
         visaType: enrollment.visaType,
@@ -271,26 +314,24 @@ router.post("/action", auth, async (req, res) => {
         businessNature: enrollment.businessNature,
         registerTrade: enrollment.registerTrade,
         planSelected: enrollment.planSelected,
-
-        // TRACKING
         enrollmentId: enrollment.enrollId,
         enrollmentDate: new Date(),
-
-        // INITIALIZE EMPTY DOCUMENTS STRUCTURE
         documents: new Map(),
         employeeAssignments: []
       };
 
-      console.log("💾 Creating client with data:", {
+      logToConsole("INFO", "CREATING_CLIENT", {
         clientId,
-        name: clientData.name,
         email: clientData.email,
         planSelected: clientData.planSelected
       });
 
       // Create client account
       const client = await Client.create(clientData);
-      console.log("✅ Client created successfully:", client.clientId);
+      logToConsole("INFO", "CLIENT_CREATED", {
+        clientId: client.clientId,
+        name: client.name
+      });
 
       // Update enrollment status
       enrollment.status = "APPROVED";
@@ -298,10 +339,18 @@ router.post("/action", auth, async (req, res) => {
       enrollment.reviewedAt = new Date();
       enrollment.clientId = clientId;
       await enrollment.save();
-      console.log("✅ Enrollment approved:", enrollment.enrollId);
+      logToConsole("INFO", "ENROLLMENT_APPROVED", {
+        enrollId: enrollment.enrollId,
+        clientId
+      });
 
       // Send welcome email to client
       try {
+        logToConsole("DEBUG", "SENDING_WELCOME_EMAIL", {
+          to: enrollment.email
+        });
+
+        // **CRITICAL: Use await and proper timeout handling**
         await sendEmail(
           enrollment.email,
           "Welcome to Credence - Your Account Has Been Approved",
@@ -320,8 +369,6 @@ router.post("/action", auth, async (req, res) => {
                 <p><strong>Plan:</strong> ${enrollment.planSelected}</p>
               </div>
               
-              
-              
               <p>You can now access your client dashboard to upload documents, track progress.</p>
               
               <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
@@ -333,9 +380,17 @@ router.post("/action", auth, async (req, res) => {
             </div>
           `
         );
-        console.log("📧 Welcome email sent to:", enrollment.email);
+
+        logToConsole("INFO", "WELCOME_EMAIL_SENT", {
+          to: enrollment.email,
+          clientId
+        });
       } catch (emailError) {
-        console.error("❌ Failed to send welcome email:", emailError.message);
+        logToConsole("ERROR", "WELCOME_EMAIL_FAILED", {
+          email: enrollment.email,
+          error: emailError.message,
+          stack: emailError.stack
+        });
         // Don't fail the request if email fails
       }
 
@@ -364,21 +419,20 @@ router.post("/action", auth, async (req, res) => {
     }
 
     // 4. INVALID ACTION
-    console.log("⚠️ Invalid action requested:", action);
+    logToConsole("WARN", "INVALID_ACTION", { action });
     return res.status(400).json({
       success: false,
       message: "Invalid action. Use 'APPROVE' or 'REJECT'"
     });
 
   } catch (error) {
-    console.error("❌ ADMIN ACTION ERROR:", error);
-    console.error("Error details:", {
-      name: error.name,
-      message: error.message,
-      stack: error.stack
+    logToConsole("ERROR", "ADMIN_ACTION_FAILED", {
+      error: error.message,
+      stack: error.stack,
+      enrollId: req.body.enrollId,
+      action: req.body.action
     });
 
-    // Handle duplicate key error
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -395,9 +449,11 @@ router.post("/action", auth, async (req, res) => {
   }
 });
 
+
 /* ===============================
    GET SINGLE ENROLLMENT DETAILS (FOR VIEW MODAL)
 ================================ */
+
 router.get("/enrollment/:enrollId", auth, async (req, res) => {
   try {
     const enrollment = await ClientEnrollment.findOne({
