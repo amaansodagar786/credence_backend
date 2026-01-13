@@ -385,45 +385,38 @@ router.get("/me", auth, async (req, res) => {
 /* ===============================
    ADMIN LOGOUT
 ================================ */
-router.post("/logout", auth, async (req, res) => {
-  try {
-    logToConsole("INFO", "ADMIN_LOGOUT_REQUEST", {
-      adminId: req.user.id,
-      adminName: req.user.name,
-      ip: req.ip
-    });
 
-    // ✅ MUST MATCH LOGIN COOKIE OPTIONS
+router.post("/logout", async (req, res) => {
+  try {
     res.clearCookie("accessToken", {
       httpOnly: true,
-      secure: true,
-      sameSite: "none"
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/"
     });
 
-    logToConsole("INFO", "ADMIN_COOKIE_CLEARED", {
-      adminId: req.user.id,
-      cookieName: "accessToken"
+    res.setHeader("Cache-Control", "no-store");
+
+    return res.status(200).json({
+      success: true,
+      message: "Logged out successfully"
     });
-
-    await log(req.user.name, "ADMIN_LOGOUT", "Admin logged out successfully");
-
-    res.json({
-      message: "Logged out successfully",
-      clearedCookie: true
-    });
-
   } catch (error) {
-    logToConsole("ERROR", "ADMIN_LOGOUT_ERROR", {
-      error: error.message,
-      stack: error.stack,
-      ip: req.ip
+    // even if error, force clear
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/"
     });
 
-    res.status(500).json({
-      message: "Error during logout"
+    return res.status(200).json({
+      success: true,
+      message: "Logged out (forced)"
     });
   }
 });
+
 
 /* ===============================
    GET ALL EMPLOYEE TASK LOGS (ADMIN ONLY)
