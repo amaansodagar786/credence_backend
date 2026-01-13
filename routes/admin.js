@@ -387,53 +387,40 @@ router.get("/me", auth, async (req, res) => {
 ================================ */
 router.post("/logout", auth, async (req, res) => {
   try {
-    // Console log: Admin logout request
     logToConsole("INFO", "ADMIN_LOGOUT_REQUEST", {
       adminId: req.user.id,
       adminName: req.user.name,
       ip: req.ip
     });
 
-    res.clearCookie("accessToken");
+    // ✅ MUST MATCH LOGIN COOKIE OPTIONS
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none"
+    });
 
-    // Console log: Cookie cleared
     logToConsole("INFO", "ADMIN_COOKIE_CLEARED", {
       adminId: req.user.id,
       cookieName: "accessToken"
     });
 
-    // Save success to ActivityLog
     await log(req.user.name, "ADMIN_LOGOUT", "Admin logged out successfully");
 
-    // Console log: Logout successful
-    logToConsole("SUCCESS", "ADMIN_LOGOUT_SUCCESS", {
-      adminId: req.user.id,
-      adminName: req.user.name,
-      timestamp: new Date().toISOString()
-    });
-
     res.json({
-      message: "Logged out",
+      message: "Logged out successfully",
       clearedCookie: true
     });
 
   } catch (error) {
-    // Console log: Logout error
     logToConsole("ERROR", "ADMIN_LOGOUT_ERROR", {
       error: error.message,
       stack: error.stack,
-      ip: req.ip,
-      endpoint: "/logout",
-      adminId: req.user?.id
+      ip: req.ip
     });
 
-    // Save error to ActivityLog
-    await log("SYSTEM", "ADMIN_LOGOUT_ERROR", `Error during admin logout: ${error.message}`);
-
     res.status(500).json({
-      message: "Error during logout",
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      timestamp: new Date().toISOString()
+      message: "Error during logout"
     });
   }
 });

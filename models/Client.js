@@ -8,13 +8,13 @@ const noteSchema = new mongoose.Schema(
     note: { type: String, required: true },
     addedBy: { type: String },
     addedAt: { type: Date, default: Date.now },
-    employeeId: { type: String } // NEW: Track which employee added the note
+    employeeId: { type: String }
   },
   { _id: false }
 );
 
 /* ===============================
-   SINGLE DOCUMENT (FILE LEVEL) - UPDATED WITH NOTES
+   SINGLE DOCUMENT (FILE LEVEL)
 ================================ */
 const singleDocumentSchema = new mongoose.Schema(
   {
@@ -24,8 +24,7 @@ const singleDocumentSchema = new mongoose.Schema(
     fileName: String,
     fileSize: Number,
     fileType: String,
-    // NEW: Employee notes for this file
-    notes: [noteSchema] // Each file can have multiple employee notes
+    notes: [noteSchema]
   },
   { _id: false }
 );
@@ -35,18 +34,11 @@ const singleDocumentSchema = new mongoose.Schema(
 ================================ */
 const categorySchema = new mongoose.Schema(
   {
-    // Multiple files per category
     files: [singleDocumentSchema],
-    
-    // Lock/note info stays at CATEGORY level
     isLocked: { type: Boolean, default: false },
     lockedAt: Date,
     lockedBy: String,
-    
-    // Category-level notes (for client updates)
     categoryNotes: [noteSchema],
-    
-    // Track if category was ever locked
     wasLockedOnce: { type: Boolean, default: false }
   },
   { _id: false }
@@ -58,17 +50,16 @@ const categorySchema = new mongoose.Schema(
 const otherCategorySchema = new mongoose.Schema(
   {
     categoryName: { type: String, required: true },
-    document: categorySchema  // Changed to categorySchema to support multiple files
+    document: categorySchema
   },
   { _id: false }
 );
 
 /* ===============================
-   MONTH DATA - NO CHANGES NEEDED
+   MONTH DATA
 ================================ */
 const monthDataSchema = new mongoose.Schema(
   {
-    // Each category now contains array of files
     sales: categorySchema,
     purchase: categorySchema,
     bank: categorySchema,
@@ -87,7 +78,7 @@ const monthDataSchema = new mongoose.Schema(
 );
 
 /* ===============================
-   EMPLOYEE ASSIGNMENT - NO CHANGES
+   EMPLOYEE ASSIGNMENT
 ================================ */
 const employeeAssignmentSchema = new mongoose.Schema(
   {
@@ -119,18 +110,38 @@ const employeeAssignmentSchema = new mongoose.Schema(
 );
 
 /* ===============================
-   CLIENT SCHEMA - NO CHANGES
+   UPDATED CLIENT SCHEMA (WITH ALL ENROLLMENT FIELDS)
 ================================ */
 const clientSchema = new mongoose.Schema(
   {
-    clientId: { type: String, unique: true },
-    name: String,
+    // EXISTING FIELDS (DO NOT CHANGE)
+    clientId: { type: String, unique: true, required: true },
+    name: String,           // firstName + lastName from enrollment
     email: String,
-    phone: String,
-    address: String,
+    phone: String,          // mobile from enrollment
+    address: String,        // address from enrollment
     password: String,
     isActive: { type: Boolean, default: true },
     
+    // ADDITIONAL FIELDS FROM ENROLLMENT
+    firstName: String,      // Original first name from enrollment
+    lastName: String,       // Original last name from enrollment
+    visaType: String,
+    hasStrongId: String,
+    businessAddress: String,
+    bankAccount: String,
+    bicCode: String,
+    businessName: String,
+    vatPeriod: String,
+    businessNature: String,
+    registerTrade: String,
+    planSelected: String,
+    
+    // STATUS & TRACKING
+    enrollmentId: String,   // Reference to original enrollment
+    enrollmentDate: Date,   // When enrollment was approved
+    
+    // EXISTING DOCUMENT STRUCTURE
     documents: {
       type: Map,
       of: {
