@@ -646,11 +646,11 @@ router.get("/assigned-clients", async (req, res) => {
 });
 
 /* ===============================
-   TOGGLE ACCOUNTING DONE STATUS
+   TOGGLE ACCOUNTING DONE STATUS (UPDATED WITH TASK FILTERING)
 ================================ */
 router.put("/toggle-accounting-done", async (req, res) => {
   try {
-    const { clientId, year, month, accountingDone } = req.body;
+    const { clientId, year, month, task, accountingDone } = req.body;
     const token = req.cookies?.employeeToken;
 
     // Console log: Toggle request
@@ -658,19 +658,21 @@ router.put("/toggle-accounting-done", async (req, res) => {
       clientId,
       year,
       month,
+      task,
       accountingDone,
       ip: req.ip
     });
 
-    // Validation
-    if (!clientId || !year || !month) {
+    // Validation (ADDED TASK TO REQUIRED FIELDS)
+    if (!clientId || !year || !month || !task) {
       logToConsole("WARN", "MISSING_PARAMETERS_ACCOUNTING", {
         clientId: !!clientId,
         year: !!year,
-        month: !!month
+        month: !!month,
+        task: !!task
       });
       return res.status(400).json({
-        message: "Missing required parameters: clientId, year, month"
+        message: "Missing required parameters: clientId, year, month, task"
       });
     }
 
@@ -706,11 +708,12 @@ router.put("/toggle-accounting-done", async (req, res) => {
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    // Find the assignment using composite key (clientId + year + month)
+    // Find the assignment using composite key (clientId + year + month + task)
     const assignmentIndex = employee.assignedClients.findIndex(
       a => a.clientId === clientId &&
         a.year === parseInt(year) &&
-        a.month === parseInt(month)
+        a.month === parseInt(month) &&
+        a.task === task
     );
 
     if (assignmentIndex === -1) {
@@ -718,10 +721,14 @@ router.put("/toggle-accounting-done", async (req, res) => {
         clientId,
         year,
         month,
-        employeeId: employee.employeeId
+        task,
+        employeeId: employee.employeeId,
+        availableTasks: employee.assignedClients
+          .filter(a => a.clientId === clientId && a.year === parseInt(year) && a.month === parseInt(month))
+          .map(a => a.task)
       });
       return res.status(404).json({
-        message: `Assignment not found for client ${clientId}, ${month}/${year}`
+        message: `Assignment not found for client ${clientId}, ${month}/${year}, task: ${task}`
       });
     }
 
@@ -736,8 +743,10 @@ router.put("/toggle-accounting-done", async (req, res) => {
       clientId,
       year,
       month,
+      task,
       accountingDone,
-      employeeId: employee.employeeId
+      employeeId: employee.employeeId,
+      assignmentId: employee.assignedClients[assignmentIndex]._id
     });
 
     // Also update in Client collection for consistency
@@ -750,7 +759,8 @@ router.put("/toggle-accounting-done", async (req, res) => {
       const clientAssignmentIndex = client.employeeAssignments.findIndex(
         a => a.year === parseInt(year) &&
           a.month === parseInt(month) &&
-          a.employeeId === employee.employeeId
+          a.employeeId === employee.employeeId &&
+          a.task === task
       );
 
       if (clientAssignmentIndex !== -1) {
@@ -767,9 +777,29 @@ router.put("/toggle-accounting-done", async (req, res) => {
           client.documents.get(yearKey).get(monthKey)) {
 
           const monthData = client.documents.get(yearKey).get(monthKey);
-          monthData.accountingDone = accountingDone;
-          monthData.accountingDoneAt = new Date();
-          monthData.accountingDoneBy = employee.employeeId;
+          // Note: Documents are per month, not per task
+          // Accounting status in documents remains per month
+          // We'll keep it as is, or you can track per task in documents too
+          // For now, we'll update if this is the first task being marked done
+
+          // Check if all tasks for this month are done
+          const allTasksForMonth = client.employeeAssignments.filter(
+            a => a.year === parseInt(year) &&
+              a.month === parseInt(month) &&
+              a.employeeId === employee.employeeId
+          );
+
+          const allDone = allTasksForMonth.every(t => t.accountingDone);
+
+          if (allDone) {
+            monthData.accountingDone = true;
+            monthData.accountingDoneAt = new Date();
+            monthData.accountingDoneBy = employee.employeeId;
+          } else {
+            monthData.accountingDone = false;
+            monthData.accountingDoneAt = null;
+            monthData.accountingDoneBy = null;
+          }
 
           // Update the map
           if (!client.documents.get(yearKey)) {
@@ -784,6 +814,7 @@ router.put("/toggle-accounting-done", async (req, res) => {
           clientId,
           year,
           month,
+          task,
           accountingDone
         });
       }
@@ -797,13 +828,14 @@ router.put("/toggle-accounting-done", async (req, res) => {
         employeeId: employee.employeeId,
         clientId: clientId,
         action: accountingDone ? "ACCOUNTING_MARKED_DONE" : "ACCOUNTING_MARKED_PENDING",
-        details: `Accounting ${accountingDone ? 'marked as done' : 'marked as pending'} for client ${clientId}, ${month}/${year}`,
+        details: `Accounting ${accountingDone ? 'marked as done' : 'marked as pending'} for client ${clientId}, ${month}/${year}, task: ${task}`,
         dateTime: new Date().toLocaleString("en-IN")
       });
 
       logToConsole("INFO", "ACCOUNTING_ACTIVITY_LOG_CREATED", {
         employeeId: employee.employeeId,
         clientId: clientId,
+        task,
         accountingDone
       });
     } catch (logError) {
@@ -817,6 +849,7 @@ router.put("/toggle-accounting-done", async (req, res) => {
       clientId,
       year,
       month,
+      task,
       employeeId: employee.employeeId,
       accountingDone,
       timestamp: new Date().toISOString()
@@ -828,6 +861,7 @@ router.put("/toggle-accounting-done", async (req, res) => {
         clientId,
         year: parseInt(year),
         month: parseInt(month),
+        task,
         accountingDone,
         accountingDoneAt: new Date(),
         accountingDoneBy: employee.employeeId

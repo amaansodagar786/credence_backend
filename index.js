@@ -46,6 +46,7 @@ const EmployeeRoutes = require("./routes/employee");
 const EmployeeTasks = require("./routes/employeeTaskLog");
 const clientUpload = require("./routes/clientUpload");
 const Employee_task_info = require("./routes/employee-task");
+const scheduleCallRoutes = require("./routes/scheduleCallRoutes");
 
 
 app.use("/client-enrollment", ClientEnrollment);
@@ -64,6 +65,10 @@ app.use("/employee-task", EmployeeTasks);
 app.use("/admin", Employee_task_info);
 
 
+app.use("/schedule-call", scheduleCallRoutes);
+
+
+
 
 
 
@@ -72,7 +77,7 @@ app.use("/admin", Employee_task_info);
 // BASIC ROUTE
 // ===============================
 app.get("/", (req, res) => {
-    res.send("Accounting Portal Backend is running");
+    res.send("Accounting Portal Backend is running crednece");
 });
 
 // ===============================

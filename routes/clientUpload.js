@@ -84,123 +84,6 @@ const getMonthData = (client, year, month) => {
     return client.documents.get(y).get(m);
 };
 
-/* ===============================
-   GET MONTH DATA - UPDATED TO INCLUDE EMPLOYEE NOTES
-================================ */
-// router.get("/month-data", auth, async (req, res) => {
-//     try {
-//         const { year, month } = req.query;
-
-//         const client = await Client.findOne({
-//             clientId: req.user.clientId
-//         });
-
-//         if (!client) {
-//             return res.status(404).json({ message: "Client not found" });
-//         }
-
-//         const monthData = getMonthData(client, year, month);
-
-//         // NEW: Get employee names for notes
-//         const Employee = require("../models/Employee");
-//         const employeeMap = new Map();
-
-//         // Collect all employeeIds from notes
-//         const employeeIds = new Set();
-
-//         // Helper to collect employeeIds
-//         const collectEmployeeIds = (notesArray) => {
-//             if (!notesArray || !Array.isArray(notesArray)) return;
-//             notesArray.forEach(note => {
-//                 if (note.employeeId) employeeIds.add(note.employeeId);
-//             });
-//         };
-
-//         // Process main categories
-//         ['sales', 'purchase', 'bank'].forEach(category => {
-//             if (monthData[category]) {
-//                 const categoryData = monthData[category];
-//                 // Collect from category notes
-//                 collectEmployeeIds(categoryData.categoryNotes);
-//                 // Collect from file notes
-//                 if (categoryData.files && Array.isArray(categoryData.files)) {
-//                     categoryData.files.forEach(file => {
-//                         collectEmployeeIds(file.notes);
-//                     });
-//                 }
-//             }
-//         });
-
-//         // Process other categories
-//         if (monthData.other && Array.isArray(monthData.other)) {
-//             monthData.other.forEach(otherCategory => {
-//                 if (otherCategory.document) {
-//                     collectEmployeeIds(otherCategory.document.categoryNotes);
-//                     if (otherCategory.document.files && Array.isArray(otherCategory.document.files)) {
-//                         otherCategory.document.files.forEach(file => {
-//                             collectEmployeeIds(file.notes);
-//                         });
-//                     }
-//                 }
-//             });
-//         }
-
-//         // Fetch employee names
-//         if (employeeIds.size > 0) {
-//             const employees = await Employee.find(
-//                 { employeeId: { $in: Array.from(employeeIds) } },
-//                 { employeeId: 1, name: 1 }
-//             );
-
-//             employees.forEach(emp => {
-//                 employeeMap.set(emp.employeeId, emp.name);
-//             });
-//         }
-
-//         // Helper to populate employee names
-//         const populateEmployeeNames = (notesArray) => {
-//             if (!notesArray || !Array.isArray(notesArray)) return;
-//             notesArray.forEach(note => {
-//                 if (note.employeeId && employeeMap.has(note.employeeId)) {
-//                     note.employeeName = employeeMap.get(note.employeeId);
-//                 } else {
-//                     note.employeeName = note.addedBy || 'Unknown';
-//                 }
-//             });
-//         };
-
-//         // Populate employee names in all notes
-//         ['sales', 'purchase', 'bank'].forEach(category => {
-//             if (monthData[category]) {
-//                 const categoryData = monthData[category];
-//                 populateEmployeeNames(categoryData.categoryNotes);
-//                 if (categoryData.files && Array.isArray(categoryData.files)) {
-//                     categoryData.files.forEach(file => {
-//                         populateEmployeeNames(file.notes);
-//                     });
-//                 }
-//             }
-//         });
-
-//         if (monthData.other && Array.isArray(monthData.other)) {
-//             monthData.other.forEach(otherCategory => {
-//                 if (otherCategory.document) {
-//                     populateEmployeeNames(otherCategory.document.categoryNotes);
-//                     if (otherCategory.document.files && Array.isArray(otherCategory.document.files)) {
-//                         otherCategory.document.files.forEach(file => {
-//                             populateEmployeeNames(file.notes);
-//                         });
-//                     }
-//                 }
-//             });
-//         }
-
-//         res.json(monthData);
-//     } catch (err) {
-//         console.error("GET_MONTH_DATA_ERROR:", err.message);
-//         res.status(500).json({ message: "Failed to fetch month data" });
-//     }
-// });
 
 router.get("/month-data", auth, async (req, res) => {
     try {
@@ -982,6 +865,39 @@ router.post("/save-lock", auth, async (req, res) => {
 /* ===============================
    GET EMPLOYEE ASSIGNMENT INFO
 ================================ */
+// router.get("/employee-assignment", auth, async (req, res) => {
+//     try {
+//         const { year, month } = req.query;
+
+//         const client = await Client.findOne({
+//             clientId: req.user.clientId
+//         });
+
+//         if (!client) {
+//             return res.status(404).json({ message: "Client not found" });
+//         }
+
+//         const assignment = client.employeeAssignments?.find(
+//             assignment =>
+//                 String(assignment.year) === String(year) &&
+//                 String(assignment.month) === String(month)
+//         );
+
+//         res.json(assignment || null);
+//     } catch (err) {
+//         console.error("GET_EMPLOYEE_ASSIGNMENT_ERROR:", err.message);
+//         res.status(500).json({ message: "Failed to fetch employee assignment" });
+//     }
+// });
+
+
+
+
+
+
+/* ===============================
+   GET EMPLOYEE ASSIGNMENT INFO (UPDATED FOR MULTIPLE EMPLOYEES)
+================================ */
 router.get("/employee-assignment", auth, async (req, res) => {
     try {
         const { year, month } = req.query;
@@ -994,20 +910,62 @@ router.get("/employee-assignment", auth, async (req, res) => {
             return res.status(404).json({ message: "Client not found" });
         }
 
-        const assignment = client.employeeAssignments?.find(
+        // ✅ CHANGE 1: Get ALL assignments for this month (not just first)
+        const assignments = client.employeeAssignments?.filter(
             assignment =>
                 String(assignment.year) === String(year) &&
-                String(assignment.month) === String(month)
+                String(assignment.month) === String(month) &&
+                !assignment.isRemoved  // Only active assignments
         );
 
-        res.json(assignment || null);
+        if (!assignments || assignments.length === 0) {
+            return res.json([]); // Return empty array instead of null
+        }
+
+        // ✅ CHANGE 2: Get ALL employee IDs from assignments
+        const employeeIds = assignments.map(a => a.employeeId);
+
+        // ✅ CHANGE 3: Fetch employee details INCLUDING phone numbers
+        const Employee = require("../models/Employee");
+        const employees = await Employee.find(
+            { employeeId: { $in: employeeIds } },
+            { employeeId: 1, name: 1, phone: 1 } // ✅ ADDED phone: 1
+        );
+
+        // Create employee map for quick lookup
+        const employeeMap = new Map();
+        employees.forEach(emp => {
+            employeeMap.set(emp.employeeId, {
+                name: emp.name,
+                phone: emp.phone || "N/A"
+            });
+        });
+
+        // ✅ CHANGE 4: Enrich assignments with employee details
+        const enrichedAssignments = assignments.map(assignment => {
+            const empInfo = employeeMap.get(assignment.employeeId);
+            return {
+                employeeId: assignment.employeeId,
+                employeeName: empInfo?.name || "Unknown",
+                employeePhone: empInfo?.phone || "N/A", // ✅ NEW FIELD
+                task: assignment.task,
+                accountingDone: assignment.accountingDone,
+                accountingDoneAt: assignment.accountingDoneAt,
+                accountingDoneBy: assignment.accountingDoneBy,
+                assignedAt: assignment.assignedAt,
+                assignedBy: assignment.assignedBy,
+                adminName: assignment.adminName
+            };
+        });
+
+        // ✅ CHANGE 5: Return ARRAY (not single object)
+        res.json(enrichedAssignments);
+
     } catch (err) {
         console.error("GET_EMPLOYEE_ASSIGNMENT_ERROR:", err.message);
-        res.status(500).json({ message: "Failed to fetch employee assignment" });
+        res.status(500).json({ message: "Failed to fetch employee assignments" });
     }
 });
-
-
 
 /* ===============================
    SIMPLE TEST ROUTE TO CHECK IF FILE IS LOADED

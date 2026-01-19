@@ -560,7 +560,7 @@ router.get("/clients", auth, async (req, res) => {
 });
 
 /* ===============================
-   GET SINGLE CLIENT (MONTH DATA) - UPDATED FOR MULTIPLE FILES STRUCTURE
+   GET SINGLE CLIENT (MONTH DATA) - UPDATED FOR MULTIPLE FILES & MULTIPLE EMPLOYEES
 ================================ */
 router.get("/clients/:clientId", auth, async (req, res) => {
   try {
@@ -589,7 +589,9 @@ router.get("/clients/:clientId", auth, async (req, res) => {
     console.log("🔍 DEBUG: Original client data documents:",
       clientData.documents ? Object.keys(clientData.documents) : "No documents");
 
-    // Get all unique employeeIds from ALL notes in the entire document structure
+    // ===================================================
+    // 1. GET ALL EMPLOYEE IDs FROM NOTES (Same as before)
+    // ===================================================
     const employeeIds = new Set();
 
     // Helper function to collect employeeIds from notes
@@ -599,7 +601,6 @@ router.get("/clients/:clientId", auth, async (req, res) => {
         if (note.employeeId) {
           employeeIds.add(note.employeeId);
         }
-        // Also check addedBy field (some notes might have employeeId in addedBy)
         if (note.addedBy && !note.employeeId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(note.addedBy)) {
           employeeIds.add(note.addedBy);
         }
@@ -688,9 +689,11 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       }
     }
 
-    console.log("🔍 DEBUG: Found employeeIds:", Array.from(employeeIds));
+    console.log("🔍 DEBUG: Found employeeIds from notes:", Array.from(employeeIds));
 
-    // Fetch employee names for all collected IDs
+    // ===================================================
+    // 2. FETCH EMPLOYEE NAMES FOR NOTES (Same as before)
+    // ===================================================
     const employeeIdArray = Array.from(employeeIds);
     let employeeMap = new Map();
 
@@ -699,13 +702,16 @@ router.get("/clients/:clientId", auth, async (req, res) => {
         const Employee = require("../models/Employee");
         const employees = await Employee.find(
           { employeeId: { $in: employeeIdArray } },
-          { employeeId: 1, name: 1 }
+          { employeeId: 1, name: 1, phone: 1 }
         );
 
-        console.log("🔍 DEBUG: Fetched employees:", employees.map(e => ({ id: e.employeeId, name: e.name })));
+        console.log("🔍 DEBUG: Fetched employees for notes:", employees.map(e => ({ id: e.employeeId, name: e.name })));
 
         employees.forEach(emp => {
-          employeeMap.set(emp.employeeId, emp.name);
+          employeeMap.set(emp.employeeId, {
+            name: emp.name,
+            phone: emp.phone || "N/A"
+          });
         });
 
         logToConsole("DEBUG", "EMPLOYEES_FETCHED_FOR_NOTES", {
@@ -727,14 +733,14 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       notesArray.forEach(note => {
         // First try to get name from employeeId
         if (note.employeeId && employeeMap.has(note.employeeId)) {
-          note.employeeName = employeeMap.get(note.employeeId);
+          note.employeeName = employeeMap.get(note.employeeId).name;
         }
         // If no employeeName found, check addedBy (might be employeeId)
         else if (!note.employeeName && note.addedBy) {
           // Check if addedBy is an employeeId UUID
           if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(note.addedBy)) {
             if (employeeMap.has(note.addedBy)) {
-              note.employeeName = employeeMap.get(note.addedBy);
+              note.employeeName = employeeMap.get(note.addedBy).name;
             }
           }
           // If addedBy is already a name, keep it
@@ -809,54 +815,136 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       }
     }
 
-    // Also process employee assignments to get employee names
-    if (clientData.employeeAssignments && Array.isArray(clientData.employeeAssignments)) {
-      const assignmentEmployeeIds = clientData.employeeAssignments
-        .filter(assignment => assignment.employeeId)
+    // ===================================================
+    // 3. PROCESS EMPLOYEE ASSIGNMENTS - UPDATED FOR MULTIPLE EMPLOYEES
+    // ===================================================
+    console.log("🔍 DEBUG: Processing employee assignments...");
+
+    // ✅ CHANGE: Get ALL employee assignments
+    const allAssignments = clientData.employeeAssignments || [];
+    console.log("🔍 DEBUG: Total assignments found:", allAssignments.length);
+
+    if (allAssignments.length > 0) {
+      // Get unique employeeIds from assignments
+      const assignmentEmployeeIds = allAssignments
+        .filter(assignment => assignment.employeeId && !assignment.isRemoved)
         .map(assignment => assignment.employeeId);
 
-      if (assignmentEmployeeIds.length > 0) {
+      const uniqueEmployeeIds = [...new Set(assignmentEmployeeIds)];
+
+      console.log("🔍 DEBUG: Unique employeeIds from assignments:", uniqueEmployeeIds);
+
+      if (uniqueEmployeeIds.length > 0) {
         try {
           const Employee = require("../models/Employee");
           const assignmentEmployees = await Employee.find(
-            { employeeId: { $in: assignmentEmployeeIds } },
-            { employeeId: 1, name: 1 }
+            { employeeId: { $in: uniqueEmployeeIds } },
+            { employeeId: 1, name: 1, phone: 1 }
           );
+
+          console.log("🔍 DEBUG: Fetched assignment employees:",
+            assignmentEmployees.map(e => ({ id: e.employeeId, name: e.name })));
 
           const assignmentEmployeeMap = new Map();
           assignmentEmployees.forEach(emp => {
-            assignmentEmployeeMap.set(emp.employeeId, emp.name);
+            assignmentEmployeeMap.set(emp.employeeId, {
+              name: emp.name,
+              phone: emp.phone || "N/A"
+            });
           });
 
-          // Populate employee names in assignments
-          clientData.employeeAssignments.forEach(assignment => {
-            if (assignment.employeeId && assignmentEmployeeMap.has(assignment.employeeId)) {
-              assignment.employeeName = assignmentEmployeeMap.get(assignment.employeeId);
-            }
-          });
+          // ✅ CHANGE: Enrich ALL assignments with employee details
+          clientData.employeeAssignments = allAssignments
+            .filter(assignment => !assignment.isRemoved) // Only active assignments
+            .map(assignment => {
+              const empInfo = assignmentEmployeeMap.get(assignment.employeeId);
+              return {
+                ...assignment,
+                employeeName: empInfo?.name || "Unknown Employee",
+                employeePhone: empInfo?.phone || "N/A",
+                // Convert dates to string for easier frontend handling
+                assignedAt: assignment.assignedAt ? assignment.assignedAt.toISOString() : null,
+                accountingDoneAt: assignment.accountingDoneAt ? assignment.accountingDoneAt.toISOString() : null
+              };
+            });
+
+          console.log("🔍 DEBUG: Enriched assignments:",
+            clientData.employeeAssignments.map(a => ({
+              year: a.year,
+              month: a.month,
+              task: a.task,
+              employeeName: a.employeeName,
+              accountingDone: a.accountingDone
+            })));
+
         } catch (empError) {
           logToConsole("WARN", "ASSIGNMENT_EMPLOYEE_FETCH_ERROR", {
             error: empError.message
           });
+
+          // Fallback: Keep assignments as is
+          clientData.employeeAssignments = allAssignments.filter(a => !a.isRemoved);
         }
+      } else {
+        // No valid employeeIds found
+        clientData.employeeAssignments = allAssignments.filter(a => !a.isRemoved);
       }
+    } else {
+      clientData.employeeAssignments = [];
     }
 
-    // Log success
-    logToConsole("SUCCESS", "CLIENT_DATA_WITH_EMPLOYEE_NAMES", {
-      clientId,
-      clientName: clientData.name,
-      totalEmployeesFound: employeeMap.size,
-      uniqueEmployeeIds: employeeIdArray.length,
-      noteTypesProcessed: ['file-level notes', 'category-level notes'],
-      monthNotesExcluded: true // As per requirement
+    // ===================================================
+    // 4. ORGANIZE ASSIGNMENTS BY MONTH (NEW STRUCTURE)
+    // ===================================================
+    console.log("🔍 DEBUG: Organizing assignments by month...");
+
+    // Create a map of assignments by month
+    const assignmentsByMonth = {};
+
+    clientData.employeeAssignments.forEach(assignment => {
+      const monthKey = `${assignment.year}-${assignment.month}`;
+
+      if (!assignmentsByMonth[monthKey]) {
+        assignmentsByMonth[monthKey] = [];
+      }
+
+      assignmentsByMonth[monthKey].push({
+        task: assignment.task || "Not specified",
+        employeeId: assignment.employeeId,
+        employeeName: assignment.employeeName || "Unknown Employee",
+        employeePhone: assignment.employeePhone || "N/A",
+        accountingDone: assignment.accountingDone || false,
+        accountingDoneAt: assignment.accountingDoneAt,
+        accountingDoneBy: assignment.accountingDoneBy,
+        assignedAt: assignment.assignedAt,
+        assignedBy: assignment.assignedBy,
+        adminName: assignment.adminName
+      });
     });
 
-    // Save to ActivityLog
-    await log(req.user.name, "VIEWED_CLIENT_DETAILS",
-      `Viewed details for client: ${clientData.name} with ${employeeMap.size} employee names populated for notes`);
+    console.log("🔍 DEBUG: Assignments by month:", assignmentsByMonth);
 
-    // FIX: Create a clean response object that includes all processed data
+    // ===================================================
+    // 5. LOG SUCCESS
+    // ===================================================
+    logToConsole("SUCCESS", "CLIENT_DATA_WITH_MULTIPLE_EMPLOYEE_ASSIGNMENTS", {
+      clientId,
+      clientName: clientData.name,
+      totalAssignments: clientData.employeeAssignments.length,
+      assignmentsByMonthCount: Object.keys(assignmentsByMonth).length,
+      noteTypesProcessed: ['file-level notes', 'category-level notes'],
+      employeeNamesPopulated: employeeMap.size
+    });
+
+    // ===================================================
+    // 6. SAVE TO ACTIVITY LOG
+    // ===================================================
+    await log(req.user.name, "VIEWED_CLIENT_DETAILS",
+      `Viewed details for client: ${clientData.name} with ${clientData.employeeAssignments.length} employee assignments`);
+
+    // ===================================================
+    // 7. CREATE FINAL RESPONSE OBJECT
+    // ===================================================
     const responseData = {
       _id: clientData._id,
       clientId: clientData.clientId,
@@ -864,24 +952,30 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       email: clientData.email,
       phone: clientData.phone,
       isActive: clientData.isActive,
-      documents: clientData.documents || {}, // THIS IS THE KEY FIX - include processed documents
-      employeeAssignments: clientData.employeeAssignments || [],
+      documents: clientData.documents || {},
+      // ✅ CHANGE: Send enriched assignments array
+      employeeAssignments: clientData.employeeAssignments,
+      // ✅ NEW: Send assignments organized by month
+      assignmentsByMonth: assignmentsByMonth,
       createdAt: clientData.createdAt,
       updatedAt: clientData.updatedAt,
       __v: clientData.__v
     };
 
-    // Send response - Use the processed clientData
+    // ===================================================
+    // 8. SEND RESPONSE
+    // ===================================================
     res.json({
       success: true,
-      client: responseData, // Send the FULL processed data including documents
+      client: responseData,
       metadata: {
         employeeNamesPopulated: employeeMap.size,
-        totalEmployeeIdsFound: employeeIdArray.length,
+        totalAssignments: clientData.employeeAssignments.length,
+        assignmentsByMonth: Object.keys(assignmentsByMonth).length,
         noteTypes: {
           fileLevelNotes: true,
           categoryLevelNotes: true,
-          monthLevelNotes: false // Excluded as per requirement
+          monthLevelNotes: false
         }
       }
     });
