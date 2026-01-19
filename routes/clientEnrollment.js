@@ -11,6 +11,25 @@ const auth = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
+
+
+/* ===============================
+   CONSOLE LOGGING UTILITY
+================================ */
+const logToConsole = (type, operation, data) => {
+  const timestamp = new Date().toLocaleString("en-IN");
+  const logEntry = {
+    timestamp,
+    type,
+    operation,
+    data
+  };
+
+  console.log(`[${timestamp}] ${type}: ${operation}`, data);
+
+  return logEntry;
+};
+
 router.post("/enroll", async (req, res) => {
   try {
     console.log("📨 FULL REQUEST BODY:", req.body);
