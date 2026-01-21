@@ -24,7 +24,46 @@ const s3 = new S3Client({
 /* ===============================
    MULTER (MEMORY) - ALLOW MULTIPLE FILES
 ================================ */
-const upload = multer({ storage: multer.memoryStorage() });
+// const upload = multer({ storage: multer.memoryStorage() }); 
+
+
+
+const allowedMimeTypes = [
+    // PDF
+    "application/pdf",
+
+    // Images
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+
+    // Excel
+    "application/vnd.ms-excel", // .xls
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" // .xlsx
+];
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+
+    limits: {
+        fileSize: 10 * 1024 * 1024 // 10 MB per file (change if needed)
+    },
+
+    fileFilter: (req, file, cb) => {
+        if (allowedMimeTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(
+                new Error(
+                    "Invalid file type. Only PDF, Images (jpg, jpeg, png, webp, gif) and Excel files are allowed."
+                ),
+                false
+            );
+        }
+    }
+});
+
 
 /* ===============================
    CONSOLE LOGGING UTILITY
@@ -43,177 +82,6 @@ const logToConsole = (type, operation, data) => {
     return logEntry;
 };
 
-/* ===============================
-   HELPER: GET MONTH DATA
-================================ */
-const getMonthData = (client, year, month) => {
-    const y = String(year);
-    const m = String(month);
-
-    if (!client.documents.has(y)) {
-        client.documents.set(y, new Map());
-    }
-
-    if (!client.documents.get(y).has(m)) {
-        client.documents.get(y).set(m, {
-            sales: {
-                files: [],
-                categoryNotes: [],
-                isLocked: false,
-                wasLockedOnce: false
-            },
-            purchase: {
-                files: [],
-                categoryNotes: [],
-                isLocked: false,
-                wasLockedOnce: false
-            },
-            bank: {
-                files: [],
-                categoryNotes: [],
-                isLocked: false,
-                wasLockedOnce: false
-            },
-            other: [],
-            isLocked: false,
-            wasLockedOnce: false,
-            monthNotes: []
-        });
-    }
-
-    return client.documents.get(y).get(m);
-};
-
-
-router.get("/month-data", auth, async (req, res) => {
-    try {
-        const { year, month } = req.query;
-
-        // ADDED CONSOLE LOGS
-        console.log("=== MONTH-DATA ROUTE HIT ===");
-        console.log("Year:", year, "Month:", month);
-        console.log("req.user:", req.user);
-        console.log("req.user.clientId:", req.user?.clientId);
-        console.log("All cookies:", req.cookies);
-        console.log("clientToken cookie:", req.cookies?.clientToken);
-
-        const client = await Client.findOne({
-            clientId: req.user.clientId
-        });
-
-        console.log("Client found in DB:", !!client);
-        console.log("Client ID searched:", req.user.clientId);
-
-        if (!client) {
-            console.log("ERROR: No client found with ID:", req.user.clientId);
-            return res.status(404).json({ message: "Client not found" });
-        }
-
-        console.log("SUCCESS: Client found -", client.clientId, client.name);
-
-        const monthData = getMonthData(client, year, month);
-
-        // NEW: Get employee names for notes
-        const Employee = require("../models/Employee");
-        const employeeMap = new Map();
-
-        // Collect all employeeIds from notes
-        const employeeIds = new Set();
-
-        // Helper to collect employeeIds
-        const collectEmployeeIds = (notesArray) => {
-            if (!notesArray || !Array.isArray(notesArray)) return;
-            notesArray.forEach(note => {
-                if (note.employeeId) employeeIds.add(note.employeeId);
-            });
-        };
-
-        // Process main categories
-        ['sales', 'purchase', 'bank'].forEach(category => {
-            if (monthData[category]) {
-                const categoryData = monthData[category];
-                // Collect from category notes
-                collectEmployeeIds(categoryData.categoryNotes);
-                // Collect from file notes
-                if (categoryData.files && Array.isArray(categoryData.files)) {
-                    categoryData.files.forEach(file => {
-                        collectEmployeeIds(file.notes);
-                    });
-                }
-            }
-        });
-
-        // Process other categories
-        if (monthData.other && Array.isArray(monthData.other)) {
-            monthData.other.forEach(otherCategory => {
-                if (otherCategory.document) {
-                    collectEmployeeIds(otherCategory.document.categoryNotes);
-                    if (otherCategory.document.files && Array.isArray(otherCategory.document.files)) {
-                        otherCategory.document.files.forEach(file => {
-                            collectEmployeeIds(file.notes);
-                        });
-                    }
-                }
-            });
-        }
-
-        // Fetch employee names
-        if (employeeIds.size > 0) {
-            const employees = await Employee.find(
-                { employeeId: { $in: Array.from(employeeIds) } },
-                { employeeId: 1, name: 1 }
-            );
-
-            employees.forEach(emp => {
-                employeeMap.set(emp.employeeId, emp.name);
-            });
-        }
-
-        // Helper to populate employee names
-        const populateEmployeeNames = (notesArray) => {
-            if (!notesArray || !Array.isArray(notesArray)) return;
-            notesArray.forEach(note => {
-                if (note.employeeId && employeeMap.has(note.employeeId)) {
-                    note.employeeName = employeeMap.get(note.employeeId);
-                } else {
-                    note.employeeName = note.addedBy || 'Unknown';
-                }
-            });
-        };
-
-        // Populate employee names in all notes
-        ['sales', 'purchase', 'bank'].forEach(category => {
-            if (monthData[category]) {
-                const categoryData = monthData[category];
-                populateEmployeeNames(categoryData.categoryNotes);
-                if (categoryData.files && Array.isArray(categoryData.files)) {
-                    categoryData.files.forEach(file => {
-                        populateEmployeeNames(file.notes);
-                    });
-                }
-            }
-        });
-
-        if (monthData.other && Array.isArray(monthData.other)) {
-            monthData.other.forEach(otherCategory => {
-                if (otherCategory.document) {
-                    populateEmployeeNames(otherCategory.document.categoryNotes);
-                    if (otherCategory.document.files && Array.isArray(otherCategory.document.files)) {
-                        otherCategory.document.files.forEach(file => {
-                            populateEmployeeNames(file.notes);
-                        });
-                    }
-                }
-            });
-        }
-
-        console.log("=== MONTH-DATA RETURNING SUCCESS ===");
-        res.json(monthData);
-    } catch (err) {
-        console.error("GET_MONTH_DATA_ERROR:", err.message);
-        res.status(500).json({ message: "Failed to fetch month data" });
-    }
-});
 
 
 
@@ -525,10 +393,191 @@ router.post("/upload", auth, upload.array("files"),
             });
 
             console.error("CLIENT_UPLOAD_ERROR:", err.message);
+            if (err.message?.includes("Invalid file type")) {
+                return res.status(400).json({ message: err.message });
+            }
+
             res.status(500).json({ message: "Upload failed" });
+
         }
     }
 );
+
+
+
+
+/* ===============================
+   HELPER: GET MONTH DATA
+================================ */
+const getMonthData = (client, year, month) => {
+    const y = String(year);
+    const m = String(month);
+
+    if (!client.documents.has(y)) {
+        client.documents.set(y, new Map());
+    }
+
+    if (!client.documents.get(y).has(m)) {
+        client.documents.get(y).set(m, {
+            sales: {
+                files: [],
+                categoryNotes: [],
+                isLocked: false,
+                wasLockedOnce: false
+            },
+            purchase: {
+                files: [],
+                categoryNotes: [],
+                isLocked: false,
+                wasLockedOnce: false
+            },
+            bank: {
+                files: [],
+                categoryNotes: [],
+                isLocked: false,
+                wasLockedOnce: false
+            },
+            other: [],
+            isLocked: false,
+            wasLockedOnce: false,
+            monthNotes: []
+        });
+    }
+
+    return client.documents.get(y).get(m);
+};
+
+
+router.get("/month-data", auth, async (req, res) => {
+    try {
+        const { year, month } = req.query;
+
+        // ADDED CONSOLE LOGS
+        console.log("=== MONTH-DATA ROUTE HIT ===");
+        console.log("Year:", year, "Month:", month);
+        console.log("req.user:", req.user);
+        console.log("req.user.clientId:", req.user?.clientId);
+        console.log("All cookies:", req.cookies);
+        console.log("clientToken cookie:", req.cookies?.clientToken);
+
+        const client = await Client.findOne({
+            clientId: req.user.clientId
+        });
+
+        console.log("Client found in DB:", !!client);
+        console.log("Client ID searched:", req.user.clientId);
+
+        if (!client) {
+            console.log("ERROR: No client found with ID:", req.user.clientId);
+            return res.status(404).json({ message: "Client not found" });
+        }
+
+        console.log("SUCCESS: Client found -", client.clientId, client.name);
+
+        const monthData = getMonthData(client, year, month);
+
+        // NEW: Get employee names for notes
+        const Employee = require("../models/Employee");
+        const employeeMap = new Map();
+
+        // Collect all employeeIds from notes
+        const employeeIds = new Set();
+
+        // Helper to collect employeeIds
+        const collectEmployeeIds = (notesArray) => {
+            if (!notesArray || !Array.isArray(notesArray)) return;
+            notesArray.forEach(note => {
+                if (note.employeeId) employeeIds.add(note.employeeId);
+            });
+        };
+
+        // Process main categories
+        ['sales', 'purchase', 'bank'].forEach(category => {
+            if (monthData[category]) {
+                const categoryData = monthData[category];
+                // Collect from category notes
+                collectEmployeeIds(categoryData.categoryNotes);
+                // Collect from file notes
+                if (categoryData.files && Array.isArray(categoryData.files)) {
+                    categoryData.files.forEach(file => {
+                        collectEmployeeIds(file.notes);
+                    });
+                }
+            }
+        });
+
+        // Process other categories
+        if (monthData.other && Array.isArray(monthData.other)) {
+            monthData.other.forEach(otherCategory => {
+                if (otherCategory.document) {
+                    collectEmployeeIds(otherCategory.document.categoryNotes);
+                    if (otherCategory.document.files && Array.isArray(otherCategory.document.files)) {
+                        otherCategory.document.files.forEach(file => {
+                            collectEmployeeIds(file.notes);
+                        });
+                    }
+                }
+            });
+        }
+
+        // Fetch employee names
+        if (employeeIds.size > 0) {
+            const employees = await Employee.find(
+                { employeeId: { $in: Array.from(employeeIds) } },
+                { employeeId: 1, name: 1 }
+            );
+
+            employees.forEach(emp => {
+                employeeMap.set(emp.employeeId, emp.name);
+            });
+        }
+
+        // Helper to populate employee names
+        const populateEmployeeNames = (notesArray) => {
+            if (!notesArray || !Array.isArray(notesArray)) return;
+            notesArray.forEach(note => {
+                if (note.employeeId && employeeMap.has(note.employeeId)) {
+                    note.employeeName = employeeMap.get(note.employeeId);
+                } else {
+                    note.employeeName = note.addedBy || 'Unknown';
+                }
+            });
+        };
+
+        // Populate employee names in all notes
+        ['sales', 'purchase', 'bank'].forEach(category => {
+            if (monthData[category]) {
+                const categoryData = monthData[category];
+                populateEmployeeNames(categoryData.categoryNotes);
+                if (categoryData.files && Array.isArray(categoryData.files)) {
+                    categoryData.files.forEach(file => {
+                        populateEmployeeNames(file.notes);
+                    });
+                }
+            }
+        });
+
+        if (monthData.other && Array.isArray(monthData.other)) {
+            monthData.other.forEach(otherCategory => {
+                if (otherCategory.document) {
+                    populateEmployeeNames(otherCategory.document.categoryNotes);
+                    if (otherCategory.document.files && Array.isArray(otherCategory.document.files)) {
+                        otherCategory.document.files.forEach(file => {
+                            populateEmployeeNames(file.notes);
+                        });
+                    }
+                }
+            });
+        }
+
+        console.log("=== MONTH-DATA RETURNING SUCCESS ===");
+        res.json(monthData);
+    } catch (err) {
+        console.error("GET_MONTH_DATA_ERROR:", err.message);
+        res.status(500).json({ message: "Failed to fetch month data" });
+    }
+});
+
 
 /* ===============================
    GET DELETED FILES FOR CLIENT
