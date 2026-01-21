@@ -314,7 +314,7 @@ router.get("/all-clients", auth, async (req, res) => {
 
 
 /* ===============================
-   ASSIGN CLIENT TO EMPLOYEE (UPDATED WITH DOCUMENT CHECK)
+   ASSIGN CLIENT TO EMPLOYEE (FIXED DOCUMENT CHECK)
 ================================ */
 router.post("/assign-client", auth, async (req, res) => {
     const { clientId, employeeId, year, month, task } = req.body;
@@ -377,102 +377,132 @@ router.post("/assign-client", auth, async (req, res) => {
 
         // ===== CHECK IF CLIENT HAS DOCUMENTS FOR SELECTED MONTH =====
         let hasDocuments = false;
+        const yearKey = numericYear.toString();
+        const monthKey = numericMonth.toString();
 
-        // ===== CHECK NEW STRUCTURE (Year -> Month -> Category) =====
-        if (client.documents && client.documents[numericYear] && client.documents[numericYear][numericMonth]) {
-            const monthData = client.documents[numericYear][numericMonth];
+        // Debug: Check what type of structure we have
+        logToConsole("DEBUG", "DOCUMENT_STRUCTURE_CHECK", {
+            clientId,
+            hasDocumentsField: !!client.documents,
+            documentsType: client.documents ? client.documents.constructor.name : 'none',
+            isMap: client.documents instanceof Map,
+            mapSize: client.documents instanceof Map ? client.documents.size : 'N/A'
+        });
 
-            // Check each category
-            const categoriesToCheck = ['sales', 'purchase', 'bank'];
-            for (const category of categoriesToCheck) {
-                if (monthData[category] && monthData[category].files && monthData[category].files.length > 0) {
-                    hasDocuments = true;
-                    break;
+        // ===== CHECK MAP STRUCTURE (YOUR ACTUAL STRUCTURE) =====
+        if (client.documents && client.documents instanceof Map) {
+            // Get the year Map
+            const yearMap = client.documents.get(yearKey);
+
+            if (yearMap && yearMap instanceof Map) {
+                // Get the month data
+                const monthData = yearMap.get(monthKey);
+
+                if (monthData) {
+                    logToConsole("DEBUG", "FOUND_MONTH_DATA_IN_MAP", {
+                        yearKey,
+                        monthKey,
+                        monthDataExists: !!monthData
+                    });
+
+                    // Check standard categories
+                    const standardCategories = ['sales', 'purchase', 'bank'];
+                    for (const category of standardCategories) {
+                        if (monthData[category] &&
+                            monthData[category].files &&
+                            Array.isArray(monthData[category].files) &&
+                            monthData[category].files.length > 0) {
+                            hasDocuments = true;
+                            logToConsole("DEBUG", "FOUND_FILES_IN_CATEGORY", {
+                                category,
+                                fileCount: monthData[category].files.length
+                            });
+                            break;
+                        }
+                    }
+
+                    // Check other categories if no standard files found
+                    if (!hasDocuments && monthData.other && Array.isArray(monthData.other)) {
+                        for (const otherCat of monthData.other) {
+                            if (otherCat.document &&
+                                otherCat.document.files &&
+                                Array.isArray(otherCat.document.files) &&
+                                otherCat.document.files.length > 0) {
+                                hasDocuments = true;
+                                logToConsole("DEBUG", "FOUND_FILES_IN_OTHER_CATEGORY", {
+                                    categoryName: otherCat.categoryName,
+                                    fileCount: otherCat.document.files.length
+                                });
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    logToConsole("DEBUG", "NO_MONTH_DATA_IN_MAP", {
+                        yearKey,
+                        monthKey,
+                        monthDataExists: false
+                    });
                 }
+            } else {
+                logToConsole("DEBUG", "NO_YEAR_MAP_IN_DOCUMENTS", {
+                    yearKey,
+                    yearMapExists: !!yearMap,
+                    yearMapIsMap: yearMap instanceof Map
+                });
             }
+        }
+        // ===== CHECK PLAIN OBJECT STRUCTURE (BACKUP CHECK) =====
+        else if (client.documents && typeof client.documents === 'object' && !(client.documents instanceof Map)) {
+            // Check if documents is a plain object with year keys
+            if (client.documents[yearKey] && client.documents[yearKey][monthKey]) {
+                const monthData = client.documents[yearKey][monthKey];
 
-            // Check other categories
-            if (!hasDocuments && monthData.other && Array.isArray(monthData.other)) {
-                for (const category of monthData.other) {
-                    if (category.document && category.document.files && category.document.files.length > 0) {
+                // Check standard categories
+                const standardCategories = ['sales', 'purchase', 'bank'];
+                for (const category of standardCategories) {
+                    if (monthData[category] &&
+                        monthData[category].files &&
+                        Array.isArray(monthData[category].files) &&
+                        monthData[category].files.length > 0) {
                         hasDocuments = true;
                         break;
                     }
                 }
-            }
-        }
 
-        // ===== CHECK OLD STRUCTURE (Category -> Year-Month) =====
-        if (!hasDocuments && client.documents) {
-            const monthKey = `${numericYear}-${numericMonth}`;
-
-            // Check if it's a Map structure
-            if (client.documents.get) {
-                const categories = ['sales', 'purchase', 'bank'];
-                for (const category of categories) {
-                    const categoryDocs = client.documents.get(category);
-                    if (categoryDocs && categoryDocs.get(monthKey)) {
-                        const monthData = categoryDocs.get(monthKey);
-                        if (monthData && monthData.files && monthData.files.length > 0) {
+                // Check other categories
+                if (!hasDocuments && monthData.other && Array.isArray(monthData.other)) {
+                    for (const otherCat of monthData.other) {
+                        if (otherCat.document &&
+                            otherCat.document.files &&
+                            Array.isArray(otherCat.document.files) &&
+                            otherCat.document.files.length > 0) {
                             hasDocuments = true;
                             break;
                         }
                     }
                 }
-
-                // Check other categories
-                if (!hasDocuments) {
-                    const otherDocs = client.documents.get("other");
-                    if (otherDocs && otherDocs.get(monthKey)) {
-                        const otherCategories = otherDocs.get(monthKey);
-                        if (otherCategories && Array.isArray(otherCategories)) {
-                            for (const category of otherCategories) {
-                                if (category.document && category.document.files && category.document.files.length > 0) {
-                                    hasDocuments = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
 
-        // ===== CHECK ANY OTHER POSSIBLE STRUCTURE =====
-        if (!hasDocuments && client.documents) {
-            // Safer iterative search
-            const visited = new Set();
-            const stack = [client.documents];
-
-            while (stack.length > 0) {
-                const obj = stack.pop();
-
-                if (visited.has(obj) || !obj || typeof obj !== 'object') {
-                    continue;
-                }
-                visited.add(obj);
-
-                // Check if this object has files array with items
-                if (obj.files && Array.isArray(obj.files) && obj.files.length > 0) {
-                    hasDocuments = true;
-                    break;
-                }
-
-                // Add child objects to stack
-                for (const key in obj) {
-                    if (obj[key] && typeof obj[key] === 'object') {
-                        stack.push(obj[key]);
-                    }
-                }
-            }
-        }
+        // Log final document check result
+        logToConsole("DEBUG", "DOCUMENT_CHECK_FINAL_RESULT", {
+            clientId,
+            year: numericYear,
+            month: numericMonth,
+            hasDocuments,
+            documentsExist: !!client.documents,
+            structureType: client.documents ?
+                (client.documents instanceof Map ? 'Map' : 'Object') : 'None'
+        });
 
         if (!hasDocuments) {
             logToConsole("WARN", "NO_DOCUMENTS_FOR_MONTH", {
                 clientId,
                 clientName: client.name,
                 year: numericYear,
-                month: numericMonth
+                month: numericMonth,
+                monthName: getMonthName(numericMonth)
             });
             return res.status(400).json({
                 message: `Cannot assign task. No documents uploaded for ${getMonthName(numericMonth)} ${numericYear}. Please upload documents first.`
@@ -480,7 +510,6 @@ router.post("/assign-client", auth, async (req, res) => {
         }
 
         // ===== DUPLICATE TASK CHECK (UPDATED) =====
-        // Check if THIS SPECIFIC TASK already assigned for this client-month
         const taskAlreadyAssigned = client.employeeAssignments.some(
             (a) => a.year === numericYear &&
                 a.month === numericMonth &&
@@ -500,7 +529,7 @@ router.post("/assign-client", auth, async (req, res) => {
             });
         }
 
-        // ===== CHECK MAX 4 TASKS PER MONTH (NEW) =====
+        // ===== CHECK MAX 4 TASKS PER MONTH =====
         const existingAssignments = client.employeeAssignments.filter(
             a => a.year === numericYear &&
                 a.month === numericMonth &&
@@ -519,7 +548,7 @@ router.post("/assign-client", auth, async (req, res) => {
             });
         }
 
-        // ===== CHECK IF EMPLOYEE ALREADY HAS THIS TASK (UPDATED) =====
+        // ===== CHECK IF EMPLOYEE ALREADY HAS THIS TASK =====
         const employeeAlreadyHasTask = employee.assignedClients.some(
             (ac) => ac.clientId === clientId &&
                 ac.year === numericYear &&
@@ -555,7 +584,6 @@ router.post("/assign-client", auth, async (req, res) => {
         // ===== PREPARE ASSIGNMENT OBJECTS =====
         const assignmentDate = new Date();
 
-        // For Client Schema
         const clientAssignment = {
             year: numericYear,
             month: numericMonth,
@@ -569,7 +597,6 @@ router.post("/assign-client", auth, async (req, res) => {
             isRemoved: false
         };
 
-        // For Employee Schema
         const employeeAssignment = {
             clientId,
             clientName: client.name,
@@ -616,7 +643,7 @@ router.post("/assign-client", auth, async (req, res) => {
             });
         } catch (employeeSaveError) {
             // ===== ROLLBACK CLIENT UPDATE =====
-            client.employeeAssignments.pop(); // Remove the last added assignment
+            client.employeeAssignments.pop();
             await client.save();
 
             logToConsole("ERROR", "EMPLOYEE_SAVE_FAILED_ROLLBACK_DONE", {
@@ -742,7 +769,7 @@ function getMonthName(month) {
 
 
 /* ===============================
-   CHECK IF CLIENT HAS DOCUMENTS FOR MONTH (UPDATED FOR BOTH STRUCTURES)
+   CHECK IF CLIENT HAS DOCUMENTS FOR MONTH (FIXED)
 ================================ */
 router.get("/check-client-documents/:clientId", auth, async (req, res) => {
     try {
@@ -770,8 +797,11 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
             return res.status(404).json({ message: "Client not found" });
         }
 
-        // Check if client has documents structure
-        if (!client.documents || Object.keys(client.documents).length === 0) {
+        // Check if client has documents structure (FIXED FOR MAPS)
+        if (!client.documents ||
+            (client.documents instanceof Map && client.documents.size === 0) ||
+            (typeof client.documents === 'object' && !(client.documents instanceof Map) && Object.keys(client.documents).length === 0)) {
+
             logToConsole("INFO", "NO_DOCUMENTS_STRUCTURE_FOUND", { clientId });
             return res.json({
                 hasDocuments: false,
@@ -788,165 +818,120 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
 
         let hasAnyDocuments = false;
         const documentCategories = [];
+        const yearKey = numericYear.toString();
+        const monthKey = numericMonth.toString();
 
-        // ===== CHECK NEW STRUCTURE (Your structure) =====
-        // Structure: documents -> year -> month -> category
-        if (client.documents[numericYear] && client.documents[numericYear][numericMonth]) {
-            const monthData = client.documents[numericYear][numericMonth];
+        // ===== CHECK MAP STRUCTURE (YOUR ACTUAL STRUCTURE) =====
+        if (client.documents instanceof Map) {
+            // Get the year Map
+            const yearMap = client.documents.get(yearKey);
 
-            // Check sales category
-            if (monthData.sales && monthData.sales.files && monthData.sales.files.length > 0) {
-                hasAnyDocuments = true;
-                documentCategories.push({
-                    category: "sales",
-                    fileCount: monthData.sales.files.length,
-                    isLocked: monthData.sales.isLocked || false,
-                    structure: "year-month-category"
-                });
-            }
+            if (yearMap && yearMap instanceof Map) {
+                // Get the month data
+                const monthData = yearMap.get(monthKey);
 
-            // Check purchase category
-            if (monthData.purchase && monthData.purchase.files && monthData.purchase.files.length > 0) {
-                hasAnyDocuments = true;
-                documentCategories.push({
-                    category: "purchase",
-                    fileCount: monthData.purchase.files.length,
-                    isLocked: monthData.purchase.isLocked || false,
-                    structure: "year-month-category"
-                });
-            }
-
-            // Check bank category
-            if (monthData.bank && monthData.bank.files && monthData.bank.files.length > 0) {
-                hasAnyDocuments = true;
-                documentCategories.push({
-                    category: "bank",
-                    fileCount: monthData.bank.files.length,
-                    isLocked: monthData.bank.isLocked || false,
-                    structure: "year-month-category"
-                });
-            }
-
-            // Check other categories
-            if (monthData.other && Array.isArray(monthData.other)) {
-                for (const category of monthData.other) {
-                    if (category.document && category.document.files && category.document.files.length > 0) {
+                if (monthData) {
+                    // Check sales category
+                    if (monthData.sales && monthData.sales.files && monthData.sales.files.length > 0) {
                         hasAnyDocuments = true;
                         documentCategories.push({
-                            category: `other: ${category.categoryName}`,
-                            fileCount: category.document.files.length,
-                            isLocked: category.document.isLocked || false,
-                            structure: "year-month-category"
+                            category: "sales",
+                            fileCount: monthData.sales.files.length,
+                            isLocked: monthData.sales.isLocked || false,
+                            structure: "map-year-month-category"
                         });
+                    }
+
+                    // Check purchase category
+                    if (monthData.purchase && monthData.purchase.files && monthData.purchase.files.length > 0) {
+                        hasAnyDocuments = true;
+                        documentCategories.push({
+                            category: "purchase",
+                            fileCount: monthData.purchase.files.length,
+                            isLocked: monthData.purchase.isLocked || false,
+                            structure: "map-year-month-category"
+                        });
+                    }
+
+                    // Check bank category
+                    if (monthData.bank && monthData.bank.files && monthData.bank.files.length > 0) {
+                        hasAnyDocuments = true;
+                        documentCategories.push({
+                            category: "bank",
+                            fileCount: monthData.bank.files.length,
+                            isLocked: monthData.bank.isLocked || false,
+                            structure: "map-year-month-category"
+                        });
+                    }
+
+                    // Check other categories
+                    if (monthData.other && Array.isArray(monthData.other)) {
+                        for (const category of monthData.other) {
+                            if (category.document && category.document.files && category.document.files.length > 0) {
+                                hasAnyDocuments = true;
+                                documentCategories.push({
+                                    category: `other: ${category.categoryName}`,
+                                    fileCount: category.document.files.length,
+                                    isLocked: category.document.isLocked || false,
+                                    structure: "map-year-month-category"
+                                });
+                            }
+                        }
                     }
                 }
             }
         }
+        // ===== CHECK PLAIN OBJECT STRUCTURE =====
+        else if (client.documents && typeof client.documents === 'object' && !(client.documents instanceof Map)) {
+            // Structure: documents -> year -> month -> category
+            if (client.documents[yearKey] && client.documents[yearKey][monthKey]) {
+                const monthData = client.documents[yearKey][monthKey];
 
-        // ===== CHECK OLD STRUCTURE (If no documents found in new structure) =====
-        // Structure: documents -> category -> year-month
-        if (!hasAnyDocuments) {
-            const monthKey = `${numericYear}-${numericMonth}`;
-
-            // Check sales category
-            const salesDocs = client.documents.get?.("sales");
-            if (salesDocs && salesDocs.get?.(monthKey)) {
-                const monthData = salesDocs.get(monthKey);
-                if (monthData && monthData.files && monthData.files.length > 0) {
+                // Check sales category
+                if (monthData.sales && monthData.sales.files && monthData.sales.files.length > 0) {
                     hasAnyDocuments = true;
                     documentCategories.push({
                         category: "sales",
-                        fileCount: monthData.files.length,
-                        isLocked: monthData.isLocked || false,
-                        structure: "category-year-month"
+                        fileCount: monthData.sales.files.length,
+                        isLocked: monthData.sales.isLocked || false,
+                        structure: "object-year-month-category"
                     });
                 }
-            }
 
-            // Check purchase category
-            const purchaseDocs = client.documents.get?.("purchase");
-            if (purchaseDocs && purchaseDocs.get?.(monthKey)) {
-                const monthData = purchaseDocs.get(monthKey);
-                if (monthData && monthData.files && monthData.files.length > 0) {
+                // Check purchase category
+                if (monthData.purchase && monthData.purchase.files && monthData.purchase.files.length > 0) {
                     hasAnyDocuments = true;
                     documentCategories.push({
                         category: "purchase",
-                        fileCount: monthData.files.length,
-                        isLocked: monthData.isLocked || false,
-                        structure: "category-year-month"
+                        fileCount: monthData.purchase.files.length,
+                        isLocked: monthData.purchase.isLocked || false,
+                        structure: "object-year-month-category"
                     });
                 }
-            }
 
-            // Check bank category
-            const bankDocs = client.documents.get?.("bank");
-            if (bankDocs && bankDocs.get?.(monthKey)) {
-                const monthData = bankDocs.get(monthKey);
-                if (monthData && monthData.files && monthData.files.length > 0) {
+                // Check bank category
+                if (monthData.bank && monthData.bank.files && monthData.bank.files.length > 0) {
                     hasAnyDocuments = true;
                     documentCategories.push({
                         category: "bank",
-                        fileCount: monthData.files.length,
-                        isLocked: monthData.isLocked || false,
-                        structure: "category-year-month"
+                        fileCount: monthData.bank.files.length,
+                        isLocked: monthData.bank.isLocked || false,
+                        structure: "object-year-month-category"
                     });
                 }
-            }
 
-            // Check other categories
-            const otherDocs = client.documents.get?.("other");
-            if (otherDocs && otherDocs.get?.(monthKey)) {
-                const otherCategories = otherDocs.get(monthKey);
-                if (otherCategories && Array.isArray(otherCategories)) {
-                    for (const category of otherCategories) {
+                // Check other categories
+                if (monthData.other && Array.isArray(monthData.other)) {
+                    for (const category of monthData.other) {
                         if (category.document && category.document.files && category.document.files.length > 0) {
                             hasAnyDocuments = true;
                             documentCategories.push({
                                 category: `other: ${category.categoryName}`,
                                 fileCount: category.document.files.length,
                                 isLocked: category.document.isLocked || false,
-                                structure: "category-year-month"
+                                structure: "object-year-month-category"
                             });
                         }
-                    }
-                }
-            }
-        }
-
-        // ===== CHECK ANY OTHER STRUCTURE =====
-        if (!hasAnyDocuments && client.documents) {
-            // Safer search using iterative approach with visited set
-            const visited = new Set();
-            const stack = [{ obj: client.documents, path: "" }];
-
-            while (stack.length > 0) {
-                const { obj, path } = stack.pop();
-
-                // Skip if already visited or not an object
-                if (visited.has(obj) || !obj || typeof obj !== 'object') {
-                    continue;
-                }
-                visited.add(obj);
-
-                // Check if this object has files array with items
-                if (obj.files && Array.isArray(obj.files) && obj.files.length > 0) {
-                    hasAnyDocuments = true;
-                    documentCategories.push({
-                        category: path || "unknown",
-                        fileCount: obj.files.length,
-                        isLocked: obj.isLocked || false,
-                        structure: "unknown"
-                    });
-                    break;
-                }
-
-                // Add child objects to stack
-                for (const key in obj) {
-                    if (obj[key] && typeof obj[key] === 'object') {
-                        stack.push({
-                            obj: obj[key],
-                            path: path ? `${path}.${key}` : key
-                        });
                     }
                 }
             }
@@ -965,7 +950,8 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
                 period: `${numericYear}-${numericMonth.toString().padStart(2, '0')}`,
                 documentCategories,
                 totalFiles: documentCategories.reduce((sum, cat) => sum + cat.fileCount, 0),
-                categoriesWithFiles: documentCategories.length
+                categoriesWithFiles: documentCategories.length,
+                structureType: client.documents instanceof Map ? 'Map' : 'Object'
             }
         };
 
@@ -973,7 +959,8 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
             clientId,
             hasDocuments: hasAnyDocuments,
             categoriesCount: documentCategories.length,
-            structureFound: documentCategories[0]?.structure || "none"
+            structureFound: documentCategories[0]?.structure || "none",
+            structureType: client.documents instanceof Map ? 'Map' : 'Object'
         });
 
         res.json(response);

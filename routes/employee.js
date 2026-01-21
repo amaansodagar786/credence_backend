@@ -455,6 +455,20 @@ router.get("/assigned-clients", async (req, res) => {
 
     for (const assign of employee.assignedClients || []) {
       try {
+        // ===== CRITICAL FIX: FILTER OUT REMOVED ASSIGNMENTS =====
+        if (assign.isRemoved) {
+          logToConsole("DEBUG", "SKIPPING_REMOVED_ASSIGNMENT", {
+            employeeId: employee.employeeId,
+            clientId: assign.clientId,
+            year: assign.year,
+            month: assign.month,
+            task: assign.task,
+            removedAt: assign.removedAt,
+            removedBy: assign.removedBy
+          });
+          continue; // Skip this removed assignment
+        }
+
         let client;
 
         // Check cache first
@@ -479,6 +493,27 @@ router.get("/assigned-clients", async (req, res) => {
           logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_ASSIGNMENT", {
             clientId: assign.clientId,
             employeeId: employee.employeeId
+          });
+          continue;
+        }
+
+        // ===== ALSO CHECK IF THIS ASSIGNMENT IS REMOVED IN CLIENT RECORD =====
+        // Find the corresponding assignment in client's employeeAssignments
+        const clientAssignment = client.employeeAssignments?.find(a =>
+          a.employeeId === employee.employeeId &&
+          a.year === assign.year &&
+          a.month === assign.month &&
+          a.task === assign.task
+        );
+
+        // If assignment is removed in client record, skip it
+        if (clientAssignment && clientAssignment.isRemoved) {
+          logToConsole("DEBUG", "SKIPPING_ASSIGNMENT_REMOVED_IN_CLIENT_RECORD", {
+            employeeId: employee.employeeId,
+            clientId: assign.clientId,
+            year: assign.year,
+            month: assign.month,
+            task: assign.task
           });
           continue;
         }
@@ -567,9 +602,11 @@ router.get("/assigned-clients", async (req, res) => {
           clientId: assign.clientId,
           year: assign.year,
           month: assign.month,
+          task: assign.task,
           isCurrentMonth: isCurrentMonth,
           accountingDone: assignmentObj.accountingDone,
-          totalFiles: totalFiles
+          totalFiles: totalFiles,
+          isRemoved: false // Explicitly marking as not removed
         });
 
       } catch (assignError) {
@@ -578,7 +615,8 @@ router.get("/assigned-clients", async (req, res) => {
           employeeId: employee.employeeId,
           clientId: assign.clientId,
           year: assign.year,
-          month: assign.month
+          month: assign.month,
+          task: assign.task
         });
       }
     }
@@ -594,20 +632,31 @@ router.get("/assigned-clients", async (req, res) => {
       return b.month - a.month;
     });
 
-    // Log activity
+    // Log activity with removed assignments count
     try {
+      const totalAssignments = employee.assignedClients?.length || 0;
+      const activeAssignments = response.length;
+      const removedAssignments = totalAssignments - activeAssignments;
+
       await ActivityLog.create({
         userName: employee.name,
         role: "EMPLOYEE",
         employeeId: employee.employeeId,
         action: "FETCHED_ASSIGNED_CLIENTS",
-        details: `Fetched ${response.length} assigned clients with multiple files support`,
-        dateTime: new Date().toLocaleString("en-IN")
+        details: `Fetched ${activeAssignments} active assignments (${removedAssignments} removed assignments filtered out)`,
+        dateTime: new Date().toLocaleString("en-IN"),
+        metadata: {
+          activeAssignments,
+          removedAssignments,
+          totalAssignments
+        }
       });
 
       logToConsole("INFO", "ASSIGNED_CLIENTS_ACTIVITY_LOG_CREATED", {
         employeeId: employee.employeeId,
-        assignmentCount: response.length
+        activeAssignments: activeAssignments,
+        removedAssignments: removedAssignments,
+        totalAssignments: totalAssignments
       });
     } catch (logError) {
       logToConsole("ERROR", "ASSIGNED_CLIENTS_ACTIVITY_LOG_FAILED", {
@@ -620,7 +669,9 @@ router.get("/assigned-clients", async (req, res) => {
     logToConsole("SUCCESS", "ASSIGNED_CLIENTS_FETCHED_SUCCESS", {
       employeeId: employee.employeeId,
       name: employee.name,
-      totalAssignments: response.length,
+      totalAssignments: employee.assignedClients?.length || 0,
+      activeAssignments: response.length,
+      removedAssignmentsFiltered: (employee.assignedClients?.length || 0) - response.length,
       currentMonthAssignments: response.filter(a => a.isCurrentMonth).length,
       accountingDoneCount: response.filter(a => a.accountingDone).length,
       totalFilesAcrossAll: response.reduce((sum, a) => sum + (a.totalFiles || 0), 0),
