@@ -1245,12 +1245,21 @@ router.delete("/remove-assignment", auth, async (req, res) => {
 
 
 /* ===============================
-   GET CLIENT TASK STATUS PER MONTH (NEW ENDPOINT)
+   GET CLIENT TASK STATUS PER MONTH (UPDATED & FIXED)
 ================================ */
 router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
     try {
         const { clientId } = req.params;
         const { year, month } = req.query;
+
+        // DEBUG LOG
+        console.log("🔍 CLIENT_TASKS_STATUS_REQUEST:", {
+            clientId,
+            year,
+            month,
+            adminId: req.user?.adminId,
+            timestamp: new Date().toISOString()
+        });
 
         if (!year || !month) {
             return res.status(400).json({
@@ -1261,26 +1270,64 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
         const numericYear = parseInt(year);
         const numericMonth = parseInt(month);
 
-        logToConsole("INFO", "GET_CLIENT_TASKS_STATUS_REQUEST", {
-            adminId: req.user.adminId,
-            clientId,
-            year: numericYear,
-            month: numericMonth
-        });
+        // VALIDATE INPUTS
+        if (isNaN(numericYear) || isNaN(numericMonth)) {
+            return res.status(400).json({
+                message: "Invalid year or month format"
+            });
+        }
+
+        if (numericMonth < 1 || numericMonth > 12) {
+            return res.status(400).json({
+                message: "Month must be between 1-12"
+            });
+        }
 
         const client = await Client.findOne({ clientId });
         if (!client) {
+            console.log("❌ CLIENT_NOT_FOUND:", { clientId });
             return res.status(404).json({ message: "Client not found" });
         }
 
-        // Get all active assignments for this client-month
-        const assignments = client.employeeAssignments.filter(
-            a => a.year === numericYear &&
-                a.month === numericMonth &&
-                !a.isRemoved
-        );
+        // DEBUG: Check client data structure
+        console.log("📊 CLIENT_DATA_STRUCTURE:", {
+            clientId: client.clientId,
+            clientName: client.name,
+            hasEmployeeAssignments: !!client.employeeAssignments,
+            assignmentsType: Array.isArray(client.employeeAssignments) ? 'array' : typeof client.employeeAssignments,
+            assignmentsCount: client.employeeAssignments?.length || 0,
+            assignmentsData: client.employeeAssignments?.slice(0, 5) || 'none'
+        });
 
-        // Define all possible tasks
+        // SAFELY GET ASSIGNMENTS (FIXED NULL CHECK)
+        const assignments = (client.employeeAssignments || []).filter(a => {
+            // Check if assignment exists and has required fields
+            if (!a) return false;
+
+            // STRICT COMPARISON WITH TYPE CONVERSION
+            const assignmentYear = Number(a.year);
+            const assignmentMonth = Number(a.month);
+
+            return assignmentYear === numericYear &&
+                assignmentMonth === numericMonth &&
+                a.isRemoved !== true; // Explicitly check for true
+        });
+
+        console.log("🎯 FILTERED_ASSIGNMENTS:", {
+            searchCriteria: { numericYear, numericMonth },
+            foundCount: assignments.length,
+            assignmentsDetails: assignments.map(a => ({
+                task: a.task,
+                year: a.year,
+                month: a.month,
+                isRemoved: a.isRemoved,
+                employeeId: a.employeeId,
+                employeeName: a.employeeName,
+                accountingDone: a.accountingDone
+            }))
+        });
+
+        // Define all possible tasks (EXACT MATCH REQUIRED)
         const allTasks = [
             'Bookkeeping',
             'VAT Filing Computation',
@@ -1288,9 +1335,14 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
             'Financial Statement Generation'
         ];
 
-        // Create status for each task
+        // Create status for each task (CASE SENSITIVE MATCH)
         const taskStatus = allTasks.map(task => {
-            const assignment = assignments.find(a => a.task === task);
+            // Find exact task match (case sensitive)
+            const assignment = assignments.find(a => {
+                if (!a.task) return false;
+                return a.task.trim() === task.trim();
+            });
+
             return {
                 task,
                 isAssigned: !!assignment,
@@ -1299,9 +1351,21 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
                     employeeName: assignment.employeeName,
                     assignedAt: assignment.assignedAt
                 } : null,
-                accountingDone: assignment ? assignment.accountingDone : false,
+                accountingDone: assignment ? (assignment.accountingDone === true) : false,
                 accountingDoneAt: assignment ? assignment.accountingDoneAt : null
             };
+        });
+
+        // DEBUG: Show final task status
+        console.log("📋 FINAL_TASK_STATUS:", {
+            clientId,
+            year: numericYear,
+            month: numericMonth,
+            taskStatus: taskStatus.map(t => ({
+                task: t.task,
+                isAssigned: t.isAssigned,
+                employee: t.assignedTo?.employeeName || 'none'
+            }))
         });
 
         const response = {
@@ -1318,27 +1382,44 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
                 employeeId: a.employeeId,
                 employeeName: a.employeeName,
                 assignedAt: a.assignedAt,
-                accountingDone: a.accountingDone,
-                accountingDoneAt: a.accountingDoneAt
-            }))
+                accountingDone: a.accountingDone === true,
+                accountingDoneAt: a.accountingDoneAt,
+                isRemoved: a.isRemoved
+            })),
+            // ADD DEBUG INFO
+            _debug: {
+                rawAssignmentsCount: client.employeeAssignments?.length || 0,
+                filteredAssignmentsCount: assignments.length,
+                allTasksList: allTasks,
+                queryParams: { year, month },
+                timestamp: new Date().toISOString()
+            }
         };
 
-        logToConsole("INFO", "CLIENT_TASKS_STATUS_FETCHED", {
+        console.log("✅ CLIENT_TASKS_STATUS_SUCCESS:", {
             clientId,
-            totalAssigned: assignments.length
+            totalAssigned: assignments.length,
+            tasksAssigned: assignments.map(a => a.task)
         });
 
         res.json(response);
 
     } catch (error) {
-        logToConsole("ERROR", "GET_CLIENT_TASKS_STATUS_FAILED", {
+        console.error("❌ CLIENT_TASKS_STATUS_ERROR:", {
             error: error.message,
-            stack: error.stack
+            stack: error.stack,
+            clientId: req.params.clientId,
+            query: req.query,
+            timestamp: new Date().toISOString()
         });
 
         res.status(500).json({
             message: "Error fetching client task status",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
+            _errorDetails: {
+                timestamp: new Date().toISOString(),
+                operation: "get_client_tasks_status"
+            }
         });
     }
 });
