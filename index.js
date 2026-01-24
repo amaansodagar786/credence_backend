@@ -26,12 +26,10 @@ app.use(
             "http://localhost:5173",
             "https://credence.techorses.com",
             "https://jladgroup.fi"
-            
         ],
         credentials: true
     })
 );
-
 
 app.use(cookieParser());
 
@@ -47,31 +45,22 @@ const EmployeeTasks = require("./routes/employeeTaskLog");
 const clientUpload = require("./routes/clientUpload");
 const Employee_task_info = require("./routes/employee-task");
 const scheduleCallRoutes = require("./routes/scheduleCallRoutes");
-
+const paymentReminderRoutes = require("./routes/paymentReminders"); // ADD THIS LINE
 
 app.use("/client-enrollment", ClientEnrollment);
 app.use("/client", ClientAuth);
 app.use("/clientupload", clientUpload);
 
-
 app.use("/admin", adminRoutes);
 app.use("/admin-employee", AdminEmployee);
-
 
 app.use("/employee", EmployeeRoutes);
 app.use("/employee-task", EmployeeTasks);
 
-
 app.use("/admin", Employee_task_info);
 
-
 app.use("/schedule-call", scheduleCallRoutes);
-
-
-
-
-
-
+app.use("/payment-reminders", paymentReminderRoutes); // ADD THIS LINE
 
 // ===============================
 // BASIC ROUTE
@@ -81,12 +70,19 @@ app.get("/", (req, res) => {
 });
 
 // ===============================
+// PAYMENT REMINDER INITIALIZATION
+// ===============================
+console.log("⏰ Payment Reminder System: Checking schedule...");
+console.log("📅 First Reminder: 20th of each month at 12:00 PM IST");
+console.log("📅 Final Reminder: 25th of each month at 12:00 PM IST");
+console.log(`⏰ Current Server Time: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`);
+
+// ===============================
 // SERVER
 // ===============================
-// const PORT = process.env.PORT || 5000;
-// const PORT = process.env.PORT || 3050; 
 const PORT = process.env.PORT || 3043; 
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running at http://localhost:${PORT}`);
+    console.log(`💰 Payment Reminder System: ACTIVE`);
 });

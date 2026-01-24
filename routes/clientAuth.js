@@ -309,4 +309,106 @@ router.post("/reset-password", async (req, res) => {
 });
 
 
+
+
+/* =========================
+   CHANGE PASSWORD (WITH OLD PASSWORD VERIFICATION)
+========================= */
+router.post("/change-password", async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+
+    // Get client from token
+    const token = req.cookies?.clientToken;
+    if (!token) {
+      return res.status(401).json({
+        message: "Unauthorized",
+        success: false
+      });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const client = await Client.findOne({ clientId: decoded.clientId });
+
+    if (!client) {
+      return res.status(404).json({
+        message: "Client not found",
+        success: false
+      });
+    }
+
+    // Verify old password
+    const isMatch = await bcrypt.compare(oldPassword, client.password);
+    if (!isMatch) {
+      return res.status(400).json({
+        message: "Current password is incorrect",
+        success: false
+      });
+    }
+
+    // Validate new password
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({
+        message: "New password must be at least 6 characters",
+        success: false
+      });
+    }
+
+    // Update password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    client.password = hashedPassword;
+    await client.save();
+
+    // Send confirmation email
+    await sendEmail(
+      client.email,
+      "Password Changed - Credence",
+      `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #7cd64b;">Password Changed Successfully</h2>
+        <p>Hello ${client.name},</p>
+        <p>Your password has been successfully changed from your profile settings.</p>
+        <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <p style="margin: 0;">If you did not make this change, please contact Credence support immediately.</p>
+        </div>
+        <p>Thank you for keeping your account secure.</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
+        <p style="color:#666;font-size:12px;">This is an automated message from Credence.</p>
+      </div>
+      `
+    );
+
+    // Log activity
+    await ActivityLog.create({
+      userName: client.name,
+      role: "CLIENT",
+      clientId: client.clientId,
+      action: "PASSWORD_CHANGED",
+      details: "Password changed from profile settings",
+      dateTime: new Date().toLocaleString("en-IN")
+    });
+
+    res.json({
+      message: "Password changed successfully",
+      success: true
+    });
+
+  } catch (error) {
+    console.error("Change password error:", error);
+
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        message: "Invalid session. Please login again.",
+        success: false
+      });
+    }
+
+    res.status(500).json({
+      message: "Failed to change password. Please try again.",
+      success: false
+    });
+  }
+});
+
+
 module.exports = router;
