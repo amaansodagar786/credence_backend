@@ -66,7 +66,7 @@ app.use("/payment-reminders", paymentReminderRoutes); // ADD THIS LINE
 // BASIC ROUTE
 // ===============================
 app.get("/", (req, res) => {
-    res.send("Accounting Portal Backend is running crednece");
+    res.send("Accounting Portal Backend is running UPDATED crednece");
 });
 
 // ===============================
