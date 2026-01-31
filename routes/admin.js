@@ -946,17 +946,45 @@ router.get("/clients/:clientId", auth, async (req, res) => {
     // 7. CREATE FINAL RESPONSE OBJECT
     // ===================================================
     const responseData = {
+      // IDENTIFICATION
       _id: clientData._id,
       clientId: clientData.clientId,
+
+      // PERSONAL INFO
       name: clientData.name,
       email: clientData.email,
       phone: clientData.phone,
+      address: clientData.address,
+      firstName: clientData.firstName,
+      lastName: clientData.lastName,
+
+      // BUSINESS INFO
+      businessName: clientData.businessName,
+      businessAddress: clientData.businessAddress,
+      businessNature: clientData.businessNature,
+      registerTrade: clientData.registerTrade,
+
+      // FINANCIAL INFO
+      bankAccount: clientData.bankAccount,
+      bicCode: clientData.bicCode,
+      vatPeriod: clientData.vatPeriod,
+      planSelected: clientData.planSelected,
+
+      // LEGAL INFO
+      visaType: clientData.visaType,
+      hasStrongId: clientData.hasStrongId,
+
+      // STATUS & ENROLLMENT
       isActive: clientData.isActive,
+      enrollmentId: clientData.enrollmentId,
+      enrollmentDate: clientData.enrollmentDate,
+
+      // DOCUMENTS & ASSIGNMENTS
       documents: clientData.documents || {},
-      // ✅ CHANGE: Send enriched assignments array
       employeeAssignments: clientData.employeeAssignments,
-      // ✅ NEW: Send assignments organized by month
       assignmentsByMonth: assignmentsByMonth,
+
+      // TIMESTAMPS
       createdAt: clientData.createdAt,
       updatedAt: clientData.updatedAt,
       __v: clientData.__v

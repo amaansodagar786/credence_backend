@@ -45,7 +45,11 @@ const EmployeeTasks = require("./routes/employeeTaskLog");
 const clientUpload = require("./routes/clientUpload");
 const Employee_task_info = require("./routes/employee-task");
 const scheduleCallRoutes = require("./routes/scheduleCallRoutes");
-const paymentReminderRoutes = require("./routes/paymentReminders"); // ADD THIS LINE
+const paymentReminderRoutes = require("./routes/paymentReminders");
+const clientManagementRoutes = require("./routes/clientManagement");
+const adminDashboardRoutes = require('./routes/adminDashboard');
+
+
 
 app.use("/client-enrollment", ClientEnrollment);
 app.use("/client", ClientAuth);
@@ -61,6 +65,11 @@ app.use("/admin", Employee_task_info);
 
 app.use("/schedule-call", scheduleCallRoutes);
 app.use("/payment-reminders", paymentReminderRoutes); // ADD THIS LINE
+app.use("/client-management", clientManagementRoutes);
+
+app.use('/admin', adminDashboardRoutes);
+
+
 
 // ===============================
 // BASIC ROUTE
@@ -80,7 +89,7 @@ console.log(`⏰ Current Server Time: ${new Date().toLocaleString("en-IN", { tim
 // ===============================
 // SERVER
 // ===============================
-const PORT = process.env.PORT || 3043; 
+const PORT = process.env.PORT || 3043;
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running at http://localhost:${PORT}`);
