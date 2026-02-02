@@ -4,8 +4,8 @@ const { S3Client, PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/cl
 const { v4: uuidv4 } = require("uuid");
 
 const Client = require("../models/Client");
-const DeletedFile = require("../models/DeletedFile"); // NEW
-const ActivityLog = require("../models/ActivityLog"); // ADDED FOR ACTIVITY LOGS
+const DeletedFile = require("../models/DeletedFile");
+const ActivityLog = require("../models/ActivityLog");
 const auth = require("../middleware/authMiddleware");
 
 const router = express.Router();
@@ -24,32 +24,21 @@ const s3 = new S3Client({
 /* ===============================
    MULTER (MEMORY) - ALLOW MULTIPLE FILES
 ================================ */
-// const upload = multer({ storage: multer.memoryStorage() }); 
-
-
-
 const allowedMimeTypes = [
-    // PDF
     "application/pdf",
-
-    // Images
     "image/jpeg",
     "image/png",
     "image/webp",
     "image/gif",
-
-    // Excel
-    "application/vnd.ms-excel", // .xls
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" // .xlsx
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 ];
 
 const upload = multer({
     storage: multer.memoryStorage(),
-
     limits: {
-        fileSize: 10 * 1024 * 1024 // 10 MB per file (change if needed)
+        fileSize: 10 * 1024 * 1024
     },
-
     fileFilter: (req, file, cb) => {
         if (allowedMimeTypes.includes(file.mimetype)) {
             cb(null, true);
@@ -64,27 +53,54 @@ const upload = multer({
     }
 });
 
-
 /* ===============================
    CONSOLE LOGGING UTILITY
 ================================ */
 const logToConsole = (type, operation, data) => {
     const timestamp = new Date().toLocaleString("en-IN");
-    const logEntry = {
-        timestamp,
-        type,
-        operation,
-        data
-    };
-
     console.log(`[${timestamp}] ${type}: ${operation}`, data);
-
-    return logEntry;
 };
 
+/* ===============================
+   HELPER: GET MONTH DATA
+================================ */
+const getMonthData = (client, year, month) => {
+    const y = String(year);
+    const m = String(month);
 
+    if (!client.documents.has(y)) {
+        client.documents.set(y, new Map());
+    }
 
+    if (!client.documents.get(y).has(m)) {
+        client.documents.get(y).set(m, {
+            sales: {
+                files: [],
+                categoryNotes: [],
+                isLocked: false,
+                wasLockedOnce: false
+            },
+            purchase: {
+                files: [],
+                categoryNotes: [],
+                isLocked: false,
+                wasLockedOnce: false
+            },
+            bank: {
+                files: [],
+                categoryNotes: [],
+                isLocked: false,
+                wasLockedOnce: false
+            },
+            other: [],
+            isLocked: false,
+            wasLockedOnce: false,
+            monthNotes: []
+        });
+    }
 
+    return client.documents.get(y).get(m);
+};
 
 /* ===============================
    UPLOAD / UPDATE FILES (MULTIPLE)
@@ -98,8 +114,8 @@ router.post("/upload", auth, upload.array("files"),
                 type,
                 categoryName,
                 note,
-                deleteNote, // NEW: For tracking file replacement
-                replacedFile // NEW: Name of file being replaced
+                deleteNote,
+                replacedFile
             } = req.body;
 
             if (!req.files || req.files.length === 0) {
@@ -149,7 +165,7 @@ router.post("/upload", auth, upload.array("files"),
                 });
             }
 
-            // ===== LOG 1: FILE UPLOAD/UPDATE REQUEST =====
+            // LOG: FILE UPLOAD REQUEST
             logToConsole("INFO", "CLIENT_FILE_UPLOAD_REQUEST", {
                 clientId: client.clientId,
                 clientName: client.name,
@@ -157,26 +173,15 @@ router.post("/upload", auth, upload.array("files"),
                 month,
                 type,
                 categoryName: categoryName || "N/A",
-                filesCount: req.files.length,
-                fileNames: req.files.map(f => f.originalname),
-                isUpdate: !!isUpdate,
-                isReplacement: !!replacedFile,
-                replacedFileName: replacedFile || null
+                filesCount: req.files.length
             });
 
-            // NEW: Handle file replacement - track deleted file
+            // Handle file replacement - track deleted file
             if (replacedFile) {
-                // ===== LOG 3: FILE UPDATE/REPLACEMENT =====
                 logToConsole("INFO", "CLIENT_FILE_UPDATE_REPLACEMENT", {
                     clientId: client.clientId,
-                    clientName: client.name,
-                    year,
-                    month,
                     oldFileName: replacedFile,
-                    newFilesCount: req.files.length,
-                    category: `${type}${categoryName ? ` (${categoryName})` : ''}`,
-                    note: note || "No note provided",
-                    deleteNote: deleteNote || "Replaced with new file"
+                    newFilesCount: req.files.length
                 });
 
                 let oldFile = null;
@@ -259,7 +264,7 @@ router.post("/upload", auth, upload.array("files"),
                     fileName: file.originalname,
                     fileSize: file.size,
                     fileType: file.mimetype,
-                    notes: [] // Initialize empty notes array
+                    notes: []
                 });
             }
 
@@ -321,33 +326,27 @@ router.post("/upload", auth, upload.array("files"),
 
             await client.save();
 
-            // ===== LOG 1: SUCCESSFUL FILE UPLOAD =====
+            // LOG SUCCESS
             logToConsole("SUCCESS", "CLIENT_FILE_UPLOAD_COMPLETE", {
                 clientId: client.clientId,
-                clientName: client.name,
-                year,
-                month,
-                type,
-                categoryName: categoryName || "N/A",
-                uploadedFilesCount: uploadedFiles.length,
-                uploadedFileNames: uploadedFiles.map(f => f.fileName),
-                wasReplacement: !!replacedFile,
-                noteProvided: !!note,
-                status: "success"
+                uploadedFilesCount: uploadedFiles.length
             });
 
-            // ===== ACTIVITY LOG 1: FILE UPLOAD =====
+            // ===== ACTIVITY LOG: FILE UPLOAD =====
             try {
                 await ActivityLog.create({
                     userName: client.name,
                     role: "CLIENT",
                     clientId: client.clientId,
                     clientName: client.name,
+                    // ADDED: adminId if available (for admin-initiated uploads)
+                    adminId: req.user.role === "ADMIN" ? req.user.adminId : null,
+                    adminName: req.user.role === "ADMIN" ? req.user.name : null,
                     action: replacedFile ? "CLIENT_FILE_UPDATED" : "CLIENT_FILE_UPLOADED",
                     details: replacedFile
-                        ? `Client "${client.name}" updated file: ${replacedFile} → ${uploadedFiles.map(f => f.fileName).join(', ')} in ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`
-                        : `Client "${client.name}" uploaded ${uploadedFiles.length} file(s): ${uploadedFiles.map(f => f.fileName).join(', ')} in ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`,
-                    dateTime: new Date().toLocaleString("en-IN"),
+                        ? `File updated: ${replacedFile} → ${uploadedFiles.map(f => f.fileName).join(', ')} in ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`
+                        : `${req.user.role === "ADMIN" ? "Admin uploaded" : "Client uploaded"} ${uploadedFiles.length} file(s): ${uploadedFiles.map(f => f.fileName).join(', ')} in ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`,
+                    dateTime: new Date(),
                     metadata: {
                         year,
                         month,
@@ -357,14 +356,9 @@ router.post("/upload", auth, upload.array("files"),
                         fileNames: uploadedFiles.map(f => f.fileName),
                         wasReplacement: !!replacedFile,
                         replacedFile: replacedFile || null,
-                        noteProvided: !!note
+                        noteProvided: !!note,
+                        performedBy: req.user.role === "ADMIN" ? "ADMIN" : "CLIENT"
                     }
-                });
-
-                logToConsole("INFO", "ACTIVITY_LOG_CREATED_FILE_UPLOAD", {
-                    action: replacedFile ? "CLIENT_FILE_UPDATED" : "CLIENT_FILE_UPLOADED",
-                    clientId: client.clientId,
-                    filesCount: uploadedFiles.length
                 });
             } catch (logError) {
                 logToConsole("ERROR", "ACTIVITY_LOG_FAILED_FILE_UPLOAD", {
@@ -378,109 +372,46 @@ router.post("/upload", auth, upload.array("files"),
                 monthData: monthData
             });
         } catch (err) {
-            // ===== LOG 1: FILE UPLOAD ERROR =====
             logToConsole("ERROR", "CLIENT_FILE_UPLOAD_FAILED", {
                 clientId: req.user?.clientId,
-                error: err.message,
-                stack: err.stack,
-                requestBody: {
-                    year: req.body?.year,
-                    month: req.body?.month,
-                    type: req.body?.type,
-                    categoryName: req.body?.categoryName,
-                    filesCount: req.files?.length || 0
-                }
+                error: err.message
             });
 
-            console.error("CLIENT_UPLOAD_ERROR:", err.message);
             if (err.message?.includes("Invalid file type")) {
                 return res.status(400).json({ message: err.message });
             }
 
             res.status(500).json({ message: "Upload failed" });
-
         }
     }
 );
 
-
-
-
 /* ===============================
-   HELPER: GET MONTH DATA
+   GET MONTH DATA
 ================================ */
-const getMonthData = (client, year, month) => {
-    const y = String(year);
-    const m = String(month);
-
-    if (!client.documents.has(y)) {
-        client.documents.set(y, new Map());
-    }
-
-    if (!client.documents.get(y).has(m)) {
-        client.documents.get(y).set(m, {
-            sales: {
-                files: [],
-                categoryNotes: [],
-                isLocked: false,
-                wasLockedOnce: false
-            },
-            purchase: {
-                files: [],
-                categoryNotes: [],
-                isLocked: false,
-                wasLockedOnce: false
-            },
-            bank: {
-                files: [],
-                categoryNotes: [],
-                isLocked: false,
-                wasLockedOnce: false
-            },
-            other: [],
-            isLocked: false,
-            wasLockedOnce: false,
-            monthNotes: []
-        });
-    }
-
-    return client.documents.get(y).get(m);
-};
-
-
 router.get("/month-data", auth, async (req, res) => {
     try {
         const { year, month } = req.query;
 
-        // ADDED CONSOLE LOGS
-        console.log("=== MONTH-DATA ROUTE HIT ===");
-        console.log("Year:", year, "Month:", month);
-        console.log("req.user:", req.user);
-        console.log("req.user.clientId:", req.user?.clientId);
-        console.log("All cookies:", req.cookies);
-        console.log("clientToken cookie:", req.cookies?.clientToken);
+        console.log("MONTH-DATA REQUEST:", {
+            clientId: req.user?.clientId,
+            year,
+            month
+        });
 
         const client = await Client.findOne({
             clientId: req.user.clientId
         });
 
-        console.log("Client found in DB:", !!client);
-        console.log("Client ID searched:", req.user.clientId);
-
         if (!client) {
-            console.log("ERROR: No client found with ID:", req.user.clientId);
             return res.status(404).json({ message: "Client not found" });
         }
 
-        console.log("SUCCESS: Client found -", client.clientId, client.name);
-
         const monthData = getMonthData(client, year, month);
 
-        // NEW: Get employee names for notes
+        // Get employee names for notes
         const Employee = require("../models/Employee");
         const employeeMap = new Map();
-
-        // Collect all employeeIds from notes
         const employeeIds = new Set();
 
         // Helper to collect employeeIds
@@ -495,9 +426,7 @@ router.get("/month-data", auth, async (req, res) => {
         ['sales', 'purchase', 'bank'].forEach(category => {
             if (monthData[category]) {
                 const categoryData = monthData[category];
-                // Collect from category notes
                 collectEmployeeIds(categoryData.categoryNotes);
-                // Collect from file notes
                 if (categoryData.files && Array.isArray(categoryData.files)) {
                     categoryData.files.forEach(file => {
                         collectEmployeeIds(file.notes);
@@ -570,14 +499,12 @@ router.get("/month-data", auth, async (req, res) => {
             });
         }
 
-        console.log("=== MONTH-DATA RETURNING SUCCESS ===");
         res.json(monthData);
     } catch (err) {
         console.error("GET_MONTH_DATA_ERROR:", err.message);
         res.status(500).json({ message: "Failed to fetch month data" });
     }
 });
-
 
 /* ===============================
    GET DELETED FILES FOR CLIENT
@@ -593,7 +520,7 @@ router.get("/deleted-files", auth, async (req, res) => {
 
         const deletedFiles = await DeletedFile.find(query)
             .sort({ deletedAt: -1 })
-            .limit(50); // Limit to recent 50 deletions
+            .limit(50);
 
         res.json(deletedFiles);
     } catch (err) {
@@ -603,7 +530,7 @@ router.get("/deleted-files", auth, async (req, res) => {
 });
 
 /* ===============================
-   DELETE SINGLE FILE (UPDATED FOR AUDIT TRAIL)
+   DELETE SINGLE FILE
 ================================ */
 router.delete("/delete-file", auth, async (req, res) => {
     try {
@@ -613,7 +540,7 @@ router.delete("/delete-file", auth, async (req, res) => {
             type,
             fileName,
             categoryName,
-            deleteNote // NEW: Reason for deletion
+            deleteNote
         } = req.body;
 
         const client = await Client.findOne({
@@ -635,15 +562,10 @@ router.delete("/delete-file", auth, async (req, res) => {
             return res.status(403).json({ message: "Category is locked" });
         }
 
-        // ===== LOG 2: FILE DELETE REQUEST =====
+        // LOG DELETE REQUEST
         logToConsole("INFO", "CLIENT_FILE_DELETE_REQUEST", {
             clientId: client.clientId,
-            clientName: client.name,
-            year,
-            month,
             fileName,
-            type,
-            categoryName: categoryName || "N/A",
             deleteNote: deleteNote || "No reason provided"
         });
 
@@ -670,12 +592,6 @@ router.delete("/delete-file", auth, async (req, res) => {
         }
 
         if (!deletedFileData) {
-            logToConsole("WARN", "FILE_NOT_FOUND_FOR_DELETION", {
-                clientId: client.clientId,
-                fileName,
-                type,
-                categoryName
-            });
             return res.status(404).json({ message: "File not found" });
         }
 
@@ -717,50 +633,34 @@ router.delete("/delete-file", auth, async (req, res) => {
 
         await client.save();
 
-        // ===== LOG 2: SUCCESSFUL FILE DELETE =====
+        // LOG SUCCESS
         logToConsole("SUCCESS", "CLIENT_FILE_DELETE_COMPLETE", {
             clientId: client.clientId,
-            clientName: client.name,
-            year,
-            month,
-            fileName,
-            fileSize: deletedFileData.fileSize,
-            fileType: deletedFileData.fileType,
-            category: `${type}${categoryName ? ` (${categoryName})` : ''}`,
-            deleteNote: deleteNote || "No reason provided",
-            uploadedAt: deletedFileData.uploadedAt,
-            deletedAt: new Date(),
-            status: "success"
+            fileName
         });
 
-        // ===== ACTIVITY LOG 2: FILE DELETE =====
+        // ===== ACTIVITY LOG: FILE DELETE =====
         try {
             await ActivityLog.create({
                 userName: client.name,
                 role: "CLIENT",
                 clientId: client.clientId,
                 clientName: client.name,
+                // ADDED: adminId if available
+                adminId: req.user.role === "ADMIN" ? req.user.adminId : null,
+                adminName: req.user.role === "ADMIN" ? req.user.name : null,
                 action: "CLIENT_FILE_DELETED",
-                details: `Client "${client.name}" deleted file: ${fileName} from ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}. Reason: ${deleteNote || "No reason provided"}`,
-                dateTime: new Date().toLocaleString("en-IN"),
+                details: `${req.user.role === "ADMIN" ? "Admin deleted" : "Client deleted"} file: ${fileName} from ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}. Reason: ${deleteNote || "No reason provided"}`,
+                dateTime: new Date(),
                 metadata: {
                     year,
                     month,
                     type,
                     categoryName: categoryName || "N/A",
                     fileName,
-                    fileSize: deletedFileData.fileSize,
-                    fileType: deletedFileData.fileType,
                     deleteNote: deleteNote || "No reason provided",
-                    uploadedAt: deletedFileData.uploadedAt,
-                    deletedAt: new Date()
+                    performedBy: req.user.role === "ADMIN" ? "ADMIN" : "CLIENT"
                 }
-            });
-
-            logToConsole("INFO", "ACTIVITY_LOG_CREATED_FILE_DELETE", {
-                action: "CLIENT_FILE_DELETED",
-                clientId: client.clientId,
-                fileName
             });
         } catch (logError) {
             logToConsole("ERROR", "ACTIVITY_LOG_FAILED_FILE_DELETE", {
@@ -773,15 +673,11 @@ router.delete("/delete-file", auth, async (req, res) => {
             monthData: monthData
         });
     } catch (err) {
-        // ===== LOG 2: FILE DELETE ERROR =====
         logToConsole("ERROR", "CLIENT_FILE_DELETE_FAILED", {
             clientId: req.user?.clientId,
-            error: err.message,
-            stack: err.stack,
-            requestBody: req.body
+            error: err.message
         });
 
-        console.error("DELETE_FILE_ERROR:", err.message);
         res.status(500).json({ message: "Failed to delete file" });
     }
 });
@@ -803,20 +699,11 @@ router.post("/save-lock", auth, async (req, res) => {
 
         const monthData = getMonthData(client, year, month);
 
-        // ===== LOG 4: MONTH LOCK REQUEST =====
+        // LOG LOCK REQUEST
         logToConsole("INFO", "CLIENT_MONTH_LOCK_REQUEST", {
             clientId: client.clientId,
-            clientName: client.name,
             year,
-            month,
-            currentStatus: {
-                isLocked: monthData.isLocked,
-                wasLockedOnce: monthData.wasLockedOnce
-            },
-            categoriesCount: {
-                main: ['sales', 'purchase', 'bank'].filter(k => monthData[k]).length,
-                other: monthData.other?.length || 0
-            }
+            month
         });
 
         // LOCK MONTH
@@ -842,50 +729,32 @@ router.post("/save-lock", auth, async (req, res) => {
 
         await client.save();
 
-        // ===== LOG 4: SUCCESSFUL MONTH LOCK =====
+        // LOG SUCCESS
         logToConsole("SUCCESS", "CLIENT_MONTH_LOCK_COMPLETE", {
             clientId: client.clientId,
-            clientName: client.name,
             year,
-            month,
-            lockedAt: new Date(),
-            categoriesLocked: {
-                sales: !!monthData.sales,
-                purchase: !!monthData.purchase,
-                bank: !!monthData.bank,
-                other: monthData.other?.length || 0
-            },
-            status: "success"
+            month
         });
 
-        // ===== ACTIVITY LOG 4: MONTH LOCK =====
+        // ===== ACTIVITY LOG: MONTH LOCK =====
         try {
             await ActivityLog.create({
                 userName: client.name,
                 role: "CLIENT",
                 clientId: client.clientId,
                 clientName: client.name,
+                // ADDED: adminId if available (admin-initiated lock)
+                adminId: req.user.role === "ADMIN" ? req.user.adminId : null,
+                adminName: req.user.role === "ADMIN" ? req.user.name : null,
                 action: "CLIENT_MONTH_LOCKED",
-                details: `Client "${client.name}" locked month ${year}-${month}. All categories (${['sales', 'purchase', 'bank'].filter(k => monthData[k]).length} main + ${monthData.other?.length || 0} other) have been locked.`,
-                dateTime: new Date().toLocaleString("en-IN"),
+                details: `${req.user.role === "ADMIN" ? "Admin locked" : "Client locked"} month ${year}-${month}. All categories have been locked.`,
+                dateTime: new Date(),
                 metadata: {
                     year,
                     month,
                     lockedAt: new Date(),
-                    categoriesLocked: {
-                        sales: !!monthData.sales,
-                        purchase: !!monthData.purchase,
-                        bank: !!monthData.bank,
-                        other: monthData.other?.length || 0
-                    }
+                    performedBy: req.user.role === "ADMIN" ? "ADMIN" : "CLIENT"
                 }
-            });
-
-            logToConsole("INFO", "ACTIVITY_LOG_CREATED_MONTH_LOCK", {
-                action: "CLIENT_MONTH_LOCKED",
-                clientId: client.clientId,
-                year,
-                month
             });
         } catch (logError) {
             logToConsole("ERROR", "ACTIVITY_LOG_FAILED_MONTH_LOCK", {
@@ -898,54 +767,17 @@ router.post("/save-lock", auth, async (req, res) => {
             monthData: monthData
         });
     } catch (err) {
-        // ===== LOG 4: MONTH LOCK ERROR =====
         logToConsole("ERROR", "CLIENT_MONTH_LOCK_FAILED", {
             clientId: req.user?.clientId,
-            error: err.message,
-            stack: err.stack,
-            requestBody: req.body
+            error: err.message
         });
 
-        console.error("SAVE_LOCK_ERROR:", err.message);
         res.status(500).json({ message: "Failed to lock month" });
     }
 });
 
 /* ===============================
    GET EMPLOYEE ASSIGNMENT INFO
-================================ */
-// router.get("/employee-assignment", auth, async (req, res) => {
-//     try {
-//         const { year, month } = req.query;
-
-//         const client = await Client.findOne({
-//             clientId: req.user.clientId
-//         });
-
-//         if (!client) {
-//             return res.status(404).json({ message: "Client not found" });
-//         }
-
-//         const assignment = client.employeeAssignments?.find(
-//             assignment =>
-//                 String(assignment.year) === String(year) &&
-//                 String(assignment.month) === String(month)
-//         );
-
-//         res.json(assignment || null);
-//     } catch (err) {
-//         console.error("GET_EMPLOYEE_ASSIGNMENT_ERROR:", err.message);
-//         res.status(500).json({ message: "Failed to fetch employee assignment" });
-//     }
-// });
-
-
-
-
-
-
-/* ===============================
-   GET EMPLOYEE ASSIGNMENT INFO (UPDATED FOR MULTIPLE EMPLOYEES)
 ================================ */
 router.get("/employee-assignment", auth, async (req, res) => {
     try {
@@ -959,26 +791,26 @@ router.get("/employee-assignment", auth, async (req, res) => {
             return res.status(404).json({ message: "Client not found" });
         }
 
-        // ✅ CHANGE 1: Get ALL assignments for this month (not just first)
+        // Get ALL assignments for this month
         const assignments = client.employeeAssignments?.filter(
             assignment =>
                 String(assignment.year) === String(year) &&
                 String(assignment.month) === String(month) &&
-                !assignment.isRemoved  // Only active assignments
+                !assignment.isRemoved
         );
 
         if (!assignments || assignments.length === 0) {
-            return res.json([]); // Return empty array instead of null
+            return res.json([]);
         }
 
-        // ✅ CHANGE 2: Get ALL employee IDs from assignments
+        // Get ALL employee IDs from assignments
         const employeeIds = assignments.map(a => a.employeeId);
 
-        // ✅ CHANGE 3: Fetch employee details INCLUDING phone numbers
+        // Fetch employee details including phone numbers
         const Employee = require("../models/Employee");
         const employees = await Employee.find(
             { employeeId: { $in: employeeIds } },
-            { employeeId: 1, name: 1, phone: 1 } // ✅ ADDED phone: 1
+            { employeeId: 1, name: 1, phone: 1 }
         );
 
         // Create employee map for quick lookup
@@ -990,13 +822,13 @@ router.get("/employee-assignment", auth, async (req, res) => {
             });
         });
 
-        // ✅ CHANGE 4: Enrich assignments with employee details
+        // Enrich assignments with employee details
         const enrichedAssignments = assignments.map(assignment => {
             const empInfo = employeeMap.get(assignment.employeeId);
             return {
                 employeeId: assignment.employeeId,
                 employeeName: empInfo?.name || "Unknown",
-                employeePhone: empInfo?.phone || "N/A", // ✅ NEW FIELD
+                employeePhone: empInfo?.phone || "N/A",
                 task: assignment.task,
                 accountingDone: assignment.accountingDone,
                 accountingDoneAt: assignment.accountingDoneAt,
@@ -1007,7 +839,6 @@ router.get("/employee-assignment", auth, async (req, res) => {
             };
         });
 
-        // ✅ CHANGE 5: Return ARRAY (not single object)
         res.json(enrichedAssignments);
 
     } catch (err) {
@@ -1017,24 +848,19 @@ router.get("/employee-assignment", auth, async (req, res) => {
 });
 
 /* ===============================
-   SIMPLE TEST ROUTE TO CHECK IF FILE IS LOADED
+   SIMPLE TEST ROUTE
 ================================ */
 router.get("/test-simple", (req, res) => {
     console.log("✓ Simple test route called from clientUpload.js");
     res.json({
         message: "SUCCESS: clientUpload.js route file is working!",
         timestamp: new Date().toISOString(),
-        server: "Render Backend",
-        routeFile: "routes/clientUpload.js",
         status: "active"
     });
 });
 
-
-
-
 /* ===============================
-   UPLOAD & LOCK CATEGORY (NEW ENDPOINT)
+   UPLOAD & LOCK CATEGORY
 ================================ */
 router.post("/upload-and-lock", auth, upload.array("files"),
     async (req, res) => {
@@ -1079,16 +905,10 @@ router.post("/upload-and-lock", auth, upload.array("files"),
                 }
             }
 
-            // ===== LOG: UPLOAD & LOCK REQUEST =====
+            // LOG REQUEST
             logToConsole("INFO", "CLIENT_UPLOAD_AND_LOCK_REQUEST", {
                 clientId: client.clientId,
-                clientName: client.name,
-                year,
-                month,
-                type,
-                categoryName: categoryName || "N/A",
-                filesCount: req.files.length,
-                fileNames: req.files.map(f => f.originalname)
+                filesCount: req.files.length
             });
 
             // UPLOAD FILES TO S3
@@ -1182,39 +1002,33 @@ router.post("/upload-and-lock", auth, upload.array("files"),
 
             await client.save();
 
-            // ===== LOG: SUCCESSFUL UPLOAD & LOCK =====
+            // LOG SUCCESS
             logToConsole("SUCCESS", "CLIENT_UPLOAD_AND_LOCK_COMPLETE", {
                 clientId: client.clientId,
-                clientName: client.name,
-                year,
-                month,
-                type,
-                categoryName: categoryName || "N/A",
-                uploadedFilesCount: uploadedFiles.length,
-                uploadedFileNames: uploadedFiles.map(f => f.fileName),
-                status: "success",
-                categoryLocked: true
+                uploadedFilesCount: uploadedFiles.length
             });
 
-            // ===== ACTIVITY LOG =====
+            // ===== ACTIVITY LOG: UPLOAD AND LOCK =====
             try {
                 await ActivityLog.create({
                     userName: client.name,
                     role: "CLIENT",
                     clientId: client.clientId,
                     clientName: client.name,
+                    // ADDED: adminId if available
+                    adminId: req.user.role === "ADMIN" ? req.user.adminId : null,
+                    adminName: req.user.role === "ADMIN" ? req.user.name : null,
                     action: "CLIENT_FILE_UPLOADED_AND_LOCKED",
-                    details: `Client "${client.name}" uploaded ${uploadedFiles.length} file(s) and locked ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`,
-                    dateTime: new Date().toLocaleString("en-IN"),
+                    details: `${req.user.role === "ADMIN" ? "Admin uploaded" : "Client uploaded"} ${uploadedFiles.length} file(s) and locked ${type}${categoryName ? ` (${categoryName})` : ''} for ${year}-${month}`,
+                    dateTime: new Date(),
                     metadata: {
                         year,
                         month,
                         type,
                         categoryName: categoryName || "N/A",
                         filesCount: uploadedFiles.length,
-                        fileNames: uploadedFiles.map(f => f.fileName),
                         noteProvided: !!note,
-                        categoryLocked: true
+                        performedBy: req.user.role === "ADMIN" ? "ADMIN" : "CLIENT"
                     }
                 });
             } catch (logError) {
@@ -1231,15 +1045,12 @@ router.post("/upload-and-lock", auth, upload.array("files"),
         } catch (err) {
             logToConsole("ERROR", "CLIENT_UPLOAD_AND_LOCK_FAILED", {
                 clientId: req.user?.clientId,
-                error: err.message,
-                stack: err.stack
+                error: err.message
             });
 
-            console.error("UPLOAD_AND_LOCK_ERROR:", err.message);
             res.status(500).json({ message: "Upload and lock failed" });
         }
     }
 );
-
 
 module.exports = router;

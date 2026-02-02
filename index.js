@@ -48,6 +48,9 @@ const scheduleCallRoutes = require("./routes/scheduleCallRoutes");
 const paymentReminderRoutes = require("./routes/paymentReminders");
 const clientManagementRoutes = require("./routes/clientManagement");
 const adminDashboardRoutes = require('./routes/adminDashboard');
+const clientDashboardRoutes = require('./routes/clientDashboardRoutes');
+const employeeDashboard = require('./routes/employeeDashboard');
+const activityLogsRoutes = require("./routes/activityLogs");
 
 
 
@@ -68,6 +71,10 @@ app.use("/payment-reminders", paymentReminderRoutes); // ADD THIS LINE
 app.use("/client-management", clientManagementRoutes);
 
 app.use('/admin', adminDashboardRoutes);
+app.use('/client', clientDashboardRoutes);
+app.use('/employee', employeeDashboard);
+app.use("/activity-logs", activityLogsRoutes);
+
 
 
 

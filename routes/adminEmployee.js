@@ -12,8 +12,6 @@ const adminOnly = require("../middleware/adminMiddleware");
 const Client = require("../models/Client");
 const RemovedAssignment = require("../models/RemovedAssignment");
 
-
-
 const router = express.Router();
 
 // Console logging utility
@@ -54,7 +52,8 @@ router.post("/create", auth, async (req, res) => {
             employeeId,
             name,
             email,
-            phone
+            phone,
+            adminId: req.user.adminId
         });
 
         const employee = await Employee.create({
@@ -86,12 +85,16 @@ router.post("/create", auth, async (req, res) => {
             );
 
             // Console log: Email sent
-            logToConsole("INFO", "CREDENTIALS_EMAIL_SENT", { email });
+            logToConsole("INFO", "CREDENTIALS_EMAIL_SENT", {
+                email,
+                adminId: req.user.adminId
+            });
         } catch (emailError) {
             // Console log: Email error (non-critical)
             logToConsole("WARN", "EMAIL_SEND_FAILED", {
                 email,
-                error: emailError.message
+                error: emailError.message,
+                adminId: req.user.adminId
             });
             // Don't fail the whole request if email fails
         }
@@ -103,13 +106,14 @@ router.post("/create", auth, async (req, res) => {
             employeeId,
             action: "EMPLOYEE_CREATED",
             details: "Employee created by admin",
-            dateTime: new Date().toLocaleString("en-IN")
+            dateTime: new Date()  // FIXED: Use Date object instead of String
         });
 
         // Console log: Activity log created
         logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
             action: "EMPLOYEE_CREATED",
-            employeeId
+            employeeId,
+            adminId: req.user.adminId
         });
 
         res.json({ message: "Employee created successfully" });
@@ -117,7 +121,8 @@ router.post("/create", auth, async (req, res) => {
         // Console log: Request completed successfully
         logToConsole("SUCCESS", "CREATE_EMPLOYEE_COMPLETE", {
             employeeId,
-            status: "success"
+            status: "success",
+            adminId: req.user.adminId
         });
     } catch (error) {
         // Console log: Error occurred
@@ -154,12 +159,30 @@ router.get("/all", auth, async (req, res) => {
             adminId: req.user.adminId
         });
 
+        // Create activity log for listing employees
+        await ActivityLog.create({
+            userName: req.user.name,
+            role: "ADMIN",
+            adminId: req.user.adminId,
+            action: "EMPLOYEES_LISTED",
+            details: `Admin listed all employees (${employees.length} employees)`,
+            dateTime: new Date()  // FIXED: Use Date object instead of String
+        });
+
+        // Console log: Activity log created
+        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+            action: "EMPLOYEES_LISTED",
+            adminId: req.user.adminId,
+            employeeCount: employees.length
+        });
+
         res.json(employees);
 
         // Console log: Request completed
         logToConsole("INFO", "LIST_EMPLOYEES_COMPLETE", {
             count: employees.length,
-            status: "success"
+            status: "success",
+            adminId: req.user.adminId
         });
     } catch (error) {
         // Console log: Error occurred
@@ -195,7 +218,10 @@ router.put("/update/:employeeId", auth, async (req, res) => {
         const employee = await Employee.findOne({ employeeId });
         if (!employee) {
             // Console log: Employee not found
-            logToConsole("WARN", "EMPLOYEE_NOT_FOUND", { employeeId });
+            logToConsole("WARN", "EMPLOYEE_NOT_FOUND", {
+                employeeId,
+                adminId: req.user.adminId
+            });
 
             return res.status(404).json({ message: "Employee not found" });
         }
@@ -204,7 +230,8 @@ router.put("/update/:employeeId", auth, async (req, res) => {
         logToConsole("DEBUG", "CURRENT_EMPLOYEE_DATA", {
             currentName: employee.name,
             currentEmail: employee.email,
-            currentPhone: employee.phone
+            currentPhone: employee.phone,
+            adminId: req.user.adminId
         });
 
         let passwordChanged = false;
@@ -219,7 +246,10 @@ router.put("/update/:employeeId", auth, async (req, res) => {
             passwordChanged = true;
 
             // Console log: Password being changed
-            logToConsole("INFO", "PASSWORD_CHANGE", { employeeId });
+            logToConsole("INFO", "PASSWORD_CHANGE", {
+                employeeId,
+                adminId: req.user.adminId
+            });
 
             try {
                 await sendEmail(
@@ -233,12 +263,16 @@ router.put("/update/:employeeId", auth, async (req, res) => {
                 );
 
                 // Console log: Password change email sent
-                logToConsole("INFO", "PASSWORD_CHANGE_EMAIL_SENT", { email });
+                logToConsole("INFO", "PASSWORD_CHANGE_EMAIL_SENT", {
+                    email,
+                    adminId: req.user.adminId
+                });
             } catch (emailError) {
                 // Console log: Email error
                 logToConsole("WARN", "PASSWORD_CHANGE_EMAIL_FAILED", {
                     email,
-                    error: emailError.message
+                    error: emailError.message,
+                    adminId: req.user.adminId
                 });
             }
         }
@@ -249,7 +283,8 @@ router.put("/update/:employeeId", auth, async (req, res) => {
         logToConsole("SUCCESS", "EMPLOYEE_UPDATED", {
             employeeId,
             passwordChanged,
-            emailChanged: oldEmail !== email
+            emailChanged: oldEmail !== email,
+            adminId: req.user.adminId
         });
 
         await ActivityLog.create({
@@ -261,14 +296,15 @@ router.put("/update/:employeeId", auth, async (req, res) => {
             details: passwordChanged
                 ? "Employee updated (password changed)"
                 : "Employee updated",
-            dateTime: new Date().toLocaleString("en-IN")
+            dateTime: new Date()  // FIXED: Use Date object instead of String
         });
 
         // Console log: Activity log created
         logToConsole("INFO", "UPDATE_ACTIVITY_LOG_CREATED", {
             action: "EMPLOYEE_UPDATED",
             employeeId,
-            passwordChanged
+            passwordChanged,
+            adminId: req.user.adminId
         });
 
         res.json({ message: "Employee updated successfully" });
@@ -276,7 +312,8 @@ router.put("/update/:employeeId", auth, async (req, res) => {
         // Console log: Request completed
         logToConsole("SUCCESS", "UPDATE_EMPLOYEE_COMPLETE", {
             employeeId,
-            status: "success"
+            status: "success",
+            adminId: req.user.adminId
         });
     } catch (error) {
         // Console log: Error occurred
@@ -295,23 +332,64 @@ router.put("/update/:employeeId", auth, async (req, res) => {
     }
 });
 
-
-
 router.get("/all-clients", auth, async (req, res) => {
     try {
+        // Console log: Request received
+        logToConsole("INFO", "LIST_CLIENTS_REQUEST", {
+            adminId: req.user.adminId,
+            adminName: req.user.name
+        });
+
         const clients = await Client.find()
             .select("clientId name email phone isActive createdAt")
             .sort({ createdAt: -1 });
 
+        // Console log: Clients fetched
+        logToConsole("SUCCESS", "CLIENTS_FETCHED", {
+            count: clients.length,
+            adminId: req.user.adminId
+        });
+
+        // Create activity log for listing clients
+        await ActivityLog.create({
+            userName: req.user.name,
+            role: "ADMIN",
+            adminId: req.user.adminId,
+            action: "CLIENTS_LISTED",
+            details: `Admin listed all clients (${clients.length} clients)`,
+            dateTime: new Date()  // FIXED: Use Date object instead of String
+        });
+
+        // Console log: Activity log created
+        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+            action: "CLIENTS_LISTED",
+            adminId: req.user.adminId,
+            clientCount: clients.length
+        });
+
         res.json(clients);
+
+        // Console log: Request completed
+        logToConsole("INFO", "LIST_CLIENTS_COMPLETE", {
+            count: clients.length,
+            status: "success",
+            adminId: req.user.adminId
+        });
     } catch (error) {
         console.error("ADMIN_CLIENT_LIST_ERROR:", error.message);
+
+        // Console log: Error occurred
+        logToConsole("ERROR", "LIST_CLIENTS_FAILED", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId
+        });
+
         res.status(500).json({
             message: "Error fetching clients"
         });
     }
 });
-
 
 /* ===============================
    ASSIGN CLIENT TO EMPLOYEE (FIXED DOCUMENT CHECK)
@@ -321,7 +399,10 @@ router.post("/assign-client", auth, async (req, res) => {
 
     // ===== BASIC VALIDATION =====
     if (!clientId || !employeeId || !year || !month || !task) {
-        logToConsole("WARN", "ASSIGN_CLIENT_MISSING_FIELDS", req.body);
+        logToConsole("WARN", "ASSIGN_CLIENT_MISSING_FIELDS", {
+            ...req.body,
+            adminId: req.user.adminId
+        });
         return res.status(400).json({
             message: "Missing required fields: clientId, employeeId, year, month, task"
         });
@@ -330,7 +411,11 @@ router.post("/assign-client", auth, async (req, res) => {
     // Validate task
     const validTasks = ['Bookkeeping', 'VAT Filing Computation', 'VAT Filing', 'Financial Statement Generation'];
     if (!validTasks.includes(task)) {
-        logToConsole("WARN", "INVALID_TASK", { task, validTasks });
+        logToConsole("WARN", "INVALID_TASK", {
+            task,
+            validTasks,
+            adminId: req.user.adminId
+        });
         return res.status(400).json({
             message: "Invalid task. Must be one of: " + validTasks.join(", ")
         });
@@ -350,14 +435,20 @@ router.post("/assign-client", auth, async (req, res) => {
         // ===== FETCH CLIENT =====
         const client = await Client.findOne({ clientId });
         if (!client) {
-            logToConsole("WARN", "CLIENT_NOT_FOUND", { clientId });
+            logToConsole("WARN", "CLIENT_NOT_FOUND", {
+                clientId,
+                adminId: req.user.adminId
+            });
             return res.status(404).json({ message: "Client not found" });
         }
 
         // ===== FETCH EMPLOYEE =====
         const employee = await Employee.findOne({ employeeId });
         if (!employee) {
-            logToConsole("WARN", "EMPLOYEE_NOT_FOUND", { employeeId });
+            logToConsole("WARN", "EMPLOYEE_NOT_FOUND", {
+                employeeId,
+                adminId: req.user.adminId
+            });
             return res.status(404).json({ message: "Employee not found" });
         }
 
@@ -366,12 +457,18 @@ router.post("/assign-client", auth, async (req, res) => {
         const numericYear = parseInt(year);
 
         if (numericMonth < 1 || numericMonth > 12) {
-            logToConsole("WARN", "INVALID_MONTH", { month });
+            logToConsole("WARN", "INVALID_MONTH", {
+                month,
+                adminId: req.user.adminId
+            });
             return res.status(400).json({ message: "Invalid month (1-12)" });
         }
 
         if (numericYear < 2020 || numericYear > 2100) {
-            logToConsole("WARN", "INVALID_YEAR", { year });
+            logToConsole("WARN", "INVALID_YEAR", {
+                year,
+                adminId: req.user.adminId
+            });
             return res.status(400).json({ message: "Invalid year" });
         }
 
@@ -386,7 +483,8 @@ router.post("/assign-client", auth, async (req, res) => {
             hasDocumentsField: !!client.documents,
             documentsType: client.documents ? client.documents.constructor.name : 'none',
             isMap: client.documents instanceof Map,
-            mapSize: client.documents instanceof Map ? client.documents.size : 'N/A'
+            mapSize: client.documents instanceof Map ? client.documents.size : 'N/A',
+            adminId: req.user.adminId
         });
 
         // ===== CHECK MAP STRUCTURE (YOUR ACTUAL STRUCTURE) =====
@@ -402,7 +500,8 @@ router.post("/assign-client", auth, async (req, res) => {
                     logToConsole("DEBUG", "FOUND_MONTH_DATA_IN_MAP", {
                         yearKey,
                         monthKey,
-                        monthDataExists: !!monthData
+                        monthDataExists: !!monthData,
+                        adminId: req.user.adminId
                     });
 
                     // Check standard categories
@@ -415,7 +514,8 @@ router.post("/assign-client", auth, async (req, res) => {
                             hasDocuments = true;
                             logToConsole("DEBUG", "FOUND_FILES_IN_CATEGORY", {
                                 category,
-                                fileCount: monthData[category].files.length
+                                fileCount: monthData[category].files.length,
+                                adminId: req.user.adminId
                             });
                             break;
                         }
@@ -431,7 +531,8 @@ router.post("/assign-client", auth, async (req, res) => {
                                 hasDocuments = true;
                                 logToConsole("DEBUG", "FOUND_FILES_IN_OTHER_CATEGORY", {
                                     categoryName: otherCat.categoryName,
-                                    fileCount: otherCat.document.files.length
+                                    fileCount: otherCat.document.files.length,
+                                    adminId: req.user.adminId
                                 });
                                 break;
                             }
@@ -441,14 +542,16 @@ router.post("/assign-client", auth, async (req, res) => {
                     logToConsole("DEBUG", "NO_MONTH_DATA_IN_MAP", {
                         yearKey,
                         monthKey,
-                        monthDataExists: false
+                        monthDataExists: false,
+                        adminId: req.user.adminId
                     });
                 }
             } else {
                 logToConsole("DEBUG", "NO_YEAR_MAP_IN_DOCUMENTS", {
                     yearKey,
                     yearMapExists: !!yearMap,
-                    yearMapIsMap: yearMap instanceof Map
+                    yearMapIsMap: yearMap instanceof Map,
+                    adminId: req.user.adminId
                 });
             }
         }
@@ -493,7 +596,8 @@ router.post("/assign-client", auth, async (req, res) => {
             hasDocuments,
             documentsExist: !!client.documents,
             structureType: client.documents ?
-                (client.documents instanceof Map ? 'Map' : 'Object') : 'None'
+                (client.documents instanceof Map ? 'Map' : 'Object') : 'None',
+            adminId: req.user.adminId
         });
 
         if (!hasDocuments) {
@@ -502,7 +606,8 @@ router.post("/assign-client", auth, async (req, res) => {
                 clientName: client.name,
                 year: numericYear,
                 month: numericMonth,
-                monthName: getMonthName(numericMonth)
+                monthName: getMonthName(numericMonth),
+                adminId: req.user.adminId
             });
             return res.status(400).json({
                 message: `Cannot assign task. No documents uploaded for ${getMonthName(numericMonth)} ${numericYear}. Please upload documents first.`
@@ -522,7 +627,8 @@ router.post("/assign-client", auth, async (req, res) => {
                 clientId,
                 year: numericYear,
                 month: numericMonth,
-                task
+                task,
+                adminId: req.user.adminId
             });
             return res.status(409).json({
                 message: `Task "${task}" already assigned for ${numericYear}-${numericMonth.toString().padStart(2, '0')}`
@@ -541,7 +647,8 @@ router.post("/assign-client", auth, async (req, res) => {
                 clientId,
                 year: numericYear,
                 month: numericMonth,
-                existingCount: existingAssignments.length
+                existingCount: existingAssignments.length,
+                adminId: req.user.adminId
             });
             return res.status(409).json({
                 message: `Maximum 4 tasks already assigned for ${numericYear}-${numericMonth.toString().padStart(2, '0')}. Remove a task first.`
@@ -563,7 +670,8 @@ router.post("/assign-client", auth, async (req, res) => {
                 clientId,
                 year: numericYear,
                 month: numericMonth,
-                task
+                task,
+                adminId: req.user.adminId
             });
             return res.status(409).json({
                 message: `Employee already has "${task}" task for this client-month`
@@ -578,7 +686,8 @@ router.post("/assign-client", auth, async (req, res) => {
             task,
             existingTasks: existingAssignments.map(a => a.task),
             hasDocuments: true,
-            totalAssignments: existingAssignments.length
+            totalAssignments: existingAssignments.length,
+            adminId: req.user.adminId
         });
 
         // ===== PREPARE ASSIGNMENT OBJECTS =====
@@ -624,7 +733,8 @@ router.post("/assign-client", auth, async (req, res) => {
             task,
             totalTasksNow: client.employeeAssignments.filter(a =>
                 a.year === numericYear && a.month === numericMonth && !a.isRemoved
-            ).length
+            ).length,
+            adminId: req.user.adminId
         });
 
         try {
@@ -639,7 +749,8 @@ router.post("/assign-client", auth, async (req, res) => {
                 clientName: client.name,
                 year: numericYear,
                 month: numericMonth,
-                task
+                task,
+                adminId: req.user.adminId
             });
         } catch (employeeSaveError) {
             // ===== ROLLBACK CLIENT UPDATE =====
@@ -649,7 +760,8 @@ router.post("/assign-client", auth, async (req, res) => {
             logToConsole("ERROR", "EMPLOYEE_SAVE_FAILED_ROLLBACK_DONE", {
                 clientId,
                 employeeId,
-                error: employeeSaveError.message
+                error: employeeSaveError.message,
+                adminId: req.user.adminId
             });
 
             return res.status(500).json({
@@ -670,7 +782,7 @@ router.post("/assign-client", auth, async (req, res) => {
                 clientName: client.name,
                 action: "TASK_ASSIGNED_TO_EMPLOYEE",
                 details: `Task "${task}" assigned to employee "${employee.name}" for client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')}) - Documents verified`,
-                dateTime: new Date().toLocaleString("en-IN"),
+                dateTime: new Date(),  // FIXED: Use Date object instead of String
                 metadata: {
                     task,
                     year: numericYear,
@@ -684,11 +796,13 @@ router.post("/assign-client", auth, async (req, res) => {
                 action: "TASK_ASSIGNED_TO_EMPLOYEE",
                 clientId,
                 employeeId,
-                task
+                task,
+                adminId: req.user.adminId
             });
         } catch (logError) {
             logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
-                error: logError.message
+                error: logError.message,
+                adminId: req.user.adminId
             });
         }
 
@@ -712,11 +826,13 @@ router.post("/assign-client", auth, async (req, res) => {
 
             logToConsole("INFO", "TASK_ASSIGNMENT_EMAIL_SENT", {
                 employeeEmail: employee.email,
-                task
+                task,
+                adminId: req.user.adminId
             });
         } catch (emailError) {
             logToConsole("WARN", "TASK_ASSIGNMENT_EMAIL_FAILED", {
-                error: emailError.message
+                error: emailError.message,
+                adminId: req.user.adminId
             });
         }
 
@@ -726,7 +842,8 @@ router.post("/assign-client", auth, async (req, res) => {
             task,
             timestamp: assignmentDate.toISOString(),
             assignedTasksCount: existingAssignments.length + 1,
-            documentsVerified: true
+            documentsVerified: true,
+            adminId: req.user.adminId
         });
 
         res.json({
@@ -748,7 +865,8 @@ router.post("/assign-client", auth, async (req, res) => {
         logToConsole("ERROR", "ASSIGN_CLIENT_TASK_FAILED", {
             error: error.message,
             stack: error.stack,
-            requestBody: req.body
+            requestBody: req.body,
+            adminId: req.user.adminId
         });
 
         res.status(500).json({
@@ -767,7 +885,6 @@ function getMonthName(month) {
     return months[month - 1] || `Month ${month}`;
 }
 
-
 /* ===============================
    CHECK IF CLIENT HAS DOCUMENTS FOR MONTH (FIXED)
 ================================ */
@@ -777,6 +894,12 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
         const { year, month } = req.query;
 
         if (!year || !month) {
+            logToConsole("WARN", "CHECK_DOCUMENTS_MISSING_PARAMS", {
+                clientId,
+                year,
+                month,
+                adminId: req.user.adminId
+            });
             return res.status(400).json({
                 message: "Missing required query parameters: year, month"
             });
@@ -787,6 +910,7 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
 
         logToConsole("INFO", "CHECK_CLIENT_DOCUMENTS_REQUEST", {
             adminId: req.user.adminId,
+            adminName: req.user.name,
             clientId,
             year: numericYear,
             month: numericMonth
@@ -794,6 +918,10 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
 
         const client = await Client.findOne({ clientId });
         if (!client) {
+            logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_DOCUMENTS", {
+                clientId,
+                adminId: req.user.adminId
+            });
             return res.status(404).json({ message: "Client not found" });
         }
 
@@ -802,7 +930,29 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
             (client.documents instanceof Map && client.documents.size === 0) ||
             (typeof client.documents === 'object' && !(client.documents instanceof Map) && Object.keys(client.documents).length === 0)) {
 
-            logToConsole("INFO", "NO_DOCUMENTS_STRUCTURE_FOUND", { clientId });
+            logToConsole("INFO", "NO_DOCUMENTS_STRUCTURE_FOUND", {
+                clientId,
+                adminId: req.user.adminId
+            });
+
+            // Create activity log for checking documents
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,
+                clientId,
+                clientName: client.name,
+                action: "CLIENT_DOCUMENTS_CHECKED",
+                details: `Admin checked documents for client "${client.name}" - No document structure found for ${numericYear}-${numericMonth.toString().padStart(2, '0')}`,
+                dateTime: new Date()  // FIXED: Use Date object instead of String
+            });
+
+            logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+                action: "CLIENT_DOCUMENTS_CHECKED",
+                clientId,
+                adminId: req.user.adminId
+            });
+
             return res.json({
                 hasDocuments: false,
                 message: "Client has no document structure",
@@ -955,12 +1105,39 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
             }
         };
 
+        // Create activity log for checking documents
+        await ActivityLog.create({
+            userName: req.user.name,
+            role: "ADMIN",
+            adminId: req.user.adminId,
+            clientId,
+            clientName: client.name,
+            action: "CLIENT_DOCUMENTS_CHECKED",
+            details: `Admin checked documents for client "${client.name}" - ${hasAnyDocuments ? 'Documents found' : 'No documents'} for ${numericYear}-${numericMonth.toString().padStart(2, '0')}`,
+            dateTime: new Date(),  // FIXED: Use Date object instead of String
+            metadata: {
+                hasDocuments: hasAnyDocuments,
+                year: numericYear,
+                month: numericMonth,
+                totalFiles: response.details.totalFiles,
+                categoriesCount: documentCategories.length
+            }
+        });
+
         logToConsole("INFO", "CLIENT_DOCUMENTS_CHECK_COMPLETE", {
             clientId,
             hasDocuments: hasAnyDocuments,
             categoriesCount: documentCategories.length,
             structureFound: documentCategories[0]?.structure || "none",
-            structureType: client.documents instanceof Map ? 'Map' : 'Object'
+            structureType: client.documents instanceof Map ? 'Map' : 'Object',
+            adminId: req.user.adminId
+        });
+
+        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+            action: "CLIENT_DOCUMENTS_CHECKED",
+            clientId,
+            hasDocuments: hasAnyDocuments,
+            adminId: req.user.adminId
         });
 
         res.json(response);
@@ -968,7 +1145,8 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
     } catch (error) {
         logToConsole("ERROR", "CHECK_CLIENT_DOCUMENTS_FAILED", {
             error: error.message,
-            stack: error.stack
+            stack: error.stack,
+            adminId: req.user.adminId
         });
 
         res.status(500).json({
@@ -986,7 +1164,10 @@ router.delete("/remove-assignment", auth, async (req, res) => {
 
     // ===== VALIDATION =====
     if (!clientId || !employeeId || !year || !month || !task) {
-        logToConsole("WARN", "REMOVE_ASSIGNMENT_MISSING_FIELDS", req.body);
+        logToConsole("WARN", "REMOVE_ASSIGNMENT_MISSING_FIELDS", {
+            ...req.body,
+            adminId: req.user.adminId
+        });
         return res.status(400).json({
             message: "Missing required fields: clientId, employeeId, year, month, task"
         });
@@ -1009,13 +1190,19 @@ router.delete("/remove-assignment", auth, async (req, res) => {
         // ===== FETCH CLIENT AND EMPLOYEE =====
         const client = await Client.findOne({ clientId });
         if (!client) {
-            logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_REMOVAL", { clientId });
+            logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_REMOVAL", {
+                clientId,
+                adminId: req.user.adminId
+            });
             return res.status(404).json({ message: "Client not found" });
         }
 
         const employee = await Employee.findOne({ employeeId });
         if (!employee) {
-            logToConsole("WARN", "EMPLOYEE_NOT_FOUND_FOR_REMOVAL", { employeeId });
+            logToConsole("WARN", "EMPLOYEE_NOT_FOUND_FOR_REMOVAL", {
+                employeeId,
+                adminId: req.user.adminId
+            });
             return res.status(404).json({ message: "Employee not found" });
         }
 
@@ -1034,7 +1221,8 @@ router.delete("/remove-assignment", auth, async (req, res) => {
                 employeeId,
                 year: numericYear,
                 month: numericMonth,
-                task
+                task,
+                adminId: req.user.adminId
             });
             return res.status(404).json({
                 message: `Task "${task}" assignment not found for specified employee`
@@ -1048,7 +1236,8 @@ router.delete("/remove-assignment", auth, async (req, res) => {
                 employeeId,
                 task,
                 accountingDone: true,
-                accountingDoneAt: clientAssignment.accountingDoneAt
+                accountingDoneAt: clientAssignment.accountingDoneAt,
+                adminId: req.user.adminId
             });
             return res.status(400).json({
                 message: `Cannot remove "${task}" assignment because it's already marked as DONE`
@@ -1070,7 +1259,8 @@ router.delete("/remove-assignment", auth, async (req, res) => {
                 employeeId,
                 year: numericYear,
                 month: numericMonth,
-                task
+                task,
+                adminId: req.user.adminId
             });
             return res.status(404).json({
                 message: `Task "${task}" assignment not found in employee records`
@@ -1109,11 +1299,13 @@ router.delete("/remove-assignment", auth, async (req, res) => {
                 employeeId,
                 year: numericYear,
                 month: numericMonth,
-                task
+                task,
+                adminId: req.user.adminId
             });
         } catch (historyError) {
             logToConsole("ERROR", "REMOVED_TASK_ASSIGNMENT_HISTORY_FAILED", {
-                error: historyError.message
+                error: historyError.message,
+                adminId: req.user.adminId
             });
         }
 
@@ -1144,7 +1336,8 @@ router.delete("/remove-assignment", auth, async (req, res) => {
             removedBy: req.user.name,
             remainingTasks: client.employeeAssignments.filter(a =>
                 a.year === numericYear && a.month === numericMonth && !a.isRemoved
-            ).length
+            ).length,
+            adminId: req.user.adminId
         });
 
         // ===== ACTIVITY LOG =====
@@ -1159,7 +1352,7 @@ router.delete("/remove-assignment", auth, async (req, res) => {
                 clientName: client.name,
                 action: "TASK_ASSIGNMENT_REMOVED",
                 details: `Task "${task}" assignment removed: Employee "${employee.name}" from client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')})`,
-                dateTime: new Date().toLocaleString("en-IN"),
+                dateTime: new Date(),  // FIXED: Use Date object instead of String
                 metadata: {
                     task,
                     year: numericYear,
@@ -1172,11 +1365,13 @@ router.delete("/remove-assignment", auth, async (req, res) => {
                 action: "TASK_ASSIGNMENT_REMOVED",
                 clientId,
                 employeeId,
-                task
+                task,
+                adminId: req.user.adminId
             });
         } catch (logError) {
             logToConsole("ERROR", "TASK_REMOVAL_ACTIVITY_LOG_FAILED", {
-                error: logError.message
+                error: logError.message,
+                adminId: req.user.adminId
             });
         }
 
@@ -1200,11 +1395,13 @@ router.delete("/remove-assignment", auth, async (req, res) => {
 
             logToConsole("INFO", "TASK_REMOVAL_EMAIL_SENT", {
                 employeeEmail: employee.email,
-                task
+                task,
+                adminId: req.user.adminId
             });
         } catch (emailError) {
             logToConsole("WARN", "TASK_REMOVAL_EMAIL_FAILED", {
-                error: emailError.message
+                error: emailError.message,
+                adminId: req.user.adminId
             });
         }
 
@@ -1241,9 +1438,6 @@ router.delete("/remove-assignment", auth, async (req, res) => {
     }
 });
 
-
-
-
 /* ===============================
    GET CLIENT TASK STATUS PER MONTH (UPDATED & FIXED)
 ================================ */
@@ -1261,7 +1455,21 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
             timestamp: new Date().toISOString()
         });
 
+        logToConsole("INFO", "CLIENT_TASKS_STATUS_REQUEST", {
+            adminId: req.user.adminId,
+            adminName: req.user.name,
+            clientId,
+            year,
+            month
+        });
+
         if (!year || !month) {
+            logToConsole("WARN", "CLIENT_TASKS_MISSING_PARAMS", {
+                clientId,
+                year,
+                month,
+                adminId: req.user.adminId
+            });
             return res.status(400).json({
                 message: "Missing required query parameters: year, month"
             });
@@ -1272,12 +1480,23 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
 
         // VALIDATE INPUTS
         if (isNaN(numericYear) || isNaN(numericMonth)) {
+            logToConsole("WARN", "CLIENT_TASKS_INVALID_PARAMS", {
+                clientId,
+                year,
+                month,
+                adminId: req.user.adminId
+            });
             return res.status(400).json({
                 message: "Invalid year or month format"
             });
         }
 
         if (numericMonth < 1 || numericMonth > 12) {
+            logToConsole("WARN", "CLIENT_TASKS_INVALID_MONTH", {
+                clientId,
+                month: numericMonth,
+                adminId: req.user.adminId
+            });
             return res.status(400).json({
                 message: "Month must be between 1-12"
             });
@@ -1286,6 +1505,10 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
         const client = await Client.findOne({ clientId });
         if (!client) {
             console.log("❌ CLIENT_NOT_FOUND:", { clientId });
+            logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_TASKS", {
+                clientId,
+                adminId: req.user.adminId
+            });
             return res.status(404).json({ message: "Client not found" });
         }
 
@@ -1402,6 +1625,36 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
             tasksAssigned: assignments.map(a => a.task)
         });
 
+        // Create activity log for checking client tasks status
+        await ActivityLog.create({
+            userName: req.user.name,
+            role: "ADMIN",
+            adminId: req.user.adminId,
+            clientId,
+            clientName: client.name,
+            action: "CLIENT_TASKS_STATUS_CHECKED",
+            details: `Admin checked task status for client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')}) - ${assignments.length} tasks assigned`,
+            dateTime: new Date(),  // FIXED: Use Date object instead of String
+            metadata: {
+                year: numericYear,
+                month: numericMonth,
+                totalTasks: assignments.length,
+                tasks: assignments.map(a => a.task)
+            }
+        });
+
+        logToConsole("INFO", "CLIENT_TASKS_STATUS_COMPLETE", {
+            clientId,
+            totalAssigned: assignments.length,
+            adminId: req.user.adminId
+        });
+
+        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+            action: "CLIENT_TASKS_STATUS_CHECKED",
+            clientId,
+            adminId: req.user.adminId
+        });
+
         res.json(response);
 
     } catch (error) {
@@ -1411,6 +1664,13 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
             clientId: req.params.clientId,
             query: req.query,
             timestamp: new Date().toISOString()
+        });
+
+        logToConsole("ERROR", "CLIENT_TASKS_STATUS_FAILED", {
+            error: error.message,
+            stack: error.stack,
+            clientId: req.params.clientId,
+            adminId: req.user.adminId
         });
 
         res.status(500).json({
@@ -1442,7 +1702,10 @@ router.post("/deactivate/:employeeId", auth, async (req, res) => {
         // ===== 1. FIND EMPLOYEE =====
         const employee = await Employee.findOne({ employeeId });
         if (!employee) {
-            logToConsole("WARN", "EMPLOYEE_NOT_FOUND", { employeeId });
+            logToConsole("WARN", "EMPLOYEE_NOT_FOUND", {
+                employeeId,
+                adminId: req.user.adminId
+            });
             return res.status(404).json({ message: "Employee not found" });
         }
 
@@ -1458,7 +1721,8 @@ router.post("/deactivate/:employeeId", auth, async (req, res) => {
             currentTasksCount: currentTaskAssignments.length,
             tasks: currentTaskAssignments.map(a => a.task),
             currentYear,
-            currentMonth
+            currentMonth,
+            adminId: req.user.adminId
         });
 
         // ===== 3. REMOVE TASK ASSIGNMENTS FROM CLIENTS =====
@@ -1494,7 +1758,8 @@ router.post("/deactivate/:employeeId", auth, async (req, res) => {
                                 clientId: assignment.clientId,
                                 clientName: client.name,
                                 task: assignment.task,
-                                employeeId
+                                employeeId,
+                                adminId: req.user.adminId
                             });
                         }
                     }
@@ -1503,7 +1768,8 @@ router.post("/deactivate/:employeeId", auth, async (req, res) => {
                         clientId: assignment.clientId,
                         task: assignment.task,
                         error: clientError.message,
-                        employeeId
+                        employeeId,
+                        adminId: req.user.adminId
                     });
                 }
             }
@@ -1519,7 +1785,8 @@ router.post("/deactivate/:employeeId", auth, async (req, res) => {
             employeeName: employee.name,
             currentTasksRemoved: currentTaskAssignments.length,
             removedTasks,
-            removedFromClients
+            removedFromClients,
+            adminId: req.user.adminId
         });
 
         // ===== 5. ACTIVITY LOG =====
@@ -1531,11 +1798,17 @@ router.post("/deactivate/:employeeId", auth, async (req, res) => {
             employeeName: employee.name,
             action: "EMPLOYEE_DEACTIVATED",
             details: `Employee "${employee.name}" deactivated. Removed ${removedTasks.length} task assignments: ${removedTasks.join(', ')}`,
-            dateTime: new Date().toLocaleString("en-IN"),
+            dateTime: new Date(),  // FIXED: Use Date object instead of String
             metadata: {
                 tasksRemoved: removedTasks,
                 count: removedTasks.length
             }
+        });
+
+        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+            action: "EMPLOYEE_DEACTIVATED",
+            employeeId,
+            adminId: req.user.adminId
         });
 
         res.json({
@@ -1575,6 +1848,7 @@ router.get("/employee-tasks/:employeeId", auth, async (req, res) => {
 
         logToConsole("INFO", "GET_EMPLOYEE_TASKS_REQUEST", {
             adminId: req.user.adminId,
+            adminName: req.user.name,
             employeeId,
             year,
             month,
@@ -1583,6 +1857,10 @@ router.get("/employee-tasks/:employeeId", auth, async (req, res) => {
 
         const employee = await Employee.findOne({ employeeId });
         if (!employee) {
+            logToConsole("WARN", "EMPLOYEE_NOT_FOUND_FOR_TASKS", {
+                employeeId,
+                adminId: req.user.adminId
+            });
             return res.status(404).json({ message: "Employee not found" });
         }
 
@@ -1645,7 +1923,32 @@ router.get("/employee-tasks/:employeeId", auth, async (req, res) => {
 
         logToConsole("INFO", "EMPLOYEE_TASKS_FETCHED", {
             employeeId,
-            totalTasks: tasks.length
+            totalTasks: tasks.length,
+            adminId: req.user.adminId
+        });
+
+        // Create activity log for viewing employee tasks
+        await ActivityLog.create({
+            userName: req.user.name,
+            role: "ADMIN",
+            adminId: req.user.adminId,
+            employeeId,
+            employeeName: employee.name,
+            action: "EMPLOYEE_TASKS_VIEWED",
+            details: `Admin viewed tasks for employee "${employee.name}" - Total: ${tasks.length}, Pending: ${response.pendingTasks}, Completed: ${response.completedTasks}`,
+            dateTime: new Date(),  // FIXED: Use Date object instead of String
+            metadata: {
+                totalTasks: tasks.length,
+                pendingTasks: response.pendingTasks,
+                completedTasks: response.completedTasks,
+                filters: { year, month, status }
+            }
+        });
+
+        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+            action: "EMPLOYEE_TASKS_VIEWED",
+            employeeId,
+            adminId: req.user.adminId
         });
 
         res.json(response);
@@ -1653,7 +1956,8 @@ router.get("/employee-tasks/:employeeId", auth, async (req, res) => {
     } catch (error) {
         logToConsole("ERROR", "GET_EMPLOYEE_TASKS_FAILED", {
             error: error.message,
-            stack: error.stack
+            stack: error.stack,
+            adminId: req.user.adminId
         });
 
         res.status(500).json({
@@ -1692,7 +1996,29 @@ router.get("/removed-assignments", auth, async (req, res) => {
             count: removedAssignments.length,
             total,
             page,
-            limit
+            limit,
+            adminId: req.user.adminId
+        });
+
+        // Create activity log for viewing removed assignments
+        await ActivityLog.create({
+            userName: req.user.name,
+            role: "ADMIN",
+            adminId: req.user.adminId,
+            action: "REMOVED_ASSIGNMENTS_VIEWED",
+            details: `Admin viewed removed assignments - Page: ${page}, Limit: ${limit}, Total: ${total}`,
+            dateTime: new Date(),  // FIXED: Use Date object instead of String
+            metadata: {
+                page,
+                limit,
+                total,
+                filters: { clientId, employeeId, year, month }
+            }
+        });
+
+        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+            action: "REMOVED_ASSIGNMENTS_VIEWED",
+            adminId: req.user.adminId
         });
 
         res.json({
@@ -1708,157 +2034,13 @@ router.get("/removed-assignments", auth, async (req, res) => {
     } catch (error) {
         logToConsole("ERROR", "GET_REMOVED_ASSIGNMENTS_FAILED", {
             error: error.message,
-            stack: error.stack
+            stack: error.stack,
+            adminId: req.user.adminId
         });
 
         res.status(500).json({
             message: "Error fetching removed assignments",
             error: process.env.NODE_ENV === "development" ? error.message : undefined
-        });
-    }
-});
-
-
-
-
-/* ===============================
-   DEACTIVATE EMPLOYEE (SOFT DELETE)
-================================ */
-router.post("/deactivate/:employeeId", auth, async (req, res) => {
-    try {
-        const { employeeId } = req.params;
-        const currentYear = new Date().getFullYear();
-        const currentMonth = new Date().getMonth() + 1;
-
-        // Console log: Request received
-        logToConsole("INFO", "DEACTIVATE_EMPLOYEE_REQUEST", {
-            adminId: req.user.adminId,
-            adminName: req.user.name,
-            employeeId
-        });
-
-        // ===== 1. FIND EMPLOYEE =====
-        const employee = await Employee.findOne({ employeeId });
-        if (!employee) {
-            logToConsole("WARN", "EMPLOYEE_NOT_FOUND", { employeeId });
-            return res.status(404).json({ message: "Employee not found" });
-        }
-
-        // Console log: Employee found
-        logToConsole("DEBUG", "EMPLOYEE_FOUND", {
-            employeeId,
-            employeeName: employee.name,
-            isActive: employee.isActive
-        });
-
-        // ===== 2. FIND CURRENT MONTH ASSIGNMENTS =====
-        const currentAssignments = employee.assignedClients?.filter(
-            assignment => assignment.year === currentYear && assignment.month === currentMonth
-        ) || [];
-
-        logToConsole("INFO", "CURRENT_ASSIGNMENTS_FOUND", {
-            employeeId,
-            currentAssignmentsCount: currentAssignments.length,
-            currentYear,
-            currentMonth
-        });
-
-        // ===== 3. REMOVE ASSIGNMENTS FROM CLIENTS =====
-        let removedFromClients = 0;
-
-        if (currentAssignments.length > 0) {
-            for (const assignment of currentAssignments) {
-                try {
-                    // Find client
-                    const client = await Client.findOne({ clientId: assignment.clientId });
-                    if (client) {
-                        // Remove this employee from client's assignments for current month
-                        const originalCount = client.employeeAssignments.length;
-                        client.employeeAssignments = client.employeeAssignments.filter(
-                            empAssignment =>
-                                !(empAssignment.year === currentYear &&
-                                    empAssignment.month === currentMonth &&
-                                    empAssignment.employeeId === employeeId)
-                        );
-
-                        await client.save();
-                        const removedCount = originalCount - client.employeeAssignments.length;
-                        removedFromClients += removedCount;
-
-                        logToConsole("INFO", "CLIENT_ASSIGNMENT_REMOVED", {
-                            clientId: assignment.clientId,
-                            clientName: client.name,
-                            removedCount,
-                            employeeId
-                        });
-                    }
-                } catch (clientError) {
-                    logToConsole("ERROR", "CLIENT_UPDATE_FAILED", {
-                        clientId: assignment.clientId,
-                        error: clientError.message,
-                        employeeId
-                    });
-                    // Continue with other clients even if one fails
-                }
-            }
-        }
-
-        // ===== 4. UPDATE EMPLOYEE STATUS =====
-        employee.isActive = false;
-        employee.updatedAt = new Date();
-        await employee.save();
-
-        // Console log: Employee deactivated
-        logToConsole("SUCCESS", "EMPLOYEE_DEACTIVATED", {
-            employeeId,
-            employeeName: employee.name,
-            currentAssignmentsRemoved: currentAssignments.length,
-            removedFromClients
-        });
-
-        // ===== 5. ACTIVITY LOG =====
-        await ActivityLog.create({
-            userName: req.user.name,
-            role: "ADMIN",
-            adminId: req.user.adminId,
-            employeeId,
-            employeeName: employee.name,
-            action: "EMPLOYEE_DEACTIVATED",
-            details: `Employee "${employee.name}" deactivated. Removed from ${removedFromClients} client assignments for ${currentYear}-${currentMonth.toString().padStart(2, '0')}`,
-            dateTime: new Date().toLocaleString("en-IN")
-        });
-
-        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-            action: "EMPLOYEE_DEACTIVATED",
-            employeeId
-        });
-
-        res.json({
-            message: `Employee deactivated successfully. Removed from ${removedFromClients} current month client assignments.`,
-            data: {
-                employeeId,
-                employeeName: employee.name,
-                assignmentsRemoved: removedFromClients,
-                deactivatedAt: new Date()
-            }
-        });
-
-        logToConsole("SUCCESS", "DEACTIVATE_EMPLOYEE_COMPLETE", {
-            employeeId,
-            status: "success",
-            assignmentsRemoved: removedFromClients
-        });
-    } catch (error) {
-        logToConsole("ERROR", "DEACTIVATE_EMPLOYEE_FAILED", {
-            error: error.message,
-            stack: error.stack,
-            adminId: req.user?.adminId,
-            employeeId: req.params.employeeId
-        });
-
-        res.status(500).json({
-            message: "Error deactivating employee",
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 });
@@ -1880,7 +2062,10 @@ router.post("/activate/:employeeId", auth, async (req, res) => {
         // ===== 1. FIND EMPLOYEE =====
         const employee = await Employee.findOne({ employeeId });
         if (!employee) {
-            logToConsole("WARN", "EMPLOYEE_NOT_FOUND", { employeeId });
+            logToConsole("WARN", "EMPLOYEE_NOT_FOUND", {
+                employeeId,
+                adminId: req.user.adminId
+            });
             return res.status(404).json({ message: "Employee not found" });
         }
 
@@ -1888,7 +2073,8 @@ router.post("/activate/:employeeId", auth, async (req, res) => {
         logToConsole("DEBUG", "EMPLOYEE_FOUND", {
             employeeId,
             employeeName: employee.name,
-            isActive: employee.isActive
+            isActive: employee.isActive,
+            adminId: req.user.adminId
         });
 
         // ===== 2. ACTIVATE EMPLOYEE =====
@@ -1899,7 +2085,8 @@ router.post("/activate/:employeeId", auth, async (req, res) => {
         // Console log: Employee activated
         logToConsole("SUCCESS", "EMPLOYEE_ACTIVATED", {
             employeeId,
-            employeeName: employee.name
+            employeeName: employee.name,
+            adminId: req.user.adminId
         });
 
         // ===== 3. ACTIVITY LOG =====
@@ -1911,12 +2098,13 @@ router.post("/activate/:employeeId", auth, async (req, res) => {
             employeeName: employee.name,
             action: "EMPLOYEE_ACTIVATED",
             details: `Employee "${employee.name}" activated`,
-            dateTime: new Date().toLocaleString("en-IN")
+            dateTime: new Date()  // FIXED: Use Date object instead of String
         });
 
         logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
             action: "EMPLOYEE_ACTIVATED",
-            employeeId
+            employeeId,
+            adminId: req.user.adminId
         });
 
         res.json({
@@ -1930,7 +2118,8 @@ router.post("/activate/:employeeId", auth, async (req, res) => {
 
         logToConsole("SUCCESS", "ACTIVATE_EMPLOYEE_COMPLETE", {
             employeeId,
-            status: "success"
+            status: "success",
+            adminId: req.user.adminId
         });
     } catch (error) {
         logToConsole("ERROR", "ACTIVATE_EMPLOYEE_FAILED", {

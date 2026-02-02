@@ -39,20 +39,22 @@ const logToConsole = (type, operation, data) => {
 };
 
 // Old log function for compatibility (saves to ActivityLog AND logs to console)
-const log = async (name, action, details) => {
+const log = async (name, adminId, action, details) => {
   try {
     // Save to ActivityLog collection
     await ActivityLog.create({
       userName: name,
       role: "ADMIN",
+      adminId: adminId,
       action,
       details,
-      dateTime: new Date().toLocaleString("en-IN")
+      dateTime: new Date()
     });
 
     // Also log to console
     logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
       userName: name,
+      adminId: adminId,
       action,
       details
     });
@@ -60,6 +62,7 @@ const log = async (name, action, details) => {
     logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
       error: logError.message,
       userName: name,
+      adminId: adminId,
       action
     });
   }
@@ -87,7 +90,7 @@ router.post("/register", async (req, res) => {
       });
 
       // Save warning to ActivityLog
-      await log("SYSTEM", "ADMIN_REGISTER_VALIDATION_FAILED", `Missing fields for admin register: ${email}`);
+      await log("SYSTEM", "SYSTEM", "ADMIN_REGISTER_VALIDATION_FAILED", `Missing fields for admin register: ${email}`);
 
       return res.status(400).json({ message: "All fields are required" });
     }
@@ -97,7 +100,7 @@ router.post("/register", async (req, res) => {
       logToConsole("WARN", "ADMIN_ALREADY_EXISTS", { email });
 
       // Save warning to ActivityLog
-      await log("SYSTEM", "ADMIN_REGISTER_DUPLICATE", `Admin already exists: ${email}`);
+      await log("SYSTEM", "SYSTEM", "ADMIN_REGISTER_DUPLICATE", `Admin already exists: ${email}`);
 
       return res.status(400).json({ message: "Admin exists" });
     }
@@ -116,7 +119,7 @@ router.post("/register", async (req, res) => {
     });
 
     // Save success to ActivityLog
-    await log(name, "ADMIN_REGISTER", `Admin ${email} registered successfully`);
+    await log(name, admin.adminId || admin._id.toString(), "ADMIN_REGISTER", `Admin ${email} registered successfully`);
 
     // Console log: Registration complete
     logToConsole("SUCCESS", "ADMIN_REGISTRATION_COMPLETE", {
@@ -138,7 +141,7 @@ router.post("/register", async (req, res) => {
     });
 
     // Save error to ActivityLog
-    await log("SYSTEM", "ADMIN_REGISTER_ERROR", `Error registering admin: ${error.message}`);
+    await log("SYSTEM", "SYSTEM", "ADMIN_REGISTER_ERROR", `Error registering admin: ${error.message}`);
 
     res.status(500).json({
       message: "Error registering admin",
@@ -169,7 +172,7 @@ router.post("/login", async (req, res) => {
       });
 
       // Save warning to ActivityLog
-      await log("SYSTEM", "ADMIN_LOGIN_VALIDATION_FAILED", `Missing credentials for admin login: ${email}`);
+      await log("SYSTEM", "SYSTEM", "ADMIN_LOGIN_VALIDATION_FAILED", `Missing credentials for admin login: ${email}`);
 
       return res.status(400).json({ message: "Email and password are required" });
     }
@@ -179,7 +182,7 @@ router.post("/login", async (req, res) => {
       logToConsole("WARN", "ADMIN_NOT_FOUND", { email });
 
       // Save warning to ActivityLog
-      await log("SYSTEM", "ADMIN_LOGIN_NOT_FOUND", `Admin not found: ${email}`);
+      await log("SYSTEM", "SYSTEM", "ADMIN_LOGIN_NOT_FOUND", `Admin not found: ${email}`);
 
       return res.status(401).json({ message: "Invalid credentials" });
     }
@@ -195,8 +198,8 @@ router.post("/login", async (req, res) => {
 
     // Console log: Admin found
     logToConsole("DEBUG", "ADMIN_FOUND", {
-      _id: admin._id, // Changed from adminId to _id for clarity
-      adminId: admin.adminId, // Add this to see actual adminId
+      _id: admin._id,
+      adminId: admin.adminId,
       name: admin.name
     });
 
@@ -208,7 +211,7 @@ router.post("/login", async (req, res) => {
       });
 
       // Save warning to ActivityLog
-      await log(admin.name, "ADMIN_LOGIN_FAILED", `Invalid password attempt for admin: ${email}`);
+      await log(admin.name, admin.adminId || admin._id.toString(), "ADMIN_LOGIN_FAILED", `Invalid password attempt for admin: ${email}`);
 
       return res.status(401).json({ message: "Invalid credentials" });
     }
@@ -247,7 +250,7 @@ router.post("/login", async (req, res) => {
 
     // Console log: JWT token created
     logToConsole("DEBUG", "ADMIN_JWT_TOKEN_CREATED", {
-      adminIdInToken: decodedToken.adminId, // Log what's actually in token
+      adminIdInToken: decodedToken.adminId,
       adminIdFromDB: admin.adminId,
       _idFromDB: admin._id,
       expiresIn: "1d"
@@ -261,9 +264,6 @@ router.post("/login", async (req, res) => {
       maxAge: 24 * 60 * 60 * 1000
     });
 
-
-
-
     // Console log: Cookie set
     logToConsole("INFO", "ADMIN_COOKIE_SET", {
       adminId: admin._id,
@@ -271,7 +271,7 @@ router.post("/login", async (req, res) => {
     });
 
     // Save success to ActivityLog
-    await log(admin.name, "ADMIN_LOGIN", "Admin logged in successfully");
+    await log(admin.name, admin.adminId || admin._id.toString(), "ADMIN_LOGIN", "Admin logged in successfully");
 
     // Console log: Login successful
     logToConsole("SUCCESS", "ADMIN_LOGIN_SUCCESS", {
@@ -302,7 +302,7 @@ router.post("/login", async (req, res) => {
     });
 
     // Save error to ActivityLog
-    await log("SYSTEM", "ADMIN_LOGIN_ERROR", `Error during admin login: ${error.message}`);
+    await log("SYSTEM", "SYSTEM", "ADMIN_LOGIN_ERROR", `Error during admin login: ${error.message}`);
 
     res.status(500).json({
       message: "Error during login",
@@ -317,8 +317,6 @@ router.post("/login", async (req, res) => {
 ================================ */
 router.get("/me", auth, async (req, res) => {
   try {
-
-
     console.log("🔍 /me ENDPOINT DEBUG:");
     console.log("Full req.user:", req.user);
     console.log("req.user.adminId:", req.user?.adminId);
@@ -327,7 +325,7 @@ router.get("/me", auth, async (req, res) => {
 
     // Console log: Admin auth check request
     logToConsole("INFO", "ADMIN_AUTH_CHECK_REQUEST", {
-      adminId: req.user?.adminId || req.user?.id,  // ← FIXED!
+      adminId: req.user?.adminId,
       adminName: req.user?.name,
       ip: req.ip
     });
@@ -336,12 +334,12 @@ router.get("/me", auth, async (req, res) => {
 
     if (!admin) {
       logToConsole("ERROR", "ADMIN_NOT_FOUND_IN_DB", {
-        requestedId: req.user.id,
+        requestedId: req.user.adminId,
         adminName: req.user.name
       });
 
       // Save error to ActivityLog
-      await log("SYSTEM", "ADMIN_NOT_FOUND_IN_DB", `Admin not found in database: ${req.user.id}`);
+      await log("SYSTEM", req.user?.adminId || "SYSTEM", "ADMIN_NOT_FOUND_IN_DB", `Admin not found in database: ${req.user.adminId}`);
 
       // Clear invalid cookie
       res.clearCookie("accessToken");
@@ -360,7 +358,7 @@ router.get("/me", auth, async (req, res) => {
     });
 
     // Save success to ActivityLog
-    await log(admin.name, "ADMIN_AUTH_CHECK", "Admin authentication checked successfully");
+    await log(admin.name, admin.adminId || admin._id.toString(), "ADMIN_AUTH_CHECK", "Admin authentication checked successfully");
 
     res.json(admin);
 
@@ -371,11 +369,11 @@ router.get("/me", auth, async (req, res) => {
       stack: error.stack,
       ip: req.ip,
       endpoint: "/me",
-      adminId: req.user?.id
+      adminId: req.user?.adminId
     });
 
     // Save error to ActivityLog
-    await log("SYSTEM", "ADMIN_AUTH_CHECK_ERROR", `Error checking admin authentication: ${error.message}`);
+    await log("SYSTEM", req.user?.adminId || "SYSTEM", "ADMIN_AUTH_CHECK_ERROR", `Error checking admin authentication: ${error.message}`);
 
     res.status(500).json({
       message: "Error checking authentication",
@@ -388,7 +386,6 @@ router.get("/me", auth, async (req, res) => {
 /* ===============================
    ADMIN LOGOUT
 ================================ */
-
 router.post("/logout", async (req, res) => {
   console.log("🔥 LOGOUT API HIT");
 
@@ -427,8 +424,6 @@ router.post("/logout", async (req, res) => {
   }
 });
 
-
-
 /* ===============================
    GET ALL EMPLOYEE TASK LOGS (ADMIN ONLY)
 ================================ */
@@ -436,14 +431,14 @@ router.get("/task-logs", auth, async (req, res) => {
   try {
     // Console log: Admin task logs request
     logToConsole("INFO", "ADMIN_TASK_LOGS_REQUEST", {
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       adminName: req.user.name,
       ip: req.ip
     });
 
     // Console log: Fetching task logs
     logToConsole("INFO", "FETCHING_EMPLOYEE_TASK_LOGS", {
-      adminId: req.user.id
+      adminId: req.user.adminId
     });
 
     const logs = await EmployeeTaskLog.find()
@@ -451,7 +446,7 @@ router.get("/task-logs", auth, async (req, res) => {
 
     // Console log: Task logs fetched
     logToConsole("SUCCESS", "TASK_LOGS_FETCHED_SUCCESSFULLY", {
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       totalLogs: logs.length,
       completedLogs: logs.filter(l => l.status === "COMPLETED").length,
       inProgressLogs: logs.filter(l => l.status === "IN_PROGRESS").length,
@@ -459,11 +454,11 @@ router.get("/task-logs", auth, async (req, res) => {
     });
 
     // Save success to ActivityLog
-    await log(req.user.name, "FETCHED_EMPLOYEE_TASK_LOGS", `Fetched ${logs.length} employee task logs`);
+    await log(req.user.name, req.user.adminId, "FETCHED_EMPLOYEE_TASK_LOGS", `Fetched ${logs.length} employee task logs`);
 
     // Console log: Response sent
     logToConsole("SUCCESS", "TASK_LOGS_RESPONSE_SENT", {
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       totalLogs: logs.length,
       timestamp: new Date().toISOString()
     });
@@ -480,11 +475,11 @@ router.get("/task-logs", auth, async (req, res) => {
       stack: error.stack,
       ip: req.ip,
       endpoint: "/task-logs",
-      adminId: req.user?.id
+      adminId: req.user?.adminId
     });
 
     // Save error to ActivityLog
-    await log(req.user?.name || "SYSTEM", "TASK_LOGS_FETCH_ERROR", `Error fetching employee task logs: ${error.message}`);
+    await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "TASK_LOGS_FETCH_ERROR", `Error fetching employee task logs: ${error.message}`);
 
     res.status(500).json({
       message: "Error fetching employee task logs",
@@ -501,7 +496,7 @@ router.get("/clients", auth, async (req, res) => {
   try {
     // Console log: Admin clients request
     logToConsole("INFO", "ADMIN_CLIENTS_REQUEST", {
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       adminName: req.user.name,
       ip: req.ip,
       userAgent: req.get('User-Agent')
@@ -509,7 +504,7 @@ router.get("/clients", auth, async (req, res) => {
 
     // Console log: Fetching all clients
     logToConsole("INFO", "FETCHING_ALL_CLIENTS", {
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       adminName: req.user.name
     });
 
@@ -519,18 +514,18 @@ router.get("/clients", auth, async (req, res) => {
 
     // Console log: Clients fetched successfully
     logToConsole("SUCCESS", "CLIENTS_FETCHED_SUCCESSFULLY", {
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       totalClients: clients.length,
       activeClients: clients.filter(c => c.isActive).length,
       inactiveClients: clients.filter(c => !c.isActive).length
     });
 
     // Save success to ActivityLog
-    await log(req.user.name, "FETCHED_ALL_CLIENTS", `Fetched ${clients.length} clients`);
+    await log(req.user.name, req.user.adminId, "FETCHED_ALL_CLIENTS", `Fetched ${clients.length} clients`);
 
     // Console log: Response sent
     logToConsole("SUCCESS", "CLIENTS_RESPONSE_SENT", {
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       totalClients: clients.length,
       timestamp: new Date().toISOString()
     });
@@ -544,12 +539,12 @@ router.get("/clients", auth, async (req, res) => {
       stack: error.stack,
       ip: req.ip,
       endpoint: "/clients",
-      adminId: req.user?.id,
+      adminId: req.user?.adminId,
       adminName: req.user?.name
     });
 
     // Save error to ActivityLog
-    await log(req.user?.name || "SYSTEM", "CLIENTS_FETCH_ERROR", `Error fetching clients: ${error.message}`);
+    await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "CLIENTS_FETCH_ERROR", `Error fetching clients: ${error.message}`);
 
     res.status(500).json({
       message: "Error fetching clients",
@@ -568,7 +563,7 @@ router.get("/clients/:clientId", auth, async (req, res) => {
 
     // Console log: Single client request
     logToConsole("INFO", "SINGLE_CLIENT_REQUEST", {
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       adminName: req.user.name,
       clientId,
       ip: req.ip
@@ -579,7 +574,7 @@ router.get("/clients/:clientId", auth, async (req, res) => {
 
     if (!client) {
       logToConsole("WARN", "CLIENT_NOT_FOUND", { clientId });
-      await log(req.user.name, "CLIENT_NOT_FOUND", `Client not found: ${clientId}`);
+      await log(req.user.name, req.user.adminId, "CLIENT_NOT_FOUND", `Client not found: ${clientId}`);
       return res.status(404).json({ message: "Client not found", clientId });
     }
 
@@ -939,7 +934,7 @@ router.get("/clients/:clientId", auth, async (req, res) => {
     // ===================================================
     // 6. SAVE TO ACTIVITY LOG
     // ===================================================
-    await log(req.user.name, "VIEWED_CLIENT_DETAILS",
+    await log(req.user.name, req.user.adminId, "VIEWED_CLIENT_DETAILS",
       `Viewed details for client: ${clientData.name} with ${clientData.employeeAssignments.length} employee assignments`);
 
     // ===================================================
@@ -1014,11 +1009,11 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       error: error.message,
       stack: error.stack,
       clientId: req.params.clientId,
-      adminId: req.user?.id
+      adminId: req.user?.adminId
     });
 
     // Save error to ActivityLog
-    await log(req.user?.name || "SYSTEM", "CLIENT_DETAILS_ERROR",
+    await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "CLIENT_DETAILS_ERROR",
       `Error fetching client details: ${error.message}`);
 
     res.status(500).json({
@@ -1028,7 +1023,6 @@ router.get("/clients/:clientId", auth, async (req, res) => {
     });
   }
 });
-
 
 /* ===============================
    LOCK / UNLOCK ENTIRE MONTH (UPDATED TO CASCADE TO FILES)
@@ -1040,7 +1034,7 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
 
     // Console log: Month lock request
     logToConsole("INFO", "MONTH_LOCK_REQUEST", {
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       adminName: req.user.name,
       clientId,
       year,
@@ -1060,7 +1054,7 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       });
 
       // Save warning to ActivityLog
-      await log(req.user.name, "MONTH_LOCK_VALIDATION_FAILED", `Invalid month lock data for client: ${clientId}, year: ${year}, month: ${month}`);
+      await log(req.user.name, req.user.adminId, "MONTH_LOCK_VALIDATION_FAILED", `Invalid month lock data for client: ${clientId}, year: ${year}, month: ${month}`);
 
       return res.status(400).json({
         message: "Year, month, and lock (boolean) are required"
@@ -1070,7 +1064,7 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
     // Console log: Searching for client
     logToConsole("INFO", "SEARCHING_CLIENT_FOR_MONTH_LOCK", {
       clientId,
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       year,
       month
     });
@@ -1080,14 +1074,14 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
     if (!client) {
       logToConsole("ERROR", "CLIENT_NOT_FOUND_MONTH_LOCK", {
         clientId,
-        adminId: req.user.id,
+        adminId: req.user.adminId,
         year,
         month,
         lockAction: lock ? "LOCK" : "UNLOCK"
       });
 
       // Save error to ActivityLog
-      await log(req.user.name, "CLIENT_NOT_FOUND_MONTH_LOCK", `Client not found for month lock: ${clientId}`);
+      await log(req.user.name, req.user.adminId, "CLIENT_NOT_FOUND_MONTH_LOCK", `Client not found for month lock: ${clientId}`);
 
       return res.status(404).json({
         message: "Client not found",
@@ -1201,7 +1195,7 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       },
       lockedAt: monthData.lockedAt,
       lockedBy: monthData.lockedBy,
-      adminId: req.user.id
+      adminId: req.user.adminId
     });
 
     // Save success to ActivityLog
@@ -1210,16 +1204,16 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       `Locked month ${month}/${year} for client ${client.name} and ${fileLockStatus.otherCategories.length + (fileLockStatus.sales ? 1 : 0) + (fileLockStatus.purchase ? 1 : 0) + (fileLockStatus.bank ? 1 : 0)} files` :
       `Unlocked month ${month}/${year} for client ${client.name} and ${fileLockStatus.otherCategories.length + (fileLockStatus.sales ? 1 : 0) + (fileLockStatus.purchase ? 1 : 0) + (fileLockStatus.bank ? 1 : 0)} files`;
 
-    await log(req.user.name, actionType, actionDetails);
+    await log(req.user.name, req.user.adminId, actionType, actionDetails);
 
     // Console log: Response sent
     logToConsole("SUCCESS", "MONTH_LOCK_RESPONSE_SENT", {
-      adminId: req.user.id,
+      adminId: req.user.adminId,
       clientId,
       year,
       month,
       lockStatus: lock,
-      filesAffected: fileLockStatus.otherCategories.length + 3, // sales, purchase, bank + other categories
+      filesAffected: fileLockStatus.otherCategories.length + 3,
       timestamp: new Date().toISOString()
     });
 
@@ -1253,12 +1247,12 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       ip: req.ip,
       endpoint: "/clients/:clientId/month-lock",
       clientId: req.params.clientId,
-      adminId: req.user?.id,
+      adminId: req.user?.adminId,
       requestBody: req.body
     });
 
     // Save error to ActivityLog
-    await log(req.user?.name || "SYSTEM", "MONTH_LOCK_CASCADE_ERROR",
+    await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "MONTH_LOCK_CASCADE_ERROR",
       `Error processing month lock/unlock with cascade for client: ${clientId} - ${error.message}`);
 
     res.status(500).json({
@@ -1378,7 +1372,7 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
       `Locked file ${type}${categoryName ? ' (' + categoryName + ')' : ''} for client ${client.name} (${month}/${year})` :
       `Unlocked file ${type}${categoryName ? ' (' + categoryName + ')' : ''} for client ${client.name} (${month}/${year})`;
 
-    await log(req.user.name, actionType, actionDetails);
+    await log(req.user.name, req.user.adminId, actionType, actionDetails);
 
     res.json({
       message: lock ? "File locked successfully" : "File unlocked successfully",
@@ -1395,7 +1389,7 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
   } catch (error) {
     console.error("File lock error:", error);
 
-    await log(req.user?.name || "SYSTEM", "FILE_LOCK_ERROR",
+    await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "FILE_LOCK_ERROR",
       `Error processing file lock/unlock for client: ${clientId} - ${error.message}`);
 
     res.status(500).json({
@@ -1404,9 +1398,5 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
     });
   }
 });
-
-
-
-
 
 module.exports = router;

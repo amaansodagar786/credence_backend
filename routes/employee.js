@@ -142,30 +142,34 @@ router.post("/login", async (req, res) => {
       maxAge: 24 * 60 * 60 * 1000
     });
 
-
     // Console log: Cookie set
     logToConsole("INFO", "COOKIE_SET", {
       employeeId: employee.employeeId,
       cookieName: "employeeToken"
     });
 
+    // Create activity log for employee login
     try {
       await ActivityLog.create({
         userName: employee.name,
         role: "EMPLOYEE",
         employeeId: employee.employeeId,
         action: "EMPLOYEE_LOGIN",
-        details: "Employee logged in",
-        dateTime: new Date().toLocaleString("en-IN")
+        details: "Employee logged in successfully",
+        dateTime: new Date().toLocaleString("en-IN"),
+        metadata: {
+          email: employee.email,
+          loginTime: new Date().toISOString(),
+          ip: req.ip
+        }
       });
 
-      // Console log: Activity log created
-      logToConsole("INFO", "LOGIN_ACTIVITY_LOG_CREATED", {
+      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+        action: "EMPLOYEE_LOGIN",
         employeeId: employee.employeeId,
-        action: "EMPLOYEE_LOGIN"
+        employeeName: employee.name
       });
     } catch (logError) {
-      // Console log: Activity log error (non-critical)
       logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
         error: logError.message,
         employeeId: employee.employeeId
@@ -190,7 +194,6 @@ router.post("/login", async (req, res) => {
     });
 
   } catch (error) {
-    // Console log: Login error
     logToConsole("ERROR", "LOGIN_PROCESS_ERROR", {
       error: error.message,
       stack: error.stack,
@@ -266,6 +269,32 @@ router.get("/me", async (req, res) => {
       });
     }
 
+    // Create activity log for checking login status
+    try {
+      await ActivityLog.create({
+        userName: employee.name,
+        role: "EMPLOYEE",
+        employeeId: employee.employeeId,
+        action: "EMPLOYEE_SESSION_CHECK",
+        details: "Employee checked login status",
+        dateTime: new Date().toLocaleString("en-IN"),
+        metadata: {
+          checkTime: new Date().toISOString(),
+          ip: req.ip
+        }
+      });
+
+      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+        action: "EMPLOYEE_SESSION_CHECK",
+        employeeId: employee.employeeId
+      });
+    } catch (logError) {
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
+        error: logError.message,
+        employeeId: employee.employeeId
+      });
+    }
+
     // Console log: Employee data fetched
     logToConsole("SUCCESS", "EMPLOYEE_DATA_FETCHED", {
       employeeId: employee.employeeId,
@@ -275,7 +304,6 @@ router.get("/me", async (req, res) => {
     res.json(employee);
 
   } catch (error) {
-    // Console log: Check login error
     logToConsole("ERROR", "EMPLOYEE_ME_ENDPOINT_ERROR", {
       error: error.message,
       stack: error.stack,
@@ -334,19 +362,22 @@ router.post("/logout", async (req, res) => {
             role: "EMPLOYEE",
             employeeId: decoded.employeeId,
             action: "EMPLOYEE_LOGOUT",
-            details: "Employee logged out",
-            dateTime: new Date().toLocaleString("en-IN")
+            details: "Employee logged out successfully",
+            dateTime: new Date().toLocaleString("en-IN"),
+            metadata: {
+              logoutTime: new Date().toISOString(),
+              ip: req.ip
+            }
           });
 
-          // Console log: Logout activity log created
-          logToConsole("INFO", "LOGOUT_ACTIVITY_LOG_CREATED", {
+          logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+            action: "EMPLOYEE_LOGOUT",
             employeeId: decoded.employeeId,
-            action: "EMPLOYEE_LOGOUT"
+            employeeName: employee.name
           });
         }
       } catch (logError) {
-        // Console log: Activity log error (non-critical)
-        logToConsole("ERROR", "LOGOUT_ACTIVITY_LOG_FAILED", {
+        logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
           error: logError.message,
           employeeId: decoded.employeeId
         });
@@ -365,7 +396,6 @@ router.post("/logout", async (req, res) => {
     });
 
   } catch (error) {
-    // Console log: Logout error
     logToConsole("ERROR", "LOGOUT_PROCESS_ERROR", {
       error: error.message,
       stack: error.stack,
@@ -632,7 +662,7 @@ router.get("/assigned-clients", async (req, res) => {
       return b.month - a.month;
     });
 
-    // Log activity with removed assignments count
+    // Create activity log for viewing assigned clients
     try {
       const totalAssignments = employee.assignedClients?.length || 0;
       const activeAssignments = response.length;
@@ -642,24 +672,29 @@ router.get("/assigned-clients", async (req, res) => {
         userName: employee.name,
         role: "EMPLOYEE",
         employeeId: employee.employeeId,
-        action: "FETCHED_ASSIGNED_CLIENTS",
-        details: `Fetched ${activeAssignments} active assignments (${removedAssignments} removed assignments filtered out)`,
+        action: "VIEWED_ASSIGNED_CLIENTS",
+        details: `Employee viewed assigned clients - ${activeAssignments} active assignments (${removedAssignments} removed)`,
         dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           activeAssignments,
           removedAssignments,
-          totalAssignments
+          totalAssignments,
+          currentMonthAssignments: response.filter(a => a.isCurrentMonth).length,
+          accountingDoneCount: response.filter(a => a.accountingDone).length,
+          totalFiles: response.reduce((sum, a) => sum + (a.totalFiles || 0), 0)
         }
       });
 
-      logToConsole("INFO", "ASSIGNED_CLIENTS_ACTIVITY_LOG_CREATED", {
+      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+        action: "VIEWED_ASSIGNED_CLIENTS",
         employeeId: employee.employeeId,
+        employeeName: employee.name,
         activeAssignments: activeAssignments,
         removedAssignments: removedAssignments,
         totalAssignments: totalAssignments
       });
     } catch (logError) {
-      logToConsole("ERROR", "ASSIGNED_CLIENTS_ACTIVITY_LOG_FAILED", {
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
         error: logError.message,
         employeeId: employee.employeeId
       });
@@ -871,7 +906,7 @@ router.put("/toggle-accounting-done", async (req, res) => {
       }
     }
 
-    // Log activity
+    // Create activity log for accounting status change
     try {
       await ActivityLog.create({
         userName: employee.name,
@@ -880,17 +915,26 @@ router.put("/toggle-accounting-done", async (req, res) => {
         clientId: clientId,
         action: accountingDone ? "ACCOUNTING_MARKED_DONE" : "ACCOUNTING_MARKED_PENDING",
         details: `Accounting ${accountingDone ? 'marked as done' : 'marked as pending'} for client ${clientId}, ${month}/${year}, task: ${task}`,
-        dateTime: new Date().toLocaleString("en-IN")
+        dateTime: new Date().toLocaleString("en-IN"),
+        metadata: {
+          clientId,
+          year,
+          month,
+          task,
+          accountingDone,
+          changeTime: new Date().toISOString()
+        }
       });
 
-      logToConsole("INFO", "ACCOUNTING_ACTIVITY_LOG_CREATED", {
+      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+        action: accountingDone ? "ACCOUNTING_MARKED_DONE" : "ACCOUNTING_MARKED_PENDING",
         employeeId: employee.employeeId,
         clientId: clientId,
         task,
         accountingDone
       });
     } catch (logError) {
-      logToConsole("ERROR", "ACCOUNTING_ACTIVITY_LOG_FAILED", {
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
         error: logError.message,
         employeeId: employee.employeeId
       });
@@ -988,6 +1032,7 @@ router.post("/add-file-note", async (req, res) => {
         employeeName = decoded.name;
       } catch (error) {
         // If token fails, still proceed but with unknown employee
+        logToConsole("WARN", "TOKEN_FAILED_FOR_NOTE", { error: error.message });
       }
     }
 
@@ -1094,7 +1139,7 @@ router.post("/add-file-note", async (req, res) => {
       noteId: newNote._id || "generated"
     });
 
-    // Log activity
+    // Create activity log for adding file note
     try {
       await ActivityLog.create({
         userName: employeeName,
@@ -1102,16 +1147,28 @@ router.post("/add-file-note", async (req, res) => {
         employeeId: employeeId,
         clientId: clientId,
         action: "ADDED_FILE_NOTE",
-        details: `Added note to file ${fileName} in ${categoryPath} for ${month}/${year}`,
-        dateTime: new Date().toLocaleString("en-IN")
+        details: `Added note to file "${fileName}" in ${categoryPath} for client ${client.name} (${month}/${year})`,
+        dateTime: new Date().toLocaleString("en-IN"),
+        metadata: {
+          clientId,
+          year,
+          month,
+          categoryType,
+          categoryName,
+          fileName,
+          noteLength: note.trim().length,
+          notePreview: note.trim().substring(0, 50) + (note.trim().length > 50 ? "..." : "")
+        }
       });
 
-      logToConsole("INFO", "ADD_NOTE_ACTIVITY_LOG_CREATED", {
+      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+        action: "ADDED_FILE_NOTE",
         employeeId: employeeId,
-        clientId: clientId
+        clientId: clientId,
+        fileName: fileName
       });
     } catch (logError) {
-      logToConsole("ERROR", "ADD_NOTE_ACTIVITY_LOG_FAILED", {
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
         error: logError.message,
         employeeId: employeeId
       });
@@ -1182,13 +1239,16 @@ router.get("/assignment-files", async (req, res) => {
     // Get employee info from token (for logging)
     const token = req.cookies?.employeeToken;
     let employeeId = "unknown";
+    let employeeName = "Employee";
 
     if (token) {
       try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         employeeId = decoded.employeeId;
+        employeeName = decoded.name;
       } catch (error) {
         // If token fails, still proceed
+        logToConsole("WARN", "TOKEN_FAILED_FOR_ASSIGNMENT_FILES", { error: error.message });
       }
     }
 
@@ -1219,7 +1279,6 @@ router.get("/assignment-files", async (req, res) => {
     const monthData = client.documents.get(yearKey).get(monthKey);
 
     // NEW: Get employee names for all notes
-    const Employee = require("../models/Employee");
     const employeeMap = new Map();
 
     // Collect all employeeIds from ALL notes (file notes + category notes)
@@ -1472,6 +1531,41 @@ router.get("/assignment-files", async (req, res) => {
     response.totalCategoryNotes = totalCategoryNotes;
     response.totalNotes = totalFileNotes + totalCategoryNotes;
 
+    // Create activity log for viewing assignment files
+    try {
+      await ActivityLog.create({
+        userName: employeeName,
+        role: "EMPLOYEE",
+        employeeId: employeeId,
+        clientId: clientId,
+        action: "VIEWED_ASSIGNMENT_FILES",
+        details: `Employee viewed files for client ${client.name} (${month}/${year})`,
+        dateTime: new Date().toLocaleString("en-IN"),
+        metadata: {
+          clientId,
+          year,
+          month,
+          clientName: client.name,
+          totalFiles,
+          totalFileNotes,
+          totalCategoryNotes,
+          totalNotes: totalFileNotes + totalCategoryNotes
+        }
+      });
+
+      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+        action: "VIEWED_ASSIGNMENT_FILES",
+        employeeId: employeeId,
+        clientId: clientId,
+        clientName: client.name
+      });
+    } catch (logError) {
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
+        error: logError.message,
+        employeeId: employeeId
+      });
+    }
+
     logToConsole("SUCCESS", "ASSIGNMENT_FILES_FETCHED_WITH_CATEGORY_NOTES", {
       clientId,
       year,
@@ -1537,6 +1631,21 @@ router.get("/file-notes", async (req, res) => {
       return res.status(400).json({
         message: "Missing required parameters: clientId, year, month, categoryType, fileName"
       });
+    }
+
+    // Get employee info from token (for activity log)
+    const token = req.cookies?.employeeToken;
+    let employeeId = "unknown";
+    let employeeName = "Employee";
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        employeeId = decoded.employeeId;
+        employeeName = decoded.name;
+      } catch (error) {
+        logToConsole("WARN", "TOKEN_FAILED_FOR_FILE_NOTES", { error: error.message });
+      }
     }
 
     // Find client
@@ -1630,6 +1739,41 @@ router.get("/file-notes", async (req, res) => {
       category: categoryPath,
       period: `${month}/${year}`
     };
+
+    // Create activity log for viewing file notes
+    try {
+      await ActivityLog.create({
+        userName: employeeName,
+        role: "EMPLOYEE",
+        employeeId: employeeId,
+        clientId: clientId,
+        action: "VIEWED_FILE_NOTES",
+        details: `Employee viewed notes for file "${fileName}" in ${categoryPath} for client ${client.name}`,
+        dateTime: new Date().toLocaleString("en-IN"),
+        metadata: {
+          clientId,
+          year,
+          month,
+          categoryType,
+          categoryName,
+          fileName,
+          totalNotes: response.totalNotes,
+          clientName: client.name
+        }
+      });
+
+      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+        action: "VIEWED_FILE_NOTES",
+        employeeId: employeeId,
+        clientId: clientId,
+        fileName: fileName
+      });
+    } catch (logError) {
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
+        error: logError.message,
+        employeeId: employeeId
+      });
+    }
 
     logToConsole("SUCCESS", "FILE_NOTES_FETCHED", {
       clientId,

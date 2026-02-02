@@ -156,7 +156,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
 
         logToConsole("INFO", "DASHBOARD_OVERVIEW_REQUEST", {
-            adminId: req.user.id,
+            adminId: req.user.adminId,
             timeFilter,
             customStart,
             customEnd
@@ -348,6 +348,46 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             });
         });
 
+        // Add Activity Log
+        try {
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                action: "DASHBOARD_OVERVIEW_VIEWED",
+                details: `Viewed dashboard overview with filter: ${timeFilter}. Metrics: ${activeClientsCount} active clients, ${activeEmployeesCount} active employees`,
+                dateTime: new Date(),
+                metadata: {
+                    timeFilter,
+                    customStart,
+                    customEnd,
+                    activeClientsCount,
+                    activeEmployeesCount,
+                    unassignedClientsCount,
+                    idleEmployeesCount,
+                    incompleteTasksCount,
+                    recentNotesCount
+                }
+            });
+
+            logToConsole("INFO", "DASHBOARD_OVERVIEW_ACTIVITY_LOG_CREATED", {
+                adminId: req.user.adminId,
+                action: "DASHBOARD_OVERVIEW_VIEWED"
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "DASHBOARD_OVERVIEW_ACTIVITY_LOG_FAILED", {
+                error: logError.message,
+                adminId: req.user.adminId
+            });
+        }
+
+        logToConsole("SUCCESS", "DASHBOARD_OVERVIEW_FETCHED", {
+            adminId: req.user.adminId,
+            activeClientsCount,
+            activeEmployeesCount,
+            timeFilter
+        });
+
         res.json({
             success: true,
             metrics: {
@@ -368,7 +408,13 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Dashboard overview error:", error);
+        logToConsole("ERROR", "DASHBOARD_OVERVIEW_ERROR", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId,
+            timeFilter: req.query.timeFilter
+        });
+
         res.status(500).json({
             success: false,
             message: "Error fetching dashboard overview"
@@ -381,6 +427,10 @@ router.get("/dashboard/overview", auth, async (req, res) => {
 ================================ */
 router.get("/dashboard/active-clients", auth, async (req, res) => {
     try {
+        logToConsole("INFO", "ACTIVE_CLIENTS_REQUEST", {
+            adminId: req.user.adminId
+        });
+
         const clients = await Client.find(
             { isActive: true },
             {
@@ -394,6 +444,36 @@ router.get("/dashboard/active-clients", auth, async (req, res) => {
         )
             .sort({ name: 1 })
             .lean();
+
+        // Add Activity Log
+        try {
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                action: "ACTIVE_CLIENTS_VIEWED",
+                details: `Viewed list of active clients. Total: ${clients.length} clients`,
+                dateTime: new Date(),
+                metadata: {
+                    totalClients: clients.length
+                }
+            });
+
+            logToConsole("INFO", "ACTIVE_CLIENTS_ACTIVITY_LOG_CREATED", {
+                adminId: req.user.adminId,
+                action: "ACTIVE_CLIENTS_VIEWED"
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "ACTIVE_CLIENTS_ACTIVITY_LOG_FAILED", {
+                error: logError.message,
+                adminId: req.user.adminId
+            });
+        }
+
+        logToConsole("SUCCESS", "ACTIVE_CLIENTS_FETCHED", {
+            adminId: req.user.adminId,
+            count: clients.length
+        });
 
         res.json({
             success: true,
@@ -413,7 +493,12 @@ router.get("/dashboard/active-clients", auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Active clients error:", error);
+        logToConsole("ERROR", "ACTIVE_CLIENTS_ERROR", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId
+        });
+
         res.status(500).json({
             success: false,
             message: "Error fetching active clients"
@@ -426,6 +511,10 @@ router.get("/dashboard/active-clients", auth, async (req, res) => {
 ================================ */
 router.get("/dashboard/active-employees", auth, async (req, res) => {
     try {
+        logToConsole("INFO", "ACTIVE_EMPLOYEES_REQUEST", {
+            adminId: req.user.adminId
+        });
+
         const employees = await Employee.find(
             { isActive: true },
             {
@@ -438,6 +527,36 @@ router.get("/dashboard/active-employees", auth, async (req, res) => {
         )
             .sort({ name: 1 })
             .lean();
+
+        // Add Activity Log
+        try {
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                action: "ACTIVE_EMPLOYEES_VIEWED",
+                details: `Viewed list of active employees. Total: ${employees.length} employees`,
+                dateTime: new Date(),
+                metadata: {
+                    totalEmployees: employees.length
+                }
+            });
+
+            logToConsole("INFO", "ACTIVE_EMPLOYEES_ACTIVITY_LOG_CREATED", {
+                adminId: req.user.adminId,
+                action: "ACTIVE_EMPLOYEES_VIEWED"
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "ACTIVE_EMPLOYEES_ACTIVITY_LOG_FAILED", {
+                error: logError.message,
+                adminId: req.user.adminId
+            });
+        }
+
+        logToConsole("SUCCESS", "ACTIVE_EMPLOYEES_FETCHED", {
+            adminId: req.user.adminId,
+            count: employees.length
+        });
 
         res.json({
             success: true,
@@ -456,7 +575,12 @@ router.get("/dashboard/active-employees", auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Active employees error:", error);
+        logToConsole("ERROR", "ACTIVE_EMPLOYEES_ERROR", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId
+        });
+
         res.status(500).json({
             success: false,
             message: "Error fetching active employees"
@@ -472,6 +596,13 @@ router.get("/dashboard/unassigned-clients", auth, async (req, res) => {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
         const currentMonth = getCurrentMonthFromRange(dateRange);
+
+        logToConsole("INFO", "UNASSIGNED_CLIENTS_REQUEST", {
+            adminId: req.user.adminId,
+            timeFilter,
+            customStart,
+            customEnd
+        });
 
         // All tasks that should be assigned
         const allTasks = [
@@ -523,6 +654,41 @@ router.get("/dashboard/unassigned-clients", auth, async (req, res) => {
             })
             .filter(client => client !== null);
 
+        // Add Activity Log
+        try {
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                action: "UNASSIGNED_CLIENTS_VIEWED",
+                details: `Viewed unassigned clients for ${currentMonth.month}/${currentMonth.year}. Found ${unassignedClients.length} clients with missing tasks`,
+                dateTime: new Date(),
+                metadata: {
+                    timeFilter,
+                    year: currentMonth.year,
+                    month: currentMonth.month,
+                    totalClients: unassignedClients.length,
+                    totalTasksMissing: unassignedClients.reduce((sum, client) => sum + client.totalMissing, 0)
+                }
+            });
+
+            logToConsole("INFO", "UNASSIGNED_CLIENTS_ACTIVITY_LOG_CREATED", {
+                adminId: req.user.adminId,
+                action: "UNASSIGNED_CLIENTS_VIEWED"
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "UNASSIGNED_CLIENTS_ACTIVITY_LOG_FAILED", {
+                error: logError.message,
+                adminId: req.user.adminId
+            });
+        }
+
+        logToConsole("SUCCESS", "UNASSIGNED_CLIENTS_FETCHED", {
+            adminId: req.user.adminId,
+            count: unassignedClients.length,
+            timeFilter
+        });
+
         res.json({
             success: true,
             timeFilter: dateRange.timeFilter,
@@ -532,7 +698,13 @@ router.get("/dashboard/unassigned-clients", auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Unassigned clients error:", error);
+        logToConsole("ERROR", "UNASSIGNED_CLIENTS_ERROR", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId,
+            timeFilter: req.query.timeFilter
+        });
+
         res.status(500).json({
             success: false,
             message: "Error fetching unassigned clients"
@@ -548,6 +720,13 @@ router.get("/dashboard/idle-employees", auth, async (req, res) => {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
         const currentMonth = getCurrentMonthFromRange(dateRange);
+
+        logToConsole("INFO", "IDLE_EMPLOYEES_REQUEST", {
+            adminId: req.user.adminId,
+            timeFilter,
+            customStart,
+            customEnd
+        });
 
         const employees = await Employee.find(
             { isActive: true },
@@ -581,6 +760,40 @@ router.get("/dashboard/idle-employees", auth, async (req, res) => {
             })
             .filter(emp => emp !== null);
 
+        // Add Activity Log
+        try {
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                action: "IDLE_EMPLOYEES_VIEWED",
+                details: `Viewed idle employees for ${currentMonth.month}/${currentMonth.year}. Found ${idleEmployees.length} employees without assignments`,
+                dateTime: new Date(),
+                metadata: {
+                    timeFilter,
+                    year: currentMonth.year,
+                    month: currentMonth.month,
+                    totalIdleEmployees: idleEmployees.length
+                }
+            });
+
+            logToConsole("INFO", "IDLE_EMPLOYEES_ACTIVITY_LOG_CREATED", {
+                adminId: req.user.adminId,
+                action: "IDLE_EMPLOYEES_VIEWED"
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "IDLE_EMPLOYEES_ACTIVITY_LOG_FAILED", {
+                error: logError.message,
+                adminId: req.user.adminId
+            });
+        }
+
+        logToConsole("SUCCESS", "IDLE_EMPLOYEES_FETCHED", {
+            adminId: req.user.adminId,
+            count: idleEmployees.length,
+            timeFilter
+        });
+
         res.json({
             success: true,
             timeFilter: dateRange.timeFilter,
@@ -590,7 +803,13 @@ router.get("/dashboard/idle-employees", auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Idle employees error:", error);
+        logToConsole("ERROR", "IDLE_EMPLOYEES_ERROR", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId,
+            timeFilter: req.query.timeFilter
+        });
+
         res.status(500).json({
             success: false,
             message: "Error fetching idle employees"
@@ -606,6 +825,13 @@ router.get("/dashboard/incomplete-tasks", auth, async (req, res) => {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
         const currentMonth = getCurrentMonthFromRange(dateRange);
+
+        logToConsole("INFO", "INCOMPLETE_TASKS_REQUEST", {
+            adminId: req.user.adminId,
+            timeFilter,
+            customStart,
+            customEnd
+        });
 
         const clients = await Client.aggregate([
             { $match: { isActive: true } },
@@ -678,6 +904,43 @@ router.get("/dashboard/incomplete-tasks", auth, async (req, res) => {
             totalIncomplete: client.incompleteTasks.length
         }));
 
+        // Add Activity Log
+        try {
+            const totalIncompleteTasks = formattedClients.reduce((sum, client) => sum + client.totalIncomplete, 0);
+
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                action: "INCOMPLETE_TASKS_VIEWED",
+                details: `Viewed incomplete tasks for ${currentMonth.month}/${currentMonth.year}. Found ${formattedClients.length} clients with ${totalIncompleteTasks} incomplete tasks`,
+                dateTime: new Date(),
+                metadata: {
+                    timeFilter,
+                    year: currentMonth.year,
+                    month: currentMonth.month,
+                    totalClients: formattedClients.length,
+                    totalIncompleteTasks: totalIncompleteTasks
+                }
+            });
+
+            logToConsole("INFO", "INCOMPLETE_TASKS_ACTIVITY_LOG_CREATED", {
+                adminId: req.user.adminId,
+                action: "INCOMPLETE_TASKS_VIEWED"
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "INCOMPLETE_TASKS_ACTIVITY_LOG_FAILED", {
+                error: logError.message,
+                adminId: req.user.adminId
+            });
+        }
+
+        logToConsole("SUCCESS", "INCOMPLETE_TASKS_FETCHED", {
+            adminId: req.user.adminId,
+            count: formattedClients.length,
+            timeFilter
+        });
+
         res.json({
             success: true,
             timeFilter: dateRange.timeFilter,
@@ -687,7 +950,13 @@ router.get("/dashboard/incomplete-tasks", auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Incomplete tasks error:", error);
+        logToConsole("ERROR", "INCOMPLETE_TASKS_ERROR", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId,
+            timeFilter: req.query.timeFilter
+        });
+
         res.status(500).json({
             success: false,
             message: "Error fetching incomplete tasks"
@@ -703,6 +972,14 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
         const { timeFilter = 'this_month', customStart, customEnd, limit = 10 } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
         const currentMonth = getCurrentMonthFromRange(dateRange);
+
+        logToConsole("INFO", "RECENT_NOTES_REQUEST", {
+            adminId: req.user.adminId,
+            timeFilter,
+            customStart,
+            customEnd,
+            limit
+        });
 
         // Get all active clients
         const clients = await Client.find(
@@ -831,6 +1108,45 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
         // Limit results
         const limitedNotes = notesByClient.slice(0, parseInt(limit));
 
+        // Add Activity Log
+        try {
+            const totalNotes = limitedNotes.reduce((sum, client) => sum + client.totalNotes, 0);
+
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                action: "RECENT_NOTES_VIEWED",
+                details: `Viewed recent notes for ${timeFilter}. Found ${limitedNotes.length} clients with ${totalNotes} total notes`,
+                dateTime: new Date(),
+                metadata: {
+                    timeFilter,
+                    year: currentMonth.year,
+                    month: currentMonth.month,
+                    clientsCount: limitedNotes.length,
+                    totalNotes: totalNotes,
+                    limit: parseInt(limit)
+                }
+            });
+
+            logToConsole("INFO", "RECENT_NOTES_ACTIVITY_LOG_CREATED", {
+                adminId: req.user.adminId,
+                action: "RECENT_NOTES_VIEWED"
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "RECENT_NOTES_ACTIVITY_LOG_FAILED", {
+                error: logError.message,
+                adminId: req.user.adminId
+            });
+        }
+
+        logToConsole("SUCCESS", "RECENT_NOTES_FETCHED", {
+            adminId: req.user.adminId,
+            clientsCount: limitedNotes.length,
+            totalNotes: limitedNotes.reduce((sum, client) => sum + client.totalNotes, 0),
+            timeFilter
+        });
+
         res.json({
             success: true,
             timeFilter: dateRange.timeFilter,
@@ -849,7 +1165,13 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Recent notes error:", error);
+        logToConsole("ERROR", "RECENT_NOTES_ERROR", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId,
+            timeFilter: req.query.timeFilter
+        });
+
         res.status(500).json({
             success: false,
             message: "Error fetching recent notes"
@@ -867,6 +1189,14 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
         const currentMonth = getCurrentMonthFromRange(dateRange);
 
+        logToConsole("INFO", "CLIENT_NOTES_DETAILS_REQUEST", {
+            adminId: req.user.adminId,
+            clientId,
+            timeFilter,
+            customStart,
+            customEnd
+        });
+
         const client = await Client.findOne(
             { clientId },
             {
@@ -878,6 +1208,11 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
         ).lean();
 
         if (!client) {
+            logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_NOTES", {
+                adminId: req.user.adminId,
+                clientId
+            });
+
             return res.status(404).json({
                 success: false,
                 message: "Client not found"
@@ -980,6 +1315,48 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
         // Sort by date (newest first)
         allNotes.sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
 
+        // Add Activity Log
+        try {
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                clientId: clientId,
+                action: "CLIENT_NOTES_DETAILS_VIEWED",
+                details: `Viewed notes details for client ${client.name} (${clientId}) for ${timeFilter}. Found ${allNotes.length} notes`,
+                dateTime: new Date(),
+                metadata: {
+                    clientId,
+                    clientName: client.name,
+                    timeFilter,
+                    year: currentMonth.year,
+                    month: currentMonth.month,
+                    totalNotes: allNotes.length,
+                    clientNotes: allNotes.filter(n => n.type === "CLIENT_NOTE").length,
+                    employeeNotes: allNotes.filter(n => n.type === "EMPLOYEE_NOTE").length
+                }
+            });
+
+            logToConsole("INFO", "CLIENT_NOTES_DETAILS_ACTIVITY_LOG_CREATED", {
+                adminId: req.user.adminId,
+                clientId,
+                action: "CLIENT_NOTES_DETAILS_VIEWED"
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "CLIENT_NOTES_DETAILS_ACTIVITY_LOG_FAILED", {
+                error: logError.message,
+                adminId: req.user.adminId,
+                clientId
+            });
+        }
+
+        logToConsole("SUCCESS", "CLIENT_NOTES_DETAILS_FETCHED", {
+            adminId: req.user.adminId,
+            clientId,
+            totalNotes: allNotes.length,
+            timeFilter
+        });
+
         res.json({
             success: true,
             client: {
@@ -998,7 +1375,14 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Client notes error:", error);
+        logToConsole("ERROR", "CLIENT_NOTES_DETAILS_ERROR", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId,
+            clientId: req.params.clientId,
+            timeFilter: req.query.timeFilter
+        });
+
         res.status(500).json({
             success: false,
             message: "Error fetching client notes"

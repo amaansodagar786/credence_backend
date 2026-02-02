@@ -7,13 +7,15 @@ const activityLogSchema = new mongoose.Schema({
   adminId: String,
   enrollId: String,
   clientId: String,
+  employeeId: String,
 
   action: String,
   details: String,
 
   dateTime: {
-    type: String,
-    required: true
+    type: Date,
+    required: true ,
+    default: Date.now
   }
 });
 
