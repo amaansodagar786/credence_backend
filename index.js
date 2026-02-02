@@ -82,7 +82,7 @@ app.use("/activity-logs", activityLogsRoutes);
 // BASIC ROUTE
 // ===============================
 app.get("/", (req, res) => {
-    res.send("Accounting Portal Backend is running UPDATED crednece");
+    res.send("Accounting Portal Backend is running new updated crednece");
 });
 
 // ===============================
