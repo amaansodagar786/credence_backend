@@ -1,14 +1,38 @@
+// models/Client.js
 const mongoose = require("mongoose");
 
 /* ===============================
-   NOTE SCHEMA (REUSABLE)
+   NOTE VIEW TRACKING SCHEMA
+================================ */
+const noteViewSchema = new mongoose.Schema(
+  {
+    userId: { type: String, required: true },
+    userType: { type: String, required: true, enum: ['client', 'employee', 'admin'] },
+    viewedAt: { type: Date, default: Date.now }
+  },
+  { _id: false }
+);
+
+/* ===============================
+   NOTE SCHEMA (REUSABLE) - UPDATED WITH VIEW TRACKING
 ================================ */
 const noteSchema = new mongoose.Schema(
   {
     note: { type: String, required: true },
     addedBy: { type: String },
     addedAt: { type: Date, default: Date.now },
-    employeeId: { type: String }
+    employeeId: { type: String },
+    
+    // NEW: Track who has viewed this note
+    viewedBy: {
+      type: [noteViewSchema],
+      default: []
+    },
+    
+    // NEW: Quick-check fields for filtering
+    isViewedByClient: { type: Boolean, default: false },
+    isViewedByEmployee: { type: Boolean, default: false },
+    isViewedByAdmin: { type: Boolean, default: false }
   },
   { _id: false }
 );
@@ -116,16 +140,16 @@ const clientSchema = new mongoose.Schema(
   {
     // EXISTING FIELDS (DO NOT CHANGE)
     clientId: { type: String, unique: true, required: true },
-    name: String,           // firstName + lastName from enrollment
+    name: String,
     email: String,
-    phone: String,          // mobile from enrollment
-    address: String,        // address from enrollment
+    phone: String,
+    address: String,
     password: String,
     isActive: { type: Boolean, default: true },
     
     // ADDITIONAL FIELDS FROM ENROLLMENT
-    firstName: String,      // Original first name from enrollment
-    lastName: String,       // Original last name from enrollment
+    firstName: String,
+    lastName: String,
     visaType: String,
     hasStrongId: String,
     businessAddress: String,
@@ -138,8 +162,8 @@ const clientSchema = new mongoose.Schema(
     planSelected: String,
     
     // STATUS & TRACKING
-    enrollmentId: String,   // Reference to original enrollment
-    enrollmentDate: Date,   // When enrollment was approved
+    enrollmentId: String,
+    enrollmentDate: Date,
     
     // EXISTING DOCUMENT STRUCTURE
     documents: {

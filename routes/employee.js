@@ -1,6 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const sendEmail = require("../utils/sendEmail");
 
 const Employee = require("../models/Employee");
 const ActivityLog = require("../models/ActivityLog");
@@ -979,7 +980,7 @@ router.put("/toggle-accounting-done", async (req, res) => {
 });
 
 /* ===============================
-   ADD NOTE TO FILE
+   ADD NOTE TO FILE (WITH EMAIL NOTIFICATIONS)
 ================================ */
 router.post("/add-file-note", async (req, res) => {
   try {
@@ -1020,7 +1021,7 @@ router.post("/add-file-note", async (req, res) => {
       });
     }
 
-    // Get employee info from token (for activity log)
+    // Get employee info from token
     const token = req.cookies?.employeeToken;
     let employeeId = "unknown";
     let employeeName = "Employee";
@@ -1031,7 +1032,6 @@ router.post("/add-file-note", async (req, res) => {
         employeeId = decoded.employeeId;
         employeeName = decoded.name;
       } catch (error) {
-        // If token fails, still proceed but with unknown employee
         logToConsole("WARN", "TOKEN_FAILED_FOR_NOTE", { error: error.message });
       }
     }
@@ -1139,6 +1139,170 @@ router.post("/add-file-note", async (req, res) => {
       noteId: newNote._id || "generated"
     });
 
+    // ============================================
+    // SEND EMAIL NOTIFICATIONS
+    // ============================================
+    try {
+      // Prepare email details
+      const emailDetails = {
+        clientId,
+        clientName: client.name,
+        clientEmail: client.email,
+        employeeName,
+        employeeId,
+        year,
+        month,
+        categoryType,
+        categoryName: categoryName || categoryType,
+        fileName,
+        note: note.trim(),
+        addedAt: new Date().toLocaleString("en-IN"),
+        categoryPath
+      };
+
+      // Send email to client
+      if (client.email) {
+        const clientEmailHtml = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background-color: #4CAF50; color: white; padding: 15px; text-align: center; border-radius: 5px 5px 0 0; }
+              .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 5px 5px; }
+              .note-box { background-color: #fff; border-left: 4px solid #4CAF50; padding: 15px; margin: 15px 0; }
+              .details { background-color: #e8f5e9; padding: 10px; border-radius: 3px; margin: 10px 0; }
+              .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h2>📝 New Note Added to Your File</h2>
+              </div>
+              <div class="content">
+                <p>Dear ${client.name},</p>
+                
+                <p>A new note has been added to one of your files by our accounting team.</p>
+                
+                <div class="details">
+                  <p><strong>Employee:</strong> ${employeeName}</p>
+                  <p><strong>File:</strong> ${fileName}</p>
+                  <p><strong>Category:</strong> ${categoryName || categoryType}</p>
+                  <p><strong>Period:</strong> ${month}/${year}</p>
+                  <p><strong>Time:</strong> ${emailDetails.addedAt}</p>
+                </div>
+                
+                <div class="note-box">
+                  <h4>📋 Note:</h4>
+                  <p>${note.trim()}</p>
+                </div>
+                
+                <p>Please log in to your account to view the complete details and respond if needed.</p>
+                
+                <div class="footer">
+                  <p>This is an automated notification from Accounting Portal.</p>
+                  <p>Client ID: ${clientId}</p>
+                </div>
+              </div>
+            </div>
+          </body>
+          </html>
+        `;
+
+        await sendEmail(
+          client.email,
+          `📝 Note Added to File ${fileName} - ${client.name}`,
+          clientEmailHtml
+        );
+
+        logToConsole("SUCCESS", "EMAIL_SENT_TO_CLIENT", {
+          clientId,
+          clientEmail: client.email,
+          employeeId,
+          fileName
+        });
+      }
+
+      // Send email to admin
+      const adminEmail = process.env.EMAIL_USER;
+      if (adminEmail) {
+        const adminEmailHtml = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background-color: #2196F3; color: white; padding: 15px; text-align: center; border-radius: 5px 5px 0 0; }
+              .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 5px 5px; }
+              .note-box { background-color: #fff; border-left: 4px solid #2196F3; padding: 15px; margin: 15px 0; }
+              .details { background-color: #e3f2fd; padding: 10px; border-radius: 3px; margin: 10px 0; }
+              .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+              .alert { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; border-radius: 3px; margin: 10px 0; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h2>🔔 Employee Added Note to Client File</h2>
+              </div>
+              <div class="content">
+                <div class="alert">
+                  <strong>Notification:</strong> An employee has added a note to a client file.
+                </div>
+                
+                <div class="details">
+                  <p><strong>Employee:</strong> ${employeeName} (${employeeId})</p>
+                  <p><strong>Client:</strong> ${client.name} (${clientId})</p>
+                  <p><strong>Client Email:</strong> ${client.email || 'Not provided'}</p>
+                  <p><strong>File:</strong> ${fileName}</p>
+                  <p><strong>Category:</strong> ${categoryName || categoryType}</p>
+                  <p><strong>Period:</strong> ${month}/${year}</p>
+                  <p><strong>Time:</strong> ${emailDetails.addedAt}</p>
+                </div>
+                
+                <div class="note-box">
+                  <h4>📋 Note Content:</h4>
+                  <p>${note.trim()}</p>
+                </div>
+                
+                <p><strong>IP Address:</strong> ${req.ip}</p>
+                <p><strong>User Agent:</strong> ${req.get('User-Agent')?.substring(0, 100)}...</p>
+                
+                <div class="footer">
+                  <p>This is an automated notification from Accounting Portal System.</p>
+                  <p>Note ID: ${newNote._id || 'Generated'}</p>
+                </div>
+              </div>
+            </div>
+          </body>
+          </html>
+        `;
+
+        await sendEmail(
+          adminEmail,
+          `🔔 Employee ${employeeName} Added Note to ${client.name}'s File`,
+          adminEmailHtml
+        );
+
+        logToConsole("SUCCESS", "EMAIL_SENT_TO_ADMIN", {
+          adminEmail,
+          employeeId,
+          clientId
+        });
+      }
+
+    } catch (emailError) {
+      logToConsole("ERROR", "EMAIL_SENDING_FAILED", {
+        error: emailError.message,
+        clientId,
+        employeeId
+      });
+      // Don't fail the note addition if email fails
+    }
+
     // Create activity log for adding file note
     try {
       await ActivityLog.create({
@@ -1157,11 +1321,14 @@ router.post("/add-file-note", async (req, res) => {
           categoryName,
           fileName,
           noteLength: note.trim().length,
-          notePreview: note.trim().substring(0, 50) + (note.trim().length > 50 ? "..." : "")
+          notePreview: note.trim().substring(0, 50) + (note.trim().length > 50 ? "..." : ""),
+          emailSent: true,
+          clientEmail: client.email || 'Not sent',
+          adminEmail: process.env.EMAIL_USER || 'Not sent'
         }
       });
 
-      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+      logToConsole("INFO", "ACTIVITY_LOG_CREATED_WITH_EMAIL", {
         action: "ADDED_FILE_NOTE",
         employeeId: employeeId,
         clientId: clientId,
@@ -1174,13 +1341,15 @@ router.post("/add-file-note", async (req, res) => {
       });
     }
 
-    logToConsole("SUCCESS", "FILE_NOTE_ADDED_SUCCESS", {
+    logToConsole("SUCCESS", "FILE_NOTE_ADDED_SUCCESS_WITH_EMAIL", {
       clientId,
       year,
       month,
       categoryPath,
       fileName,
       employeeId: employeeId,
+      clientEmailSent: !!client.email,
+      adminEmailSent: !!process.env.EMAIL_USER,
       timestamp: new Date().toISOString()
     });
 
@@ -1190,6 +1359,10 @@ router.post("/add-file-note", async (req, res) => {
       file: {
         fileName: file.fileName,
         totalNotes: file.notes.length
+      },
+      notifications: {
+        clientEmailSent: !!client.email,
+        adminEmailSent: !!process.env.EMAIL_USER
       }
     });
 

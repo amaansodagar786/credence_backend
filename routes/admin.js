@@ -38,6 +38,122 @@ const logToConsole = (type, operation, data) => {
   return logEntry;
 };
 
+/* ===============================
+   HELPER: SEND EMAIL TO CLIENT - FIXED
+================================ */
+const sendEmailToClient = async (client, actionType, additionalInfo = {}) => {
+  try {
+    // Import email utility
+    const sendEmail = require("../utils/sendEmail");
+
+    if (!client.email) {
+      logToConsole("WARN", "NO_CLIENT_EMAIL_FOUND", {
+        clientName: client.name,
+        actionType
+      });
+      return { sent: false, reason: "No client email" };
+    }
+
+    // CORRECTLY determine if it's lock or unlock
+    const isLock = actionType === "MONTH_LOCKED" || actionType === "CATEGORY_LOCKED";
+    const isMonth = actionType === "MONTH_LOCKED" || actionType === "MONTH_UNLOCKED";
+
+    console.log("🔍 EMAIL DEBUG:", {
+      actionType,
+      isLock,
+      isMonth,
+      additionalInfo
+    });
+
+    // Create subject line - FIXED
+    let subject = "";
+    let categoryName = additionalInfo.categoryName || additionalInfo.categoryType || "";
+
+    if (isMonth) {
+      subject = `${isLock ? "🔒 Locked" : "🔓 Unlocked"}: Month ${additionalInfo.month}/${additionalInfo.year} - ${client.name}`;
+    } else {
+      subject = `${isLock ? "🔒 Locked" : "🔓 Unlocked"}: ${categoryName} - ${client.name}`;
+    }
+
+    // Simple email content - FIXED
+    const emailHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { 
+            background-color: ${isLock ? '#4CAF50' : '#2196F3'}; 
+            color: white; 
+            padding: 20px; 
+            text-align: center; 
+            border-radius: 5px 5px 0 0; 
+          }
+          .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 5px 5px; }
+          .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+          .action-box { 
+            background-color: ${isLock ? '#e8f5e9' : '#e3f2fd'}; 
+            padding: 15px; 
+            margin: 15px 0; 
+            border-left: 4px solid ${isLock ? '#4CAF50' : '#2196F3'};
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h2>${isLock ? '🔒 Document Locked' : '🔓 Document Unlocked'}</h2>
+          </div>
+          <div class="content">
+            <p>Dear ${client.name},</p>
+            
+            <div class="action-box">
+              <p><strong>Status:</strong> ${isLock ? 'Locked' : 'Unlocked'}</p>
+              ${additionalInfo.month ? `<p><strong>Period:</strong> ${additionalInfo.month}/${additionalInfo.year}</p>` : ''}
+              ${categoryName ? `<p><strong>Category:</strong> ${categoryName}</p>` : ''}
+              <p><strong>Date:</strong> ${new Date().toLocaleString("en-IN")}</p>
+            </div>
+            
+            <p>
+              ${isLock
+        ? 'Your documents have been locked and are now being processed by our accounting team.'
+        : 'Your documents have been unlocked. You can now upload new files or make changes.'
+      }
+            </p>
+            
+            <p>Thank you for using our accounting services.</p>
+            
+            <div class="footer">
+              <p>This is an automated notification from Accounting Portal.</p>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    await sendEmail(client.email, subject, emailHtml);
+
+    logToConsole("SUCCESS", "CLIENT_EMAIL_SENT", {
+      clientName: client.name,
+      clientEmail: client.email,
+      actionType,
+      isLock: isLock ? "LOCK" : "UNLOCK"
+    });
+
+    return { sent: true, clientEmail: client.email };
+
+  } catch (emailError) {
+    logToConsole("ERROR", "CLIENT_EMAIL_FAILED", {
+      error: emailError.message,
+      clientName: client.name,
+      actionType
+    });
+    return { sent: false, reason: emailError.message };
+  }
+};
+
 // Old log function for compatibility (saves to ActivityLog AND logs to console)
 const log = async (name, adminId, action, details) => {
   try {
@@ -1025,7 +1141,7 @@ router.get("/clients/:clientId", auth, async (req, res) => {
 });
 
 /* ===============================
-   LOCK / UNLOCK ENTIRE MONTH (UPDATED TO CASCADE TO FILES)
+   LOCK / UNLOCK ENTIRE MONTH (UPDATED TO CASCADE TO FILES & SEND EMAIL)
 ================================ */
 router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
   try {
@@ -1179,6 +1295,37 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
     client.documents.get(yearKey).set(monthKey, monthData);
     await client.save();
 
+    // ============================================
+    // SEND EMAIL TO CLIENT
+    // ============================================
+    try {
+      const actionType = lock ? "MONTH_LOCKED" : "MONTH_UNLOCKED";
+
+      const additionalInfo = {
+        year,
+        month
+      };
+
+      const emailResult = await sendEmailToClient(client, actionType, additionalInfo);
+
+      logToConsole("INFO", "CLIENT_EMAIL_RESULT", {
+        clientId,
+        clientName: client.name,
+        actionType,
+        emailSent: emailResult.sent,
+        clientEmail: client.email,
+        isLock: lock
+      });
+    } catch (emailError) {
+      logToConsole("ERROR", "CLIENT_EMAIL_FAILED_MONTH_LOCK", {
+        error: emailError.message,
+        clientId,
+        clientName: client.name,
+        isLock: lock
+      });
+      // Don't fail the operation if email fails
+    }
+
     // Console log: Month lock successful
     logToConsole("SUCCESS", "MONTH_LOCK_SUCCESSFUL_WITH_CASCADE", {
       clientId,
@@ -1201,8 +1348,8 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
     // Save success to ActivityLog
     const actionType = lock ? "LOCKED_MONTH_CASCADE" : "UNLOCKED_MONTH_CASCADE";
     const actionDetails = lock ?
-      `Locked month ${month}/${year} for client ${client.name} and ${fileLockStatus.otherCategories.length + (fileLockStatus.sales ? 1 : 0) + (fileLockStatus.purchase ? 1 : 0) + (fileLockStatus.bank ? 1 : 0)} files` :
-      `Unlocked month ${month}/${year} for client ${client.name} and ${fileLockStatus.otherCategories.length + (fileLockStatus.sales ? 1 : 0) + (fileLockStatus.purchase ? 1 : 0) + (fileLockStatus.bank ? 1 : 0)} files`;
+      `Locked month ${month}/${year} for client ${client.name}` :
+      `Unlocked month ${month}/${year} for client ${client.name}`;
 
     await log(req.user.name, req.user.adminId, actionType, actionDetails);
 
@@ -1264,7 +1411,7 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
 });
 
 /* ===============================
-   LOCK / UNLOCK FILE - UPDATED TO HANDLE NON-EXISTENT FILES
+   LOCK / UNLOCK FILE - UPDATED TO HANDLE NON-EXISTENT FILES & SEND EMAIL
 ================================ */
 router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
   try {
@@ -1365,6 +1512,40 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
     // Save the updated data
     client.documents.get(yearKey).set(monthKey, monthData);
     await client.save();
+
+    // ============================================
+    // SEND EMAIL TO CLIENT
+    // ============================================
+    try {
+      const actionType = lock ? "CATEGORY_LOCKED" : "CATEGORY_UNLOCKED";
+      const categoryDisplayName = type === "other" ? categoryName : type;
+
+      const additionalInfo = {
+        year,
+        month,
+        categoryType: categoryDisplayName,
+        categoryName: type === "other" ? categoryName : null
+      };
+
+      const emailResult = await sendEmailToClient(client, actionType, additionalInfo);
+
+      logToConsole("INFO", "CLIENT_EMAIL_RESULT_FILE_LOCK", {
+        clientId,
+        clientName: client.name,
+        actionType,
+        emailSent: emailResult.sent,
+        clientEmail: client.email,
+        isLock: lock
+      });
+    } catch (emailError) {
+      logToConsole("ERROR", "CLIENT_EMAIL_FAILED_FILE_LOCK", {
+        error: emailError.message,
+        clientId,
+        clientName: client.name,
+        isLock: lock
+      });
+      // Don't fail the operation if email fails
+    }
 
     // Log the action
     const actionType = lock ? "LOCKED_FILE" : "UNLOCKED_FILE";

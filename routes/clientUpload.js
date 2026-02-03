@@ -103,7 +103,237 @@ const getMonthData = (client, year, month) => {
 };
 
 /* ===============================
-   UPLOAD / UPDATE FILES (MULTIPLE)
+   HELPER: GET ASSIGNED EMPLOYEES FOR MONTH
+================================ */
+const getAssignedEmployeesForMonth = async (clientId, year, month) => {
+    try {
+        const client = await Client.findOne({ clientId });
+        if (!client || !client.employeeAssignments) return [];
+
+        const assignments = client.employeeAssignments.filter(
+            a => a.year === parseInt(year) &&
+                a.month === parseInt(month) &&
+                !a.isRemoved
+        );
+
+        // Get unique employee IDs
+        const employeeIds = [...new Set(assignments.map(a => a.employeeId))];
+
+        if (employeeIds.length === 0) return [];
+
+        // Fetch employee details
+        const Employee = require("../models/Employee");
+        const employees = await Employee.find(
+            { employeeId: { $in: employeeIds } },
+            { employeeId: 1, name: 1, email: 1 }
+        );
+
+        return employees;
+    } catch (error) {
+        console.error("Error getting assigned employees:", error);
+        return [];
+    }
+};
+
+/* ===============================
+   HELPER: SEND EMAIL NOTIFICATIONS
+================================ */
+const sendNotificationEmails = async ({
+    client,
+    employeeName,
+    actionType,
+    details,
+    year,
+    month,
+    fileName,
+    categoryType,
+    categoryName,
+    note
+}) => {
+    try {
+        // Import email utility
+        const sendEmail = require("../utils/sendEmail");
+
+        // 1. Get assigned employees for this month
+        const assignedEmployees = await getAssignedEmployeesForMonth(
+            client.clientId,
+            year,
+            month
+        );
+
+        const emailsSent = {
+            employees: [],
+            admin: false
+        };
+
+        // Common email data
+        const emailData = {
+            clientName: client.name,
+            clientId: client.clientId,
+            clientEmail: client.email,
+            employeeName: employeeName || 'Client',
+            year,
+            month,
+            actionType,
+            details,
+            fileName: fileName || 'Multiple files',
+            categoryType,
+            categoryName: categoryName || categoryType,
+            note: note || 'No note provided',
+            timestamp: new Date().toLocaleString("en-IN")
+        };
+
+        // 2. Send email to each assigned employee
+        for (const employee of assignedEmployees) {
+            if (employee.email) {
+                const employeeSubject = `📝 ${actionType} - ${client.name} (${month}/${year})`;
+
+                const employeeHtml = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background-color: #ff9800; color: white; padding: 15px; text-align: center; border-radius: 5px 5px 0 0; }
+              .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 5px 5px; }
+              .info-box { background-color: #fff3e0; padding: 15px; margin: 15px 0; border-left: 4px solid #ff9800; }
+              .details { background-color: #fff; padding: 15px; border: 1px solid #ddd; border-radius: 3px; margin: 10px 0; }
+              .note-box { background-color: #f1f8e9; padding: 15px; border-left: 4px solid #8bc34a; margin: 15px 0; }
+              .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h2>📋 ${actionType}</h2>
+              </div>
+              <div class="content">
+                <div class="info-box">
+                  <p><strong>Hello ${employee.name},</strong></p>
+                  <p>Your assigned client has performed an action that requires your attention.</p>
+                </div>
+                
+                <div class="details">
+                  <h3>🔍 Details</h3>
+                  <p><strong>Client:</strong> ${client.name} (${client.clientId})</p>
+                  <p><strong>Client Email:</strong> ${client.email || 'Not provided'}</p>
+                  <p><strong>Period:</strong> ${month}/${year}</p>
+                  <p><strong>Action:</strong> ${details}</p>
+                  <p><strong>File:</strong> ${emailData.fileName}</p>
+                  <p><strong>Category:</strong> ${emailData.categoryName}</p>
+                  <p><strong>Performed by:</strong> ${emailData.employeeName}</p>
+                  <p><strong>Time:</strong> ${emailData.timestamp}</p>
+                </div>
+                
+                ${note ? `
+                <div class="note-box">
+                  <h4>📝 Note from Client:</h4>
+                  <p>"${note}"</p>
+                </div>
+                ` : ''}
+                
+                <p><strong>Action Required:</strong> Please log in to review the changes and take necessary action if required.</p>
+                
+                <div class="footer">
+                  <p>This is an automated notification from Accounting Portal.</p>
+                  <p>Client ID: ${client.clientId} | Employee ID: ${employee.employeeId}</p>
+                </div>
+              </div>
+            </div>
+          </body>
+          </html>
+        `;
+
+                await sendEmail(employee.email, employeeSubject, employeeHtml);
+                emailsSent.employees.push(employee.email);
+            }
+        }
+
+        // 3. Send email to admin
+        const adminEmail = process.env.EMAIL_USER;
+        if (adminEmail) {
+            const adminSubject = `🔔 ${actionType} - Client ${client.name} (${month}/${year})`;
+
+            const adminHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background-color: #2196f3; color: white; padding: 15px; text-align: center; border-radius: 5px 5px 0 0; }
+            .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 5px 5px; }
+            .alert { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; border-radius: 3px; margin: 10px 0; }
+            .details { background-color: #e3f2fd; padding: 15px; border-radius: 3px; margin: 10px 0; }
+            .note-box { background-color: #fff; border-left: 4px solid #2196f3; padding: 15px; margin: 15px 0; }
+            .employee-list { background-color: #f5f5f5; padding: 10px; border-radius: 3px; margin: 10px 0; }
+            .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h2>🔔 ${actionType} Notification</h2>
+            </div>
+            <div class="content">
+              <div class="alert">
+                <strong>Notification:</strong> Client has performed an action on their documents.
+              </div>
+              
+              <div class="details">
+                <h3>Client Information</h3>
+                <p><strong>Client:</strong> ${client.name} (${client.clientId})</p>
+                <p><strong>Client Email:</strong> ${client.email || 'Not provided'}</p>
+                <p><strong>Business:</strong> ${client.businessName || 'N/A'}</p>
+                <p><strong>Period:</strong> ${month}/${year}</p>
+                <p><strong>Action:</strong> ${details}</p>
+                <p><strong>File:</strong> ${emailData.fileName}</p>
+                <p><strong>Category:</strong> ${emailData.categoryName}</p>
+                <p><strong>Performed by:</strong> ${emailData.employeeName}</p>
+                <p><strong>Time:</strong> ${emailData.timestamp}</p>
+              </div>
+              
+              ${assignedEmployees.length > 0 ? `
+              <div class="employee-list">
+                <h4>📋 Assigned Employees Notified:</h4>
+                <ul>
+                  ${assignedEmployees.map(emp => `<li>${emp.name} (${emp.email})</li>`).join('')}
+                </ul>
+              </div>
+              ` : '<p><strong>⚠️ No employees assigned for this month.</strong></p>'}
+              
+              ${note ? `
+              <div class="note-box">
+                <h4>📝 Client Note:</h4>
+                <p>"${note}"</p>
+              </div>
+              ` : ''}
+              
+              <div class="footer">
+                <p>This is an automated notification from Accounting Portal System.</p>
+                <p>Total employees notified: ${assignedEmployees.length}</p>
+              </div>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+            await sendEmail(adminEmail, adminSubject, adminHtml);
+            emailsSent.admin = true;
+        }
+
+        return emailsSent;
+
+    } catch (emailError) {
+        console.error("Email sending failed:", emailError);
+        return { employees: [], admin: false, error: emailError.message };
+    }
+};
+
+/* ===============================
+   UPLOAD / UPDATE FILES (MULTIPLE) - UPDATED WITH EMAIL NOTIFICATIONS
 ================================ */
 router.post("/upload", auth, upload.array("files"),
     async (req, res) => {
@@ -332,6 +562,38 @@ router.post("/upload", auth, upload.array("files"),
                 uploadedFilesCount: uploadedFiles.length
             });
 
+            // ============================================
+            // SEND EMAIL NOTIFICATIONS FOR NOTE ADDITION
+            // ============================================
+            if (monthData.wasLockedOnce && isUpdate && note) {
+                try {
+                    const emailsSent = await sendNotificationEmails({
+                        client,
+                        employeeName: client.name,
+                        actionType: "CLIENT ADDED NOTE",
+                        details: `Client added note while uploading/updating files in ${type}${categoryName ? ` (${categoryName})` : ''}`,
+                        year,
+                        month,
+                        fileName: uploadedFiles.map(f => f.fileName).join(', '),
+                        categoryType: type,
+                        categoryName: categoryName,
+                        note
+                    });
+
+                    logToConsole("INFO", "NOTIFICATION_EMAILS_SENT", {
+                        clientId: client.clientId,
+                        employeesNotified: emailsSent.employees.length,
+                        adminNotified: emailsSent.admin,
+                        action: "UPLOAD_WITH_NOTE"
+                    });
+                } catch (emailError) {
+                    logToConsole("ERROR", "NOTIFICATION_EMAILS_FAILED", {
+                        error: emailError.message,
+                        clientId: client.clientId
+                    });
+                }
+            }
+
             // ===== ACTIVITY LOG: FILE UPLOAD =====
             try {
                 await ActivityLog.create({
@@ -339,7 +601,6 @@ router.post("/upload", auth, upload.array("files"),
                     role: "CLIENT",
                     clientId: client.clientId,
                     clientName: client.name,
-                    // ADDED: adminId if available (for admin-initiated uploads)
                     adminId: req.user.role === "ADMIN" ? req.user.adminId : null,
                     adminName: req.user.role === "ADMIN" ? req.user.name : null,
                     action: replacedFile ? "CLIENT_FILE_UPDATED" : "CLIENT_FILE_UPLOADED",
@@ -530,7 +791,7 @@ router.get("/deleted-files", auth, async (req, res) => {
 });
 
 /* ===============================
-   DELETE SINGLE FILE
+   DELETE SINGLE FILE - UPDATED WITH EMAIL NOTIFICATIONS
 ================================ */
 router.delete("/delete-file", auth, async (req, res) => {
     try {
@@ -639,6 +900,36 @@ router.delete("/delete-file", auth, async (req, res) => {
             fileName
         });
 
+        // ============================================
+        // SEND EMAIL NOTIFICATIONS FOR FILE DELETE
+        // ============================================
+        try {
+            const emailsSent = await sendNotificationEmails({
+                client,
+                employeeName: client.name,
+                actionType: "FILE DELETED",
+                details: `Client deleted file "${fileName}" from ${type}${categoryName ? ` (${categoryName})` : ''}`,
+                year,
+                month,
+                fileName,
+                categoryType: type,
+                categoryName: categoryName,
+                note: `File deleted: ${fileName}. Reason: ${deleteNote || "No reason provided"}`
+            });
+
+            logToConsole("INFO", "NOTIFICATION_EMAILS_SENT", {
+                clientId: client.clientId,
+                employeesNotified: emailsSent.employees.length,
+                adminNotified: emailsSent.admin,
+                action: "FILE_DELETE"
+            });
+        } catch (emailError) {
+            logToConsole("ERROR", "NOTIFICATION_EMAILS_FAILED", {
+                error: emailError.message,
+                clientId: client.clientId
+            });
+        }
+
         // ===== ACTIVITY LOG: FILE DELETE =====
         try {
             await ActivityLog.create({
@@ -646,7 +937,6 @@ router.delete("/delete-file", auth, async (req, res) => {
                 role: "CLIENT",
                 clientId: client.clientId,
                 clientName: client.name,
-                // ADDED: adminId if available
                 adminId: req.user.role === "ADMIN" ? req.user.adminId : null,
                 adminName: req.user.role === "ADMIN" ? req.user.name : null,
                 action: "CLIENT_FILE_DELETED",
@@ -703,8 +993,59 @@ router.post("/save-lock", auth, async (req, res) => {
         logToConsole("INFO", "CLIENT_MONTH_LOCK_REQUEST", {
             clientId: client.clientId,
             year,
-            month
+            month,
+            isFirstLock: !monthData.wasLockedOnce
         });
+
+        // CHECK IF FIRST TIME LOCK - Send email notification
+        let shouldSendEmail = false;
+        if (!monthData.wasLockedOnce) {
+            shouldSendEmail = true;
+
+            // IMPORT EMAIL UTILITY
+            const sendEmail = require("../utils/sendEmail");
+
+            // EMAIL CONTENT FOR ADMIN
+            const subject = `Client ${client.name} has uploaded documents for ${month}/${year}`;
+            const html = `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h2>New Documents Uploaded</h2>
+                    <p><strong>Client:</strong> ${client.name} (${client.clientId})</p>
+                    <p><strong>Client Email:</strong> ${client.email || "N/A"}</p>
+                    <p><strong>Client Phone:</strong> ${client.phone || "N/A"}</p>
+                    <p><strong>Period:</strong> ${month}/${year}</p>
+                    <p><strong>Business Name:</strong> ${client.businessName || "N/A"}</p>
+                    <p><strong>VAT Period:</strong> ${client.vatPeriod || "N/A"}</p>
+                    <hr>
+                    <p><strong>Action Required:</strong> Please assign an employee to this client for processing.</p>
+                    <p>Login to the admin portal to assign an employee.</p>
+                    <br>
+                    <p>This is an automated notification.</p>
+                </div>
+            `;
+
+            try {
+                // Send email to admin
+                await sendEmail(
+                    process.env.EMAIL_USER, // Admin email
+                    subject,
+                    html
+                );
+
+                logToConsole("INFO", "ADMIN_NOTIFICATION_EMAIL_SENT", {
+                    clientId: client.clientId,
+                    adminEmail: process.env.EMAIL_USER,
+                    year,
+                    month
+                });
+            } catch (emailError) {
+                logToConsole("ERROR", "ADMIN_NOTIFICATION_EMAIL_FAILED", {
+                    clientId: client.clientId,
+                    error: emailError.message
+                });
+                // Don't fail the lock operation if email fails
+            }
+        }
 
         // LOCK MONTH
         monthData.isLocked = true;
@@ -733,7 +1074,8 @@ router.post("/save-lock", auth, async (req, res) => {
         logToConsole("SUCCESS", "CLIENT_MONTH_LOCK_COMPLETE", {
             clientId: client.clientId,
             year,
-            month
+            month,
+            emailSent: shouldSendEmail
         });
 
         // ===== ACTIVITY LOG: MONTH LOCK =====
@@ -743,17 +1085,18 @@ router.post("/save-lock", auth, async (req, res) => {
                 role: "CLIENT",
                 clientId: client.clientId,
                 clientName: client.name,
-                // ADDED: adminId if available (admin-initiated lock)
                 adminId: req.user.role === "ADMIN" ? req.user.adminId : null,
                 adminName: req.user.role === "ADMIN" ? req.user.name : null,
                 action: "CLIENT_MONTH_LOCKED",
-                details: `${req.user.role === "ADMIN" ? "Admin locked" : "Client locked"} month ${year}-${month}. All categories have been locked.`,
+                details: `${req.user.role === "ADMIN" ? "Admin locked" : "Client locked"} month ${year}-${month}.${shouldSendEmail ? " (First time lock - Admin notified)" : ""}`,
                 dateTime: new Date(),
                 metadata: {
                     year,
                     month,
                     lockedAt: new Date(),
-                    performedBy: req.user.role === "ADMIN" ? "ADMIN" : "CLIENT"
+                    performedBy: req.user.role === "ADMIN" ? "ADMIN" : "CLIENT",
+                    firstTimeLock: shouldSendEmail,
+                    adminEmailSent: shouldSendEmail
                 }
             });
         } catch (logError) {
@@ -763,8 +1106,9 @@ router.post("/save-lock", auth, async (req, res) => {
         }
 
         res.json({
-            message: "Month saved and locked",
-            monthData: monthData
+            message: `Month saved and locked${shouldSendEmail ? " - Admin has been notified" : ""}`,
+            monthData: monthData,
+            firstTimeLock: shouldSendEmail
         });
     } catch (err) {
         logToConsole("ERROR", "CLIENT_MONTH_LOCK_FAILED", {
@@ -860,7 +1204,7 @@ router.get("/test-simple", (req, res) => {
 });
 
 /* ===============================
-   UPLOAD & LOCK CATEGORY
+   UPLOAD & LOCK CATEGORY - UPDATED WITH EMAIL NOTIFICATIONS
 ================================ */
 router.post("/upload-and-lock", auth, upload.array("files"),
     async (req, res) => {
@@ -1008,6 +1352,66 @@ router.post("/upload-and-lock", auth, upload.array("files"),
                 uploadedFilesCount: uploadedFiles.length
             });
 
+            // ============================================
+            // SEND EMAIL NOTIFICATIONS FOR UPLOAD AND LOCK
+            // ============================================
+            if (note) {
+                try {
+                    const emailsSent = await sendNotificationEmails({
+                        client,
+                        employeeName: client.name,
+                        actionType: "UPLOADED & LOCKED WITH NOTE",
+                        details: `Client uploaded files and locked ${type}${categoryName ? ` (${categoryName})` : ''}`,
+                        year,
+                        month,
+                        fileName: uploadedFiles.map(f => f.fileName).join(', '),
+                        categoryType: type,
+                        categoryName: categoryName,
+                        note
+                    });
+
+                    logToConsole("INFO", "NOTIFICATION_EMAILS_SENT", {
+                        clientId: client.clientId,
+                        employeesNotified: emailsSent.employees.length,
+                        adminNotified: emailsSent.admin,
+                        action: "UPLOAD_AND_LOCK_WITH_NOTE"
+                    });
+                } catch (emailError) {
+                    logToConsole("ERROR", "NOTIFICATION_EMAILS_FAILED", {
+                        error: emailError.message,
+                        clientId: client.clientId
+                    });
+                }
+            }
+
+            // ALSO SEND NOTIFICATION FOR LOCK ACTION (even without note)
+            try {
+                const emailsSent = await sendNotificationEmails({
+                    client,
+                    employeeName: client.name,
+                    actionType: "CATEGORY LOCKED",
+                    details: `Client locked ${type}${categoryName ? ` (${categoryName})` : ''} category`,
+                    year,
+                    month,
+                    fileName: uploadedFiles.map(f => f.fileName).join(', '),
+                    categoryType: type,
+                    categoryName: categoryName,
+                    note: note || "Category locked by client"
+                });
+
+                logToConsole("INFO", "LOCK_NOTIFICATION_EMAILS_SENT", {
+                    clientId: client.clientId,
+                    employeesNotified: emailsSent.employees.length,
+                    adminNotified: emailsSent.admin,
+                    action: "CATEGORY_LOCK"
+                });
+            } catch (emailError) {
+                logToConsole("ERROR", "LOCK_NOTIFICATION_EMAILS_FAILED", {
+                    error: emailError.message,
+                    clientId: client.clientId
+                });
+            }
+
             // ===== ACTIVITY LOG: UPLOAD AND LOCK =====
             try {
                 await ActivityLog.create({
@@ -1015,7 +1419,6 @@ router.post("/upload-and-lock", auth, upload.array("files"),
                     role: "CLIENT",
                     clientId: client.clientId,
                     clientName: client.name,
-                    // ADDED: adminId if available
                     adminId: req.user.role === "ADMIN" ? req.user.adminId : null,
                     adminName: req.user.role === "ADMIN" ? req.user.name : null,
                     action: "CLIENT_FILE_UPLOADED_AND_LOCKED",
