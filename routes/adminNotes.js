@@ -413,7 +413,7 @@ router.get("/clients-summary", async (req, res) => {
 });
 
 /* ===============================
-   GET ALL NOTES FOR SPECIFIC CLIENT WITH FILTERS - UPDATED
+   GET ALL NOTES FOR SPECIFIC CLIENT WITH FILTERS - FIXED VERSION
 ================================ */
 router.get("/client/:clientId/notes", async (req, res) => {
     try {
@@ -423,7 +423,6 @@ router.get("/client/:clientId/notes", async (req, res) => {
             month,
             startDate,
             endDate
-            // REMOVED: noteLevel, categoryType, isViewed filters
         } = req.query;
 
         logToConsole("INFO", "GET_CLIENT_NOTES_REQUEST", {
@@ -444,7 +443,7 @@ router.get("/client/:clientId/notes", async (req, res) => {
         // Extract all notes from client
         let notes = extractNotesFromClient(client);
 
-        // Apply filters - SIMPLIFIED VERSION
+        // Apply filters - FIXED DATE FILTERING
         if (year) {
             const yearNum = parseInt(year);
             notes = notes.filter(note => note.year === yearNum);
@@ -455,12 +454,15 @@ router.get("/client/:clientId/notes", async (req, res) => {
             notes = notes.filter(note => note.month === monthNum);
         }
 
+        // FIXED: Proper date range filtering
         if (startDate && endDate) {
             const start = new Date(startDate);
             const end = new Date(endDate);
-            end.setHours(23, 59, 59, 999); // End of day
+            // Set end date to end of day
+            end.setHours(23, 59, 59, 999);
 
             notes = notes.filter(note => {
+                if (!note.addedAt) return false;
                 const noteDate = new Date(note.addedAt);
                 return noteDate >= start && noteDate <= end;
             });
@@ -505,7 +507,8 @@ router.get("/client/:clientId/notes", async (req, res) => {
             totalNotes: notes.length,
             unreadNotes: notes.filter(n => !n.isViewedByAdmin).length,
             filteredNotes: notes.length,
-            monthsCount: monthsArray.length
+            monthsCount: monthsArray.length,
+            filtersApplied: req.query
         });
 
         res.json({
@@ -523,7 +526,6 @@ router.get("/client/:clientId/notes", async (req, res) => {
                     total: notes.length,
                     unread: notes.filter(n => !n.isViewedByAdmin).length,
                     read: notes.filter(n => n.isViewedByAdmin).length
-                    // REMOVED: byLevel statistics
                 }
             },
             filters: req.query,
@@ -544,7 +546,6 @@ router.get("/client/:clientId/notes", async (req, res) => {
         });
     }
 });
-
 /* ===============================
    MARK NOTES AS VIEWED BY ADMIN - FIXED VERSION
 ================================ */
