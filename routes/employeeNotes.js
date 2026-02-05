@@ -1,1058 +1,1276 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const auth = require("../middleware/authMiddleware");
-const Employee = require("../models/Employee");
-const Client = require("../models/Client");
-const ActivityLog = require("../models/ActivityLog");
-
 const router = express.Router();
+const Client = require("../models/Client");
+const Employee = require("../models/Employee");
 
-// Console logging helper
+// Console logging utility (same as admin)
 const logToConsole = (type, operation, data) => {
   const timestamp = new Date().toLocaleString("en-IN");
-  console.log(`[${timestamp}] EMPLOYEE ${type}: ${operation}`, data ? JSON.stringify(data, null, 2) : '');
+  const colors = {
+    INFO: '\x1b[36m',
+    SUCCESS: '\x1b[32m',
+    WARN: '\x1b[33m',
+    ERROR: '\x1b[31m',
+    DEBUG: '\x1b[35m',
+    RESET: '\x1b[0m'
+  };
+  const color = colors[type] || colors.RESET;
+  console.log(`${color}[${timestamp}] ${type}: ${operation}${colors.RESET}`, data);
+  return { timestamp, type, operation, data };
 };
 
-/* ===============================
-   HELPER: COUNT UNVIEWED NOTES FOR EMPLOYEE IN A SPECIFIC CLIENT - SIMPLE VERSION
-================================ */
-const countUnviewedNotesForEmployeeInClient = (client, employeeId) => {
-  try {
-    console.log(`\n🔍 START: Counting unviewed notes for employee ${employeeId} in client ${client.clientId}`);
+// Helper function to generate unique ID for notes
+const generateNoteId = () => {
+  return new mongoose.Types.ObjectId().toString();
+};
 
-    const clientObj = client.toObject ? client.toObject() : client;
-    let unviewedCount = 0;
 
-    // Debug: Log all data
-    console.log('📦 Client data structure:', {
-      clientId: clientObj.clientId,
-      hasDocuments: !!clientObj.documents,
-      documentsKeys: Object.keys(clientObj.documents || {})
+const extractNotesForEmployee = (client, employeeId) => {
+  const notes = [];
+  const clientId = client.clientId;
+  const clientName = client.name || `${client.firstName} ${client.lastName}` || 'Unknown Client';
+
+  // Helper function to debug note structure
+  const debugNoteStructure = (noteObj, context) => {
+    console.log(`🔍 DEBUG NOTE STRUCTURE for ${employeeId}:`, {
+      notePreview: noteObj.note?.substring(0, 30) + '...',
+      employeeId: noteObj.employeeId,
+      clientNote: !noteObj.employeeId,
+      isOwnNote: noteObj.employeeId === employeeId,
+      viewedBy: noteObj.viewedBy,
+      isViewedByEmployee: noteObj.isViewedByEmployee,
+      hasIsViewedByEmployeeField: noteObj.hasOwnProperty('isViewedByEmployee'),
+      context: context.contextType,
+      month: `${context.year}-${context.month}`
     });
+  };
 
-    const documents = clientObj.documents || {};
+  // Helper to add note with context
+  const addNote = (noteObj, context) => {
+    if (!noteObj || !noteObj.note) return;
 
-    if (!documents || typeof documents !== 'object') {
-      console.log('❌ No documents found');
-      return 0;
+    // EMPLOYEE RULE: Only show notes from client OR notes added by this employee
+    const isClientNote = !noteObj.employeeId;
+    const isOwnNote = noteObj.employeeId === employeeId;
+
+    if (!isClientNote && !isOwnNote) {
+      // Skip notes from other employees
+      return;
     }
 
-    // Loop through all years
-    Object.keys(documents).forEach(year => {
-      const yearData = documents[year];
-      if (!yearData || typeof yearData !== 'object') return;
+    // ✅ FIX: Check if this employee has viewed the note
+    let isViewedByEmployee = false;
 
-      console.log(`\n  📅 Year ${year}:`);
-
-      // Loop through all months in this year
-      Object.keys(yearData).forEach(month => {
-        const monthData = yearData[month];
-        if (!monthData || typeof monthData !== 'object') return;
-
-        console.log(`\n    📆 Month ${month}:`);
-
-        // 1. Check month-level notes
-        if (monthData.monthNotes && Array.isArray(monthData.monthNotes)) {
-          monthData.monthNotes.forEach((note, idx) => {
-            if (note && note.note && !note.isViewedByEmployee) {
-              unviewedCount++;
-              console.log(`      📝 Month note ${idx + 1}: "${note.note.substring(0, 50)}..." - UNVIEWED!`);
-            }
-          });
-        }
-
-        // 2. Check sales category
-        if (monthData.sales && monthData.sales.files) {
-          console.log(`    🛒 Sales category: ${monthData.sales.files.length} files`);
-          monthData.sales.files.forEach((file, fileIdx) => {
-            if (file && file.notes && Array.isArray(file.notes)) {
-              file.notes.forEach((note, noteIdx) => {
-                // Check if this note is for current employee OR has no employeeId (client note)
-                const isForThisEmployee = !note.employeeId || note.employeeId === employeeId;
-                if (note && note.note && isForThisEmployee && !note.isViewedByEmployee) {
-                  unviewedCount++;
-                  console.log(`      📄 Sales file ${fileIdx + 1}, note ${noteIdx + 1}: "${note.note.substring(0, 50)}..." - UNVIEWED!`);
-                  console.log(`        Details: employeeId=${note.employeeId}, isViewedByEmployee=${note.isViewedByEmployee}`);
-                }
-              });
-            }
-          });
-        }
-
-        // 3. Check purchase category
-        if (monthData.purchase && monthData.purchase.files) {
-          console.log(`    🛍️ Purchase category: ${monthData.purchase.files.length} files`);
-          monthData.purchase.files.forEach((file, fileIdx) => {
-            if (file && file.notes && Array.isArray(file.notes)) {
-              file.notes.forEach((note, noteIdx) => {
-                const isForThisEmployee = !note.employeeId || note.employeeId === employeeId;
-                if (note && note.note && isForThisEmployee && !note.isViewedByEmployee) {
-                  unviewedCount++;
-                  console.log(`      📄 Purchase file ${fileIdx + 1}, note ${noteIdx + 1}: "${note.note.substring(0, 50)}..." - UNVIEWED!`);
-                }
-              });
-            }
-          });
-        }
-
-        // 4. Check bank category
-        if (monthData.bank && monthData.bank.files) {
-          console.log(`    🏦 Bank category: ${monthData.bank.files.length} files`);
-          monthData.bank.files.forEach((file, fileIdx) => {
-            if (file && file.notes && Array.isArray(file.notes)) {
-              file.notes.forEach((note, noteIdx) => {
-                const isForThisEmployee = !note.employeeId || note.employeeId === employeeId;
-                if (note && note.note && isForThisEmployee && !note.isViewedByEmployee) {
-                  unviewedCount++;
-                  console.log(`      📄 Bank file ${fileIdx + 1}, note ${noteIdx + 1}: "${note.note.substring(0, 50)}..." - UNVIEWED!`);
-                }
-              });
-            }
-          });
-        }
-
-        // 5. Check category notes (sales, purchase, bank)
-        ['sales', 'purchase', 'bank'].forEach(category => {
-          if (monthData[category] && monthData[category].categoryNotes) {
-            const catNotes = monthData[category].categoryNotes;
-            console.log(`    📋 ${category} category notes: ${catNotes.length} notes`);
-            catNotes.forEach((note, idx) => {
-              if (note && note.note && !note.isViewedByEmployee) {
-                unviewedCount++;
-                console.log(`      📝 ${category} category note ${idx + 1}: "${note.note.substring(0, 50)}..." - UNVIEWED!`);
-              }
-            });
-          }
-        });
-      });
-    });
-
-    console.log(`\n✅ END: Total unviewed notes for employee ${employeeId}: ${unviewedCount}`);
-    return unviewedCount;
-
-  } catch (error) {
-    console.error(`❌ Error in countUnviewedNotesForEmployeeInClient:`, error);
-    console.error(error.stack);
-    return 0;
-  }
-};
-
-/* ===============================
-   HELPER: MARK ALL NOTES AS VIEWED BY EMPLOYEE FOR A CLIENT
-================================ */
-const markAllNotesAsViewedByEmployeeForClient = async (client, employeeId) => {
-  try {
-    // Convert to plain object
-    const clientObj = client.toObject ? client.toObject() : client;
-    let updateCount = 0;
-    const now = new Date();
-    const viewEntry = {
-      userId: employeeId,
-      userType: 'employee',
-      viewedAt: now
-    };
-
-    console.log(`🔄 Marking notes as viewed for employee ${employeeId} in client ${clientObj.clientId}`);
-
-    // Helper function to update a single note for employee
-    const updateNoteForEmployee = (note) => {
-      if (!note || typeof note !== 'object' || note === null) return false;
-
-      // Check if it's a valid note object
-      if (!note.note && !note.noteText) return false;
-
-      // Check if already viewed by this employee
-      const alreadyViewed = note.viewedBy?.some(
-        view => view && view.userId === employeeId && view.userType === 'employee'
+    // First check the viewedBy array
+    if (noteObj.viewedBy && Array.isArray(noteObj.viewedBy)) {
+      const employeeView = noteObj.viewedBy.find(
+        viewer => viewer.userId === employeeId && viewer.userType === 'employee'
       );
-
-      if (!alreadyViewed) {
-        // Initialize viewedBy array if not exists
-        note.viewedBy = note.viewedBy || [];
-        note.viewedBy.push(viewEntry);
-        note.isViewedByEmployee = true;
-        return true;
-      } else if (alreadyViewed && note.isViewedByEmployee !== true) {
-        // Ensure consistency
-        note.isViewedByEmployee = true;
-        return true;
-      }
-      return false;
-    };
-
-    // Helper function to update notes array
-    const updateNotesArrayForEmployee = (notesArray) => {
-      if (!notesArray || !Array.isArray(notesArray)) return 0;
-
-      let count = 0;
-      notesArray.forEach((note, index) => {
-        if (updateNoteForEmployee(note)) {
-          count++;
-          console.log(`    ✅ Marked note ${index + 1} as viewed`);
-        }
-      });
-      return count;
-    };
-
-    const documents = clientObj.documents || {};
-
-    if (!documents || typeof documents !== 'object') {
-      return { notesMarked: 0 };
+      isViewedByEmployee = !!employeeView;
     }
 
-    // Iterate through all documents
-    Object.keys(documents).forEach(year => {
-      if (isNaN(parseInt(year))) return;
-      const yearData = documents[year];
-      if (!yearData || typeof yearData !== 'object') return;
+    // If not found in viewedBy, check direct boolean field
+    if (!isViewedByEmployee && noteObj.isViewedByEmployee !== undefined) {
+      isViewedByEmployee = noteObj.isViewedByEmployee;
+    }
 
-      Object.keys(yearData).forEach(month => {
-        if (isNaN(parseInt(month))) return;
-        const monthData = yearData[month];
-        if (!monthData || typeof monthData !== 'object') return;
+    const noteId = noteObj._id || generateNoteId();
 
-        console.log(`  📅 Processing ${year}-${month}:`);
+    notes.push({
+      noteId,
+      note: noteObj.note,
+      addedBy: noteObj.addedBy || 'Unknown',
+      addedAt: noteObj.addedAt || new Date(),
+      employeeId: noteObj.employeeId,
+      employeeName: noteObj.employeeName,
 
-        // Month-level notes
-        if (monthData.monthNotes && Array.isArray(monthData.monthNotes)) {
-          const updated = updateNotesArrayForEmployee(monthData.monthNotes);
-          updateCount += updated;
-          if (updated > 0) {
-            console.log(`    📝 Updated ${updated} month notes`);
-          }
-        }
+      // ✅ FIXED: View tracking
+      isViewedByAdmin: noteObj.isViewedByAdmin || false,
+      isViewedByClient: noteObj.isViewedByClient || false,
+      isViewedByEmployee: isViewedByEmployee, // ✅ Now correctly calculated
+      viewedBy: noteObj.viewedBy || [],
 
-        // Required categories
-        ['sales', 'purchase', 'bank'].forEach(category => {
-          const categoryData = monthData[category];
-          if (categoryData && typeof categoryData === 'object') {
-            // Category notes
-            if (categoryData.categoryNotes && Array.isArray(categoryData.categoryNotes)) {
-              const updated = updateNotesArrayForEmployee(categoryData.categoryNotes);
-              updateCount += updated;
-              if (updated > 0) {
-                console.log(`    📂 Updated ${updated} ${category} category notes`);
-              }
-            }
+      // Note source: client or employee
+      noteSource: isClientNote ? 'client' : 'employee',
 
-            // File notes (ALL notes, not filtered by employeeId)
-            if (categoryData.files && Array.isArray(categoryData.files)) {
-              categoryData.files.forEach((file, fileIndex) => {
-                if (file && typeof file === 'object' && file.notes && Array.isArray(file.notes)) {
-                  const updated = updateNotesArrayForEmployee(file.notes);
-                  updateCount += updated;
-                  if (updated > 0) {
-                    console.log(`    📄 Updated ${updated} notes in ${category} file ${fileIndex + 1}`);
-                  }
-                }
-              });
-            }
-          }
-        });
-
-        // Other categories
-        if (monthData.other && Array.isArray(monthData.other)) {
-          monthData.other.forEach((otherCat, catIndex) => {
-            if (otherCat && otherCat.document && typeof otherCat.document === 'object') {
-              const doc = otherCat.document;
-              // Category notes
-              if (doc.categoryNotes && Array.isArray(doc.categoryNotes)) {
-                const updated = updateNotesArrayForEmployee(doc.categoryNotes);
-                updateCount += updated;
-                if (updated > 0) {
-                  console.log(`    📁 Updated ${updated} notes in other category "${otherCat.categoryName}"`);
-                }
-              }
-
-              // File notes
-              if (doc.files && Array.isArray(doc.files)) {
-                doc.files.forEach((file, fileIndex) => {
-                  if (file && typeof file === 'object' && file.notes && Array.isArray(file.notes)) {
-                    const updated = updateNotesArrayForEmployee(file.notes);
-                    updateCount += updated;
-                    if (updated > 0) {
-                      console.log(`    📄 Updated ${updated} notes in other file ${fileIndex + 1}`);
-                    }
-                  }
-                });
-              }
-            }
-          });
-        }
-      });
+      // Context
+      clientId,
+      clientName,
+      contextType: context.contextType,
+      year: context.year,
+      month: context.month,
+      categoryType: context.categoryType,
+      categoryName: context.categoryName,
+      fileName: context.fileName,
+      fileUrl: context.fileUrl,
+      noteLevel: context.noteLevel
     });
 
-    // Update the client document
-    if (updateCount > 0) {
-      client.documents = clientObj.documents;
-      await client.save();
+    // Debug log for unread notes
+    if (!isViewedByEmployee) {
+      console.log(`🚨 EMPLOYEE ${employeeId} - UNREAD NOTE FOUND:`, {
+        client: clientName,
+        month: `${context.year}-${context.month}`,
+        level: context.noteLevel,
+        source: isClientNote ? 'client' : 'employee',
+        addedBy: noteObj.addedBy,
+        notePreview: noteObj.note.substring(0, 50) + '...'
+      });
     }
+  };
 
-    console.log(`🎯 Total notes marked as viewed: ${updateCount}`);
-
-    return {
-      success: true,
-      notesMarked: updateCount,
-      clientId: client.clientId,
-      employeeId
-    };
-
-  } catch (error) {
-    console.error(`❌ Error marking notes as viewed:`, error);
-    return {
-      success: false,
-      error: error.message,
-      notesMarked: 0
-    };
+  // Check if client has documents
+  if (!client.documents) {
+    console.log(`📄 No documents for client ${clientId}`);
+    return notes;
   }
-};
 
-/* ===============================
-   HELPER: GET NOTES FOR EMPLOYEE FROM SPECIFIC CLIENT - SIMPLE VERSION
-================================ */
-const getNotesForEmployeeFromClient = (client, employeeId, timeFilter = 'all', limit = null) => {
   try {
-    console.log(`\n🔍 START: Getting notes for employee ${employeeId} from client ${client.clientId}`);
-    console.log(`   Time filter: ${timeFilter}, Limit: ${limit}`);
+    // Process documents structure
+    let documentsObj = {};
 
-    const clientObj = client.toObject ? client.toObject() : client;
-    const allNotes = [];
-
-    // Debug log
-    console.log('📦 Client data available:', {
-      clientId: clientObj.clientId,
-      name: clientObj.name,
-      hasDocuments: !!clientObj.documents
-    });
-
-    const documents = clientObj.documents || {};
-
-    if (!documents || typeof documents !== 'object') {
-      console.log('❌ No documents found');
-      return { notes: [], totalNotes: 0, unviewedCount: 0 };
-    }
-
-    // Calculate date filter
-    const now = new Date();
-    let cutoffDate = new Date(0); // Default: all time
-
-    switch (timeFilter) {
-      case 'month':
-        cutoffDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        break;
-      case 'last-month':
-        cutoffDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        break;
-      case '3months':
-        cutoffDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
-        break;
-      case 'all':
-      default:
-        cutoffDate = new Date(0);
-        break;
-    }
-
-    console.log(`   Cutoff date: ${cutoffDate.toISOString()}`);
-
-    // Helper to add note
-    const addNote = (note, metadata) => {
-      if (!note || !note.note) return;
-
-      const noteDate = new Date(note.addedAt || Date.now());
-      if (noteDate < cutoffDate) return;
-
-      const isUnviewed = !note.isViewedByEmployee;
-      const source = note.employeeId === employeeId ? 'employee' :
-        note.employeeId ? 'other_employee' : 'client';
-
-      // Only add notes from this employee OR client notes
-      if (source === 'employee' || source === 'client') {
-        allNotes.push({
-          id: `${metadata.location}_${metadata.year}_${metadata.month}_${Date.now()}_${Math.random()}`,
-          note: note.note,
-          addedBy: note.addedBy,
-          addedAt: note.addedAt,
-          isUnviewed: isUnviewed,
-          isNew: isUnviewed,
-          source: source,
-          ...metadata
-        });
-
-        console.log(`   📝 Added note: "${note.note.substring(0, 50)}..." (${source}, ${isUnviewed ? 'UNVIEWED' : 'viewed'})`);
+    // Handle both Map and object formats
+    if (client.documents instanceof Map) {
+      // Convert Map to object for easier traversal
+      for (const [yearKey, yearMap] of client.documents.entries()) {
+        if (yearMap instanceof Map) {
+          const monthObj = {};
+          for (const [monthKey, monthData] of yearMap.entries()) {
+            monthObj[monthKey] = monthData;
+          }
+          documentsObj[yearKey] = monthObj;
+        } else {
+          documentsObj[yearKey] = yearMap;
+        }
       }
-    };
+    } else if (typeof client.documents === 'object') {
+      documentsObj = client.documents;
+    } else {
+      console.log(`❌ Client ${clientId} has invalid documents type:`, typeof client.documents);
+      return notes;
+    }
 
-    console.log(`\n📊 Scanning documents...`);
+    // Iterate through all years and months
+    for (const yearKey in documentsObj) {
+      const year = parseInt(yearKey);
+      const yearData = documentsObj[yearKey];
 
-    // Loop through documents
-    Object.keys(documents).forEach(year => {
-      const yearData = documents[year];
-      if (!yearData || typeof yearData !== 'object') return;
+      if (!yearData || typeof yearData !== 'object') continue;
 
-      console.log(`\n  📅 Scanning year ${year}`);
+      for (const monthKey in yearData) {
+        const month = parseInt(monthKey);
+        const monthData = yearData[monthKey];
 
-      Object.keys(yearData).forEach(month => {
-        const monthData = yearData[month];
-        if (!monthData || typeof monthData !== 'object') return;
+        if (!monthData || typeof monthData !== 'object') continue;
 
-        const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleString('default', { month: 'long' });
-        console.log(`  📆 Scanning month ${month} (${monthName})`);
-
-        // 1. Month notes
+        // 1. Month-level notes (only client can add these)
         if (monthData.monthNotes && Array.isArray(monthData.monthNotes)) {
-          console.log(`    📝 Found ${monthData.monthNotes.length} month notes`);
           monthData.monthNotes.forEach(note => {
             addNote(note, {
-              location: 'month',
-              year: parseInt(year),
-              month: parseInt(month),
-              monthName: monthName,
-              category: 'General',
-              type: 'month_note'
+              contextType: 'month',
+              year,
+              month,
+              noteLevel: 'month'
             });
           });
         }
 
-        // 2. Check each category
-        ['sales', 'purchase', 'bank'].forEach(category => {
-          const categoryData = monthData[category];
-          if (!categoryData) return;
+        // 2. Process main categories: sales, purchase, bank
+        ['sales', 'purchase', 'bank'].forEach(categoryType => {
+          if (monthData[categoryType] && typeof monthData[categoryType] === 'object') {
+            const category = monthData[categoryType];
 
-          // Category notes
-          if (categoryData.categoryNotes && Array.isArray(categoryData.categoryNotes)) {
-            console.log(`    📋 ${category} category notes: ${categoryData.categoryNotes.length}`);
-            categoryData.categoryNotes.forEach(note => {
-              addNote(note, {
-                location: 'category',
-                year: parseInt(year),
-                month: parseInt(month),
-                monthName: monthName,
-                category: category.charAt(0).toUpperCase() + category.slice(1),
-                type: 'delete_reason'
+            // Category-level notes (only client can add these)
+            if (category.categoryNotes && Array.isArray(category.categoryNotes)) {
+              category.categoryNotes.forEach(note => {
+                addNote(note, {
+                  contextType: 'category',
+                  year,
+                  month,
+                  categoryType,
+                  noteLevel: 'category'
+                });
               });
-            });
-          }
+            }
 
-          // File notes
-          if (categoryData.files && Array.isArray(categoryData.files)) {
-            console.log(`    📄 ${category} files: ${categoryData.files.length}`);
-            categoryData.files.forEach(file => {
-              if (file && file.notes && Array.isArray(file.notes)) {
-                file.notes.forEach(note => {
+            // File-level notes (employees can add these)
+            if (category.files && Array.isArray(category.files)) {
+              category.files.forEach(file => {
+                if (file && file.notes && Array.isArray(file.notes)) {
+                  file.notes.forEach(note => {
+                    addNote(note, {
+                      contextType: 'file',
+                      year,
+                      month,
+                      categoryType,
+                      fileName: file.fileName,
+                      fileUrl: file.url,
+                      noteLevel: 'file'
+                    });
+                  });
+                }
+              });
+            }
+          }
+        });
+
+        // 3. Process other categories
+        if (monthData.other && Array.isArray(monthData.other)) {
+          monthData.other.forEach(otherCategory => {
+            if (otherCategory && otherCategory.document && typeof otherCategory.document === 'object') {
+              const categoryType = 'other';
+              const categoryName = otherCategory.categoryName;
+
+              // Other category-level notes
+              if (otherCategory.document.categoryNotes && Array.isArray(otherCategory.document.categoryNotes)) {
+                otherCategory.document.categoryNotes.forEach(note => {
                   addNote(note, {
-                    location: 'file',
-                    year: parseInt(year),
-                    month: parseInt(month),
-                    monthName: monthName,
-                    category: category.charAt(0).toUpperCase() + category.slice(1),
-                    fileName: file.fileName,
-                    type: 'file_feedback'
+                    contextType: 'category',
+                    year,
+                    month,
+                    categoryType,
+                    categoryName,
+                    noteLevel: 'category'
                   });
                 });
               }
-            });
-          }
-        });
-      });
-    });
 
-    // Sort by date (newest first)
-    allNotes.sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
-
-    const unviewedCount = allNotes.filter(note => note.isUnviewed).length;
-    const totalNotes = allNotes.length;
-
-    console.log(`\n✅ END: Found ${totalNotes} notes, ${unviewedCount} unviewed`);
-    console.log(`📊 Breakdown:`);
-    console.log(`  - Employee notes: ${allNotes.filter(n => n.source === 'employee').length}`);
-    console.log(`  - Client notes: ${allNotes.filter(n => n.source === 'client').length}`);
-    console.log(`  - Other employee notes: ${allNotes.filter(n => n.source === 'other_employee').length}`);
-
-    // Apply limit if specified
-    const limitedNotes = limit ? allNotes.slice(0, limit) : allNotes;
-
-    return {
-      notes: limitedNotes,
-      totalNotes,
-      unviewedCount,
-      hasUnviewedNotes: unviewedCount > 0,
-      clientName: client.name || client.clientId
-    };
-
-  } catch (error) {
-    console.error(`❌ Error in getNotesForEmployeeFromClient:`, error);
-    console.error(error.stack);
-    return { notes: [], totalNotes: 0, unviewedCount: 0 };
-  }
-};
-
-/* ===============================
-   1. GET TOTAL UNVIEWED NOTES COUNT FOR EMPLOYEE
-================================ */
-router.get("/notes/unviewed-count", auth, async (req, res) => {
-  try {
-    const employeeId = req.user.employeeId;
-    const employeeName = req.user.name;
-
-    console.log(`📊 GET /unviewed-count for employee: ${employeeId}`);
-
-    // Get employee with assigned clients
-    const employee = await Employee.findOne(
-      { employeeId },
-      { assignedClients: 1, name: 1 }
-    ).lean();
-
-    if (!employee) {
-      console.log(`❌ Employee not found: ${employeeId}`);
-      return res.status(404).json({
-        success: false,
-        message: "Employee not found"
-      });
-    }
-
-    // Get active assigned clients
-    const activeAssignments = employee.assignedClients?.filter(
-      assignment => !assignment.isRemoved
-    ) || [];
-
-    console.log(`📊 Active assignments: ${activeAssignments.length}`);
-
-    if (activeAssignments.length === 0) {
-      console.log(`📊 No assigned clients`);
-      return res.json({
-        success: true,
-        employeeId,
-        employeeName: employee.name,
-        totalUnviewedNotes: 0,
-        assignedClientsCount: 0,
-        hasUnviewedNotes: false,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Get unique client IDs
-    const clientIds = [...new Set(activeAssignments.map(assignment => assignment.clientId))];
-    console.log(`📊 Unique client IDs: ${clientIds.length}`);
-
-    let totalUnviewedNotes = 0;
-    let clientsWithUnviewedNotes = [];
-
-    // Count unviewed notes for each client
-    for (const clientId of clientIds) {
-      console.log(`📊 Checking client: ${clientId}`);
-      const client = await Client.findOne({ clientId });
-      if (client) {
-        const unviewedCount = countUnviewedNotesForEmployeeInClient(client, employeeId);
-        if (unviewedCount > 0) {
-          totalUnviewedNotes += unviewedCount;
-          clientsWithUnviewedNotes.push({
-            clientId,
-            clientName: client.name || client.clientId,
-            unviewedCount
+              // Other category file-level notes
+              if (otherCategory.document.files && Array.isArray(otherCategory.document.files)) {
+                otherCategory.document.files.forEach(file => {
+                  if (file && file.notes && Array.isArray(file.notes)) {
+                    file.notes.forEach(note => {
+                      addNote(note, {
+                        contextType: 'file',
+                        year,
+                        month,
+                        categoryType,
+                        categoryName,
+                        fileName: file.fileName,
+                        fileUrl: file.url,
+                        noteLevel: 'file'
+                      });
+                    });
+                  }
+                });
+              }
+            }
           });
-          console.log(`📊 Client ${clientId} has ${unviewedCount} unviewed notes`);
         }
       }
     }
 
-    // Create activity log
-    await ActivityLog.create({
-      userName: employee.name,
-      role: "EMPLOYEE",
-      employeeId: employeeId,
-      action: "UNVIEWED_NOTES_CHECKED",
-      details: `Employee checked unviewed notes count: ${totalUnviewedNotes} unread notes`,
-      dateTime: new Date().toLocaleString("en-IN"),
-      metadata: {
-        employeeId,
-        employeeName: employee.name,
-        totalUnviewedNotes,
-        assignedClientsCount: activeAssignments.length,
-        clientsWithUnviewedNotesCount: clientsWithUnviewedNotes.length
+    console.log(`✅ Employee ${employeeId} - Notes extracted for client ${clientId}: ${notes.length}`);
+    console.log(`   - Client notes: ${notes.filter(n => n.noteSource === 'client').length}`);
+    console.log(`   - Own notes: ${notes.filter(n => n.noteSource === 'employee').length}`);
+    console.log(`   - Unread notes: ${notes.filter(n => !n.isViewedByEmployee).length}`);
+
+  } catch (error) {
+    console.error('❌ Error extracting notes from client:', error);
+    logToConsole("ERROR", "EXTRACT_NOTES_ERROR", {
+      clientId: client.clientId,
+      employeeId,
+      error: error.message
+    });
+  }
+
+  return notes;
+};
+
+// Middleware to get employee from token
+const getEmployeeFromToken = async (req) => {
+  try {
+    const token = req.cookies?.employeeToken;
+    if (!token) return null;
+
+    const jwt = require("jsonwebtoken");
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const employee = await Employee.findOne({
+      employeeId: decoded.employeeId,
+      isActive: true
+    });
+
+    return employee;
+  } catch (error) {
+    return null;
+  }
+};
+
+/* ===============================
+   GET UNREAD NOTES COUNT FOR EMPLOYEE
+================================ */
+router.get("/unread-count", async (req, res) => {
+  try {
+    logToConsole("INFO", "EMPLOYEE_GET_UNREAD_NOTES_COUNT", {
+      ip: req.ip
+    });
+
+    const employee = await getEmployeeFromToken(req);
+    if (!employee) {
+      return res.status(401).json({
+        success: false,
+        message: "Employee authentication failed"
+      });
+    }
+
+    // Get all assigned clients
+    const assignedClients = employee.assignedClients || [];
+    if (assignedClients.length === 0) {
+      return res.json({
+        success: true,
+        totalUnread: 0,
+        assignedClients: []
+      });
+    }
+
+    // Group assignments by client
+    const clientAssignments = {};
+    assignedClients.forEach(assignment => {
+      if (!assignment.isRemoved && assignment.clientId) {
+        if (!clientAssignments[assignment.clientId]) {
+          clientAssignments[assignment.clientId] = new Set();
+        }
+        // Store assigned months as "year-month" keys
+        const key = `${assignment.year}-${assignment.month}`;
+        clientAssignments[assignment.clientId].add(key);
       }
     });
 
-    console.log(`✅ Total unviewed notes: ${totalUnviewedNotes}`);
+    const clientIds = Object.keys(clientAssignments);
+    const allClients = await Client.find({
+      clientId: { $in: clientIds },
+      isActive: true
+    }).select("clientId name email documents");
+
+    let totalUnread = 0;
+
+    for (const client of allClients) {
+      const assignedMonths = clientAssignments[client.clientId];
+      const notes = extractNotesForEmployee(client, employee.employeeId);
+
+      // Only count notes from assigned months
+      const unreadNotes = notes.filter(note => {
+        const noteKey = `${note.year}-${note.month}`;
+        return !note.isViewedByEmployee && assignedMonths.has(noteKey);
+      });
+
+      totalUnread += unreadNotes.length;
+    }
+
+    logToConsole("SUCCESS", "EMPLOYEE_UNREAD_COUNT_CALCULATED", {
+      employeeId: employee.employeeId,
+      employeeName: employee.name,
+      totalAssignedClients: clientIds.length,
+      totalUnreadNotes: totalUnread
+    });
 
     res.json({
       success: true,
-      employeeId,
-      employeeName: employee.name,
-      totalUnviewedNotes,
-      assignedClientsCount: activeAssignments.length,
-      clientsWithUnviewedNotesCount: clientsWithUnviewedNotes.length,
-      hasUnviewedNotes: totalUnviewedNotes > 0,
+      totalUnread,
+      employee: {
+        employeeId: employee.employeeId,
+        name: employee.name
+      },
       timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error(`❌ Error in /unviewed-count:`, error);
+    logToConsole("ERROR", "EMPLOYEE_UNREAD_NOTES_COUNT_ERROR", {
+      error: error.message,
+      stack: error.stack
+    });
+
     res.status(500).json({
       success: false,
-      message: "Error fetching employee unviewed notes count"
+      message: "Error fetching unread notes count",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
-/* ===============================
-   2. GET LIST OF ASSIGNED CLIENTS WITH UNVIEWED NOTES COUNT
-================================ */
-router.get("/notes/assigned-clients", auth, async (req, res) => {
+
+router.get("/assigned-clients", async (req, res) => {
   try {
-    const employeeId = req.user.employeeId;
-    const limit = parseInt(req.query.limit) || 50;
+    logToConsole("INFO", "EMPLOYEE_GET_ASSIGNED_CLIENTS", {
+      ip: req.ip
+    });
 
-    console.log(`👥 GET /assigned-clients for employee: ${employeeId}`);
-
-    // Get employee with assigned clients
-    const employee = await Employee.findOne(
-      { employeeId },
-      { assignedClients: 1, name: 1 }
-    ).lean();
-
+    const employee = await getEmployeeFromToken(req);
     if (!employee) {
-      console.log(`❌ Employee not found: ${employeeId}`);
-      return res.status(404).json({
+      return res.status(401).json({
         success: false,
-        message: "Employee not found"
+        message: "Employee authentication failed"
       });
     }
 
-    // Get active assigned clients
-    const activeAssignments = employee.assignedClients?.filter(
-      assignment => !assignment.isRemoved
-    ) || [];
+    console.log(`\n👨‍💼 ===== START: Processing employee ${employee.employeeId} (${employee.name}) =====\n`);
 
-    console.log(`👥 Active assignments: ${activeAssignments.length}`);
+    // Get all assigned clients (not removed)
+    const assignedClients = employee.assignedClients.filter(a => !a.isRemoved);
 
-    if (activeAssignments.length === 0) {
-      console.log(`👥 No active assignments`);
+    if (assignedClients.length === 0) {
+      console.log(`ℹ️ No assigned clients for employee ${employee.employeeId}`);
       return res.json({
         success: true,
-        employeeId,
-        employeeName: employee.name,
-        assignedClients: [],
-        totalClients: 0,
-        totalUnviewedNotes: 0,
-        timestamp: new Date().toISOString()
+        clients: [],
+        totals: {
+          totalClients: 0,
+          totalUnread: 0
+        }
       });
     }
 
-    // Get unique client IDs with their latest assignment info
+    console.log(`📋 Total assigned clients (not removed): ${assignedClients.length}`);
+
+    // Group by client and collect assigned months
     const clientMap = new Map();
-    activeAssignments.forEach(assignment => {
-      if (!clientMap.has(assignment.clientId) ||
-        new Date(assignment.assignedAt) > new Date(clientMap.get(assignment.clientId).assignedAt)) {
-        clientMap.set(assignment.clientId, assignment);
+    assignedClients.forEach(assignment => {
+      if (!clientMap.has(assignment.clientId)) {
+        clientMap.set(assignment.clientId, {
+          clientId: assignment.clientId,
+          clientName: assignment.clientName,
+          assignedMonths: new Set(),
+          latestAssignment: null
+        });
       }
-    });
 
-    const uniqueClients = Array.from(clientMap.values());
-    const clientIds = uniqueClients.map(client => client.clientId);
+      const clientData = clientMap.get(assignment.clientId);
+      const monthKey = `${assignment.year}-${String(assignment.month).padStart(2, '0')}`;
+      clientData.assignedMonths.add(monthKey);
 
-    console.log(`👥 Unique clients to fetch: ${clientIds.length}`);
-
-    // Get client details and unviewed notes count
-    const clientsWithDetails = [];
-    let totalUnviewedNotes = 0;
-
-    for (const clientId of clientIds) {
-      console.log(`👥 Fetching client: ${clientId}`);
-      const client = await Client.findOne(
-        { clientId },
-        { clientId: 1, name: 1, email: 1, phone: 1, businessName: 1 }
-      );
-
-      if (client) {
-        const unviewedCount = countUnviewedNotesForEmployeeInClient(client, employeeId);
-        totalUnviewedNotes += unviewedCount;
-
-        const assignment = clientMap.get(clientId);
-
-        clientsWithDetails.push({
-          clientId: client.clientId,
-          clientName: client.name || client.clientId,
-          businessName: client.businessName || "Not specified",
-          email: client.email || "Not provided",
-          phone: client.phone || "Not provided",
-          unviewedNotesCount: unviewedCount,
-          hasUnviewedNotes: unviewedCount > 0,
-          lastAssigned: assignment.assignedAt,
-          assignedTask: assignment.task || "Not specified",
-          assignedBy: assignment.assignedBy || "Admin",
+      // Track latest assignment
+      if (!clientData.latestAssignment ||
+        new Date(assignment.assignedAt) > new Date(clientData.latestAssignment.assignedAt)) {
+        clientData.latestAssignment = {
           year: assignment.year,
           month: assignment.month,
-          monthName: new Date(assignment.year, assignment.month - 1).toLocaleString('default', { month: 'long' })
-        });
-
-        console.log(`👥 Client ${clientId}: ${unviewedCount} unviewed notes`);
-      }
-    }
-
-    // Sort: clients with unviewed notes first, then by name
-    clientsWithDetails.sort((a, b) => {
-      if (a.hasUnviewedNotes !== b.hasUnviewedNotes) {
-        return b.hasUnviewedNotes - a.hasUnviewedNotes;
-      }
-      return a.clientName.localeCompare(b.clientName);
-    });
-
-    // Apply limit
-    const limitedClients = clientsWithDetails.slice(0, limit);
-
-    console.log(`✅ Returning ${limitedClients.length} clients, total unviewed: ${totalUnviewedNotes}`);
-
-    res.json({
-      success: true,
-      employeeId,
-      employeeName: employee.name,
-      assignedClients: limitedClients,
-      totalClients: limitedClients.length,
-      totalUnviewedNotes,
-      hasUnviewedNotes: totalUnviewedNotes > 0,
-      timestamp: new Date().toISOString(),
-      summary: {
-        clientsWithUnviewedNotes: limitedClients.filter(c => c.hasUnviewedNotes).length,
-        clientsWithoutUnviewedNotes: limitedClients.filter(c => !c.hasUnviewedNotes).length,
-        totalAssignedClients: activeAssignments.length
-      }
-    });
-
-  } catch (error) {
-    console.error(`❌ Error in /assigned-clients:`, error);
-    res.status(500).json({
-      success: false,
-      message: "Error fetching assigned clients"
-    });
-  }
-});
-
-/* ===============================
-   DEBUG: GET RAW CLIENT DATA
-================================ */
-router.get("/notes/debug-client/:clientId", auth, async (req, res) => {
-  try {
-    const employeeId = req.user.employeeId;
-    const { clientId } = req.params;
-
-    console.log(`🐛 DEBUG endpoint called for client: ${clientId}, employee: ${employeeId}`);
-
-    // Get client data
-    const client = await Client.findOne({ clientId });
-    if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: "Client not found"
-      });
-    }
-
-    // Convert to plain object for inspection
-    const clientObj = client.toObject();
-
-    // Extract just the notes structure for debugging
-    const debugData = {
-      clientId: clientObj.clientId,
-      clientName: clientObj.name,
-      employeeId: employeeId,
-      documents: {}
-    };
-
-    // Build simplified structure
-    const documents = clientObj.documents || {};
-    Object.keys(documents).forEach(year => {
-      debugData.documents[year] = {};
-      const yearData = documents[year];
-
-      Object.keys(yearData).forEach(month => {
-        debugData.documents[year][month] = {
-          monthNotes: yearData[month]?.monthNotes || [],
-          categories: {}
+          assignedAt: assignment.assignedAt,
+          task: assignment.task
         };
-
-        ['sales', 'purchase', 'bank'].forEach(category => {
-          const catData = yearData[month]?.[category];
-          if (catData) {
-            debugData.documents[year][month].categories[category] = {
-              categoryNotes: catData.categoryNotes || [],
-              files: catData.files?.map(file => ({
-                fileName: file.fileName,
-                notes: file.notes || []
-              })) || []
-            };
-          }
-        });
-      });
+      }
     });
 
-    // Count notes manually
-    let totalNotes = 0;
-    let unviewedNotes = 0;
+    console.log(`📊 Unique clients assigned: ${clientMap.size}`);
 
-    Object.keys(documents).forEach(year => {
-      const yearData = documents[year];
-      Object.keys(yearData).forEach(month => {
-        const monthData = yearData[month];
+    // Get client details from Client collection
+    const clientIds = Array.from(clientMap.keys());
+    const clientsFromDB = await Client.find({
+      clientId: { $in: clientIds },
+      isActive: true
+    }).select("clientId name email phone firstName lastName documents");
 
-        // Month notes
-        if (monthData.monthNotes) {
-          monthData.monthNotes.forEach(note => {
-            totalNotes++;
-            if (!note.isViewedByEmployee) unviewedNotes++;
-          });
-        }
+    console.log(`✅ Found ${clientsFromDB.length} active clients in database`);
 
-        // Category notes
-        ['sales', 'purchase', 'bank'].forEach(category => {
-          const catData = monthData[category];
-          if (catData && catData.categoryNotes) {
-            catData.categoryNotes.forEach(note => {
-              totalNotes++;
-              if (!note.isViewedByEmployee) unviewedNotes++;
-            });
-          }
+    const clientsSummary = [];
 
-          // File notes
-          if (catData && catData.files) {
-            catData.files.forEach(file => {
-              if (file.notes) {
-                file.notes.forEach(note => {
-                  // Check if note is for this employee
-                  const isForThisEmployee = !note.employeeId || note.employeeId === employeeId;
-                  if (isForThisEmployee) {
-                    totalNotes++;
-                    if (!note.isViewedByEmployee) unviewedNotes++;
-                  }
-                });
-              }
-            });
-          }
+    for (const client of clientsFromDB) {
+      const clientData = clientMap.get(client.clientId);
+      const notes = extractNotesForEmployee(client, employee.employeeId);
+
+      // ================= DETAILED DEBUG LOGS =================
+      console.log(`\n🔍 ===== PROCESSING CLIENT: ${client.clientId} (${client.name}) =====`);
+      console.log(`📅 Assigned months:`, Array.from(clientData.assignedMonths));
+      console.log(`📝 Total notes extracted: ${notes.length}`);
+
+      // Count notes by source and view status
+      const clientNotes = notes.filter(n => n.noteSource === 'client');
+      const employeeNotes = notes.filter(n => n.noteSource === 'employee');
+      const unreadNotes = notes.filter(n => !n.isViewedByEmployee);
+      const readNotes = notes.filter(n => n.isViewedByEmployee);
+
+      console.log(`   - Client notes: ${clientNotes.length}`);
+      console.log(`   - Employee notes: ${employeeNotes.length}`);
+      console.log(`   - Read notes: ${readNotes.length}`);
+      console.log(`   - Unread notes: ${unreadNotes.length}`);
+
+      // Show detailed breakdown of unread notes
+      if (unreadNotes.length > 0) {
+        console.log(`   🚨 UNREAD NOTES DETAILS:`);
+        unreadNotes.forEach((note, index) => {
+          const noteKey = `${note.year}-${String(note.month).padStart(2, '0')}`;
+          const isAssigned = clientData.assignedMonths.has(noteKey);
+
+          console.log(`     ${index + 1}. ${noteKey} - ${note.noteLevel} - ${note.noteSource.toUpperCase()}`);
+          console.log(`        Note: ${note.note.substring(0, 50)}...`);
+          console.log(`        Added by: ${note.addedBy}`);
+          console.log(`        Added at: ${note.addedAt}`);
+          console.log(`        Assigned month? ${isAssigned ? '✅' : '❌'}`);
+          console.log(`        View status: Employee ${note.isViewedByEmployee ? '✅ READ' : '🚨 UNREAD'}`);
         });
+      }
+
+      // Count unread notes only from assigned months
+      const unreadNotesFromAssigned = notes.filter(note => {
+        const noteKey = `${note.year}-${String(note.month).padStart(2, '0')}`;
+        const isAssigned = clientData.assignedMonths.has(noteKey);
+        const isUnread = !note.isViewedByEmployee;
+
+        return isUnread && isAssigned;
       });
+
+      console.log(`🎯 FINAL UNREAD COUNT (assigned months only): ${unreadNotesFromAssigned.length}`);
+
+      // Debug: Show which assigned months have unread notes
+      clientData.assignedMonths.forEach(monthKey => {
+        const monthUnread = notes.filter(note => {
+          const noteMonthKey = `${note.year}-${String(note.month).padStart(2, '0')}`;
+          return noteMonthKey === monthKey && !note.isViewedByEmployee;
+        });
+
+        if (monthUnread.length > 0) {
+          console.log(`   📍 ${monthKey}: ${monthUnread.length} unread notes`);
+        }
+      });
+
+      const assignedMonthsArray = Array.from(clientData.assignedMonths)
+        .map(key => {
+          const [year, month] = key.split('-');
+          return {
+            year: parseInt(year),
+            month: parseInt(month),
+            monthName: new Date(year, month - 1).toLocaleString('default', { month: 'long' })
+          };
+        })
+        .sort((a, b) => {
+          if (a.year !== b.year) return b.year - a.year;
+          return b.month - a.month;
+        });
+
+      // Find the latest unread note
+      let latestUnreadNote = null;
+      if (unreadNotesFromAssigned.length > 0) {
+        latestUnreadNote = unreadNotesFromAssigned.sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt))[0];
+        console.log(`📌 Latest unread note:`, {
+          month: `${latestUnreadNote.year}-${latestUnreadNote.month}`,
+          addedAt: latestUnreadNote.addedAt,
+          addedBy: latestUnreadNote.addedBy,
+          noteSource: latestUnreadNote.noteSource,
+          notePreview: latestUnreadNote.note.substring(0, 50) + '...'
+        });
+      }
+
+      clientsSummary.push({
+        clientId: client.clientId,
+        clientName: client.name || `${client.firstName} ${client.lastName}` || 'Unknown Client',
+        email: client.email,
+        phone: client.phone,
+
+        // Notes statistics
+        totalNotes: notes.length,
+        unreadCount: unreadNotesFromAssigned.length,
+
+        // Assignment info
+        assignedMonths: assignedMonthsArray,
+        latestAssignment: clientData.latestAssignment,
+
+        // Latest unread note
+        latestUnreadNote: latestUnreadNote
+      });
+
+      console.log(`✅ Client ${client.clientId} processing complete\n`);
+    }
+
+    // Sort: 1) Has unread notes, 2) Recent assignments
+    clientsSummary.sort((a, b) => {
+      if (a.unreadCount > 0 && b.unreadCount === 0) return -1;
+      if (a.unreadCount === 0 && b.unreadCount > 0) return 1;
+      if (a.latestAssignment && b.latestAssignment) {
+        return new Date(b.latestAssignment.assignedAt) - new Date(a.latestAssignment.assignedAt);
+      }
+      return 0;
+    });
+
+    // Final debug summary
+    const totalUnread = clientsSummary.reduce((sum, client) => sum + client.unreadCount, 0);
+    const clientsWithUnread = clientsSummary.filter(c => c.unreadCount > 0).length;
+
+    console.log(`\n📊 ===== FINAL SUMMARY for Employee ${employee.employeeId} =====`);
+    console.log(`   Total clients: ${clientsSummary.length}`);
+    console.log(`   Total unread notes: ${totalUnread}`);
+    console.log(`   Clients with unread: ${clientsWithUnread}`);
+
+    if (clientsWithUnread > 0) {
+      console.log(`   🚨 CLIENTS WITH UNREAD NOTES:`);
+      clientsSummary.forEach(client => {
+        if (client.unreadCount > 0) {
+          console.log(`   - ${client.clientName} (${client.clientId}): ${client.unreadCount} unread`);
+        }
+      });
+    } else {
+      console.log(`   ✅ No clients with unread notes found`);
+    }
+
+    console.log(`\n👨‍💼 ===== END: Processing employee ${employee.employeeId} =====\n`);
+
+    logToConsole("SUCCESS", "EMPLOYEE_ASSIGNED_CLIENTS_FETCHED", {
+      employeeId: employee.employeeId,
+      totalClients: clientsSummary.length,
+      totalUnreadNotes: totalUnread,
+      clientsWithUnread: clientsWithUnread
     });
 
     res.json({
       success: true,
-      debugData,
-      summary: {
-        totalNotes,
-        unviewedNotes,
-        employeeId,
-        timestamp: new Date().toISOString()
-      }
+      clients: clientsSummary,
+      totals: {
+        totalClients: clientsSummary.length,
+        totalUnread: totalUnread
+      },
+      employee: {
+        employeeId: employee.employeeId,
+        name: employee.name
+      },
+      timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error(`❌ Error in debug endpoint:`, error);
+    console.error(`\n❌ ERROR in /assigned-clients route:`, error);
+    logToConsole("ERROR", "EMPLOYEE_ASSIGNED_CLIENTS_ERROR", {
+      error: error.message,
+      stack: error.stack
+    });
+
     res.status(500).json({
       success: false,
-      message: "Debug error",
-      error: error.message
+      message: "Error fetching assigned clients",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
-
 /* ===============================
-   4. MARK ALL NOTES AS VIEWED BY EMPLOYEE FOR A SPECIFIC CLIENT
+   GET NOTES FOR SPECIFIC ASSIGNED CLIENT
 ================================ */
-router.post("/notes/mark-client-viewed/:clientId", auth, async (req, res) => {
+router.get("/client/:clientId/notes", async (req, res) => {
   try {
-    const employeeId = req.user.employeeId;
     const { clientId } = req.params;
+    const { year, month } = req.query;
 
-    console.log(`✅ POST /mark-client-viewed/${clientId} for employee: ${employeeId}`);
+    logToConsole("INFO", "EMPLOYEE_GET_CLIENT_NOTES", {
+      clientId,
+      year,
+      month,
+      employeeId: req.employeeId,
+      ip: req.ip
+    });
 
-    // Verify employee is assigned to this client
-    const employee = await Employee.findOne(
-      { employeeId, "assignedClients.clientId": clientId, "assignedClients.isRemoved": false },
-      { name: 1 }
+    const employee = await getEmployeeFromToken(req);
+    if (!employee) {
+      return res.status(401).json({
+        success: false,
+        message: "Employee authentication failed"
+      });
+    }
+
+    // Check if employee is assigned to this client
+    const assignment = employee.assignedClients.find(
+      a => a.clientId === clientId && !a.isRemoved
     );
 
-    if (!employee) {
-      console.log(`❌ Employee not assigned to client`);
+    if (!assignment) {
       return res.status(403).json({
         success: false,
         message: "You are not assigned to this client"
       });
     }
 
-    // Get client
+    // Get all assignments for this client to know assigned months
+    const clientAssignments = employee.assignedClients.filter(
+      a => a.clientId === clientId && !a.isRemoved
+    );
+
+    // Create set of assigned month keys
+    const assignedMonthKeys = new Set();
+    clientAssignments.forEach(a => {
+      const key = `${a.year}-${a.month}`;
+      assignedMonthKeys.add(key);
+    });
+
+    // If year/month provided, validate it's an assigned month
+    if (year && month) {
+      const requestedKey = `${parseInt(year)}-${parseInt(month)}`;
+      if (!assignedMonthKeys.has(requestedKey)) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not assigned to this client for the requested month"
+        });
+      }
+    }
+
     const client = await Client.findOne({ clientId });
     if (!client) {
-      console.log(`❌ Client not found`);
       return res.status(404).json({
         success: false,
         message: "Client not found"
       });
     }
 
-    console.log(`✅ Starting to mark notes as viewed...`);
+    // Extract all notes for this client
+    let notes = extractNotesForEmployee(client, employee.employeeId);
 
-    // Mark all notes as viewed by this employee
-    const result = await markAllNotesAsViewedByEmployeeForClient(client, employeeId);
+    // Filter by assigned months
+    notes = notes.filter(note => {
+      const noteKey = `${note.year}-${note.month}`;
+      return assignedMonthKeys.has(noteKey);
+    });
 
-    if (!result.success) {
-      console.log(`❌ Failed to mark notes: ${result.error}`);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to mark notes as viewed",
-        error: result.error
-      });
+    // Apply year/month filter if provided
+    if (year) {
+      const yearNum = parseInt(year);
+      notes = notes.filter(note => note.year === yearNum);
     }
 
-    console.log(`✅ Successfully marked ${result.notesMarked} notes`);
+    if (month) {
+      const monthNum = parseInt(month);
+      notes = notes.filter(note => note.month === monthNum);
+    }
 
-    // Create activity log
-    await ActivityLog.create({
-      userName: employee.name,
-      role: "EMPLOYEE",
-      employeeId: employeeId,
-      clientId: clientId,
-      clientName: client.name,
-      action: "CLIENT_NOTES_MARKED_VIEWED",
-      details: `Employee marked all notes as viewed for client: ${client.name || clientId} (${result.notesMarked} notes)`,
-      dateTime: new Date().toLocaleString("en-IN"),
-      metadata: {
-        employeeId,
-        employeeName: employee.name,
-        clientId,
-        clientName: client.name,
-        notesMarked: result.notesMarked
+    // Sort by date (newest first)
+    notes.sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+
+    // Group notes by month
+    const notesByMonth = {};
+    notes.forEach(note => {
+      if (!note.year || !note.month) return;
+
+      const monthKey = `${note.year}-${String(note.month).padStart(2, '0')}`;
+      if (!notesByMonth[monthKey]) {
+        notesByMonth[monthKey] = {
+          year: note.year,
+          month: note.month,
+          monthName: new Date(note.year, note.month - 1).toLocaleString('default', { month: 'long' }),
+          notes: [],
+          unreadCount: 0,
+          readCount: 0
+        };
       }
+      notesByMonth[monthKey].notes.push(note);
+      if (note.isViewedByEmployee) {
+        notesByMonth[monthKey].readCount++;
+      } else {
+        notesByMonth[monthKey].unreadCount++;
+      }
+    });
+
+    // Convert to array and sort by date (newest first)
+    const monthsArray = Object.values(notesByMonth).sort((a, b) => {
+      if (a.year !== b.year) return b.year - a.year;
+      return b.month - a.month;
+    });
+
+    // Get assigned months for filter dropdown
+    const assignedMonths = Array.from(assignedMonthKeys)
+      .map(key => {
+        const [year, month] = key.split('-');
+        return {
+          year: parseInt(year),
+          month: parseInt(month),
+          monthName: new Date(year, month - 1).toLocaleString('default', { month: 'long' })
+        };
+      })
+      .sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        return b.month - a.month;
+      });
+
+    // Find latest assigned month
+    const latestAssignedMonth = assignedMonths.length > 0 ? assignedMonths[0] : null;
+
+    logToConsole("SUCCESS", "EMPLOYEE_CLIENT_NOTES_FETCHED", {
+      employeeId: employee.employeeId,
+      clientId,
+      clientName: client.name,
+      totalNotes: notes.length,
+      unreadNotes: notes.filter(n => !n.isViewedByEmployee).length,
+      assignedMonthsCount: assignedMonths.length,
+      latestMonth: latestAssignedMonth ? `${latestAssignedMonth.year}-${latestAssignedMonth.month}` : 'None'
     });
 
     res.json({
       success: true,
-      employeeId,
-      employeeName: employee.name,
-      clientId,
-      clientName: client.name || clientId,
-      notesMarked: result.notesMarked,
-      message: result.notesMarked > 0
-        ? `Marked ${result.notesMarked} notes as viewed for ${client.name || clientId}`
-        : `All notes were already viewed for ${client.name || clientId}`,
+      client: {
+        clientId: client.clientId,
+        name: client.name || `${client.firstName} ${client.lastName}`,
+        email: client.email,
+        phone: client.phone
+      },
+      notes: {
+        all: notes,
+        byMonth: monthsArray,
+        statistics: {
+          total: notes.length,
+          unread: notes.filter(n => !n.isViewedByEmployee).length,
+          read: notes.filter(n => n.isViewedByEmployee).length,
+          clientNotes: notes.filter(n => n.noteSource === 'client').length,
+          ownNotes: notes.filter(n => n.noteSource === 'employee').length
+        }
+      },
+      filters: {
+        assignedMonths,
+        latestAssignedMonth,
+        currentFilter: {
+          year: year || (latestAssignedMonth ? latestAssignedMonth.year : null),
+          month: month || (latestAssignedMonth ? latestAssignedMonth.month : null)
+        }
+      },
+      employee: {
+        employeeId: employee.employeeId,
+        name: employee.name
+      },
       timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error(`❌ Error in /mark-client-viewed:`, error);
+    logToConsole("ERROR", "EMPLOYEE_CLIENT_NOTES_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      clientId: req.params.clientId
+    });
+
     res.status(500).json({
       success: false,
-      message: "Error marking client notes as viewed",
-      error: error.message
+      message: "Error fetching client notes",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
-
 /* ===============================
-   3. GET NOTES FOR SPECIFIC CLIENT WITH TIME FILTER
+   MARK NOTES AS VIEWED BY EMPLOYEE
 ================================ */
-router.get("/notes/client-notes/:clientId", auth, async (req, res) => {
+router.post("/mark-as-viewed", async (req, res) => {
   try {
-    const employeeId = req.user.employeeId;
-    const { clientId } = req.params;
-    const timeFilter = req.query.timeFilter || 'all';
-    const limit = parseInt(req.query.limit) || 100;
+    const { clientId, noteIds, filter, markAll = false } = req.body;
 
-    console.log(`📝 GET /client-notes/${clientId} for employee: ${employeeId}`);
-    console.log(`   Time filter: ${timeFilter}, Limit: ${limit}`);
+    logToConsole("INFO", "EMPLOYEE_MARK_NOTES_AS_VIEWED", {
+      clientId,
+      noteIdsCount: noteIds?.length || 0,
+      markAll,
+      filter,
+      ip: req.ip
+    });
 
-    // Check if employee is assigned to this client
-    const employee = await Employee.findOne(
-      {
-        employeeId,
-        "assignedClients.clientId": clientId,
-        "assignedClients.isRemoved": false
-      },
-      { name: 1 }
-    );
-
+    const employee = await getEmployeeFromToken(req);
     if (!employee) {
-      console.log(`❌ Employee ${employeeId} not assigned to client ${clientId}`);
-      return res.status(403).json({
+      return res.status(401).json({
         success: false,
-        message: "You are not assigned to this client or the assignment has been removed"
+        message: "Employee authentication failed"
       });
     }
 
-    // Get client data
+    if (!clientId) {
+      return res.status(400).json({
+        success: false,
+        message: "Client ID is required"
+      });
+    }
+
+    // Check if employee is assigned to this client
+    const clientAssignments = employee.assignedClients.filter(
+      a => a.clientId === clientId && !a.isRemoved
+    );
+
+    if (clientAssignments.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not assigned to this client"
+      });
+    }
+
     const client = await Client.findOne({ clientId });
     if (!client) {
-      console.log(`❌ Client not found: ${clientId}`);
       return res.status(404).json({
         success: false,
         message: "Client not found"
       });
     }
 
-    console.log(`✅ Employee authorized, fetching notes...`);
+    // Get notes BEFORE update
+    const notesBeforeUpdate = extractNotesForEmployee(client, employee.employeeId);
 
-    // Get notes for this client with time filter
-    const notesData = getNotesForEmployeeFromClient(client, employeeId, timeFilter, limit);
+    // Filter notes by assigned months
+    const assignedMonthKeys = new Set();
+    clientAssignments.forEach(a => {
+      const key = `${a.year}-${a.month}`;
+      assignedMonthKeys.add(key);
+    });
 
-    console.log(`✅ Notes data: ${notesData.totalNotes} total, ${notesData.unviewedCount} unviewed`);
+    let notesToMark = notesBeforeUpdate.filter(note => {
+      const noteKey = `${note.year}-${note.month}`;
+      return assignedMonthKeys.has(noteKey);
+    });
 
-    // Create activity log
-    await ActivityLog.create({
-      userName: employee.name,
-      role: "EMPLOYEE",
-      employeeId: employeeId,
-      clientId: clientId,
-      clientName: client.name,
-      action: "CLIENT_NOTES_VIEWED",
-      details: `Employee viewed notes for client: ${client.name || clientId} (${notesData.totalNotes} total, ${notesData.unviewedCount} unread)`,
-      dateTime: new Date().toLocaleString("en-IN"),
-      metadata: {
-        employeeId,
-        employeeName: employee.name,
-        clientId,
-        clientName: client.name,
-        totalNotes: notesData.totalNotes,
-        unviewedNotes: notesData.unviewedCount,
-        timeFilter: timeFilter,
-        limit: limit
+    // Apply filter if provided
+    if (filter) {
+      const { year, month } = filter;
+
+      if (year) {
+        const yearNum = parseInt(year);
+        notesToMark = notesToMark.filter(note => note.year === yearNum);
       }
+
+      if (month) {
+        const monthNum = parseInt(month);
+        notesToMark = notesToMark.filter(note => note.month === monthNum);
+      }
+    }
+
+    // If specific note IDs are provided, only mark those
+    if (noteIds && noteIds.length > 0) {
+      notesToMark = notesToMark.filter(note => noteIds.includes(note.noteId));
+    }
+
+    // Filter only unread notes (by employee)
+    const unreadNotesToMark = notesToMark.filter(note => !note.isViewedByEmployee);
+
+    if (unreadNotesToMark.length === 0) {
+      return res.json({
+        success: true,
+        message: "No unread notes to mark as viewed",
+        markedCount: 0
+      });
+    }
+
+    console.log("🔍 EMPLOYEE DEBUG: Notes to mark as viewed:", {
+      employeeId: employee.employeeId,
+      totalNotesBeforeUpdate: notesBeforeUpdate.length,
+      unreadNotesBeforeUpdate: notesBeforeUpdate.filter(n => !n.isViewedByEmployee).length,
+      unreadNotesToMarkCount: unreadNotesToMark.length
+    });
+
+    // Convert client to plain object for manipulation
+    const clientObj = client.toObject();
+    let markedCount = 0;
+
+    // Helper function to mark notes in the documents structure
+    const markNotesInDocuments = (documents, notesToMarkArray) => {
+      if (!documents || typeof documents !== 'object') return false;
+
+      try {
+        // Convert Map to object if needed
+        let docsObj = documents;
+        if (documents instanceof Map) {
+          docsObj = {};
+          for (const [key, value] of documents.entries()) {
+            if (value instanceof Map) {
+              const innerObj = {};
+              for (const [innerKey, innerValue] of value.entries()) {
+                innerObj[innerKey] = innerValue;
+              }
+              docsObj[key] = innerObj;
+            } else {
+              docsObj[key] = value;
+            }
+          }
+        }
+
+        // Iterate through all years
+        for (const yearKey in docsObj) {
+          const yearData = docsObj[yearKey];
+          if (!yearData || typeof yearData !== 'object') continue;
+
+          // Iterate through all months
+          for (const monthKey in yearData) {
+            const monthData = yearData[monthKey];
+            if (!monthData || typeof monthData !== 'object') continue;
+
+            // Check if employee is assigned to this month
+            const monthKeyCheck = `${parseInt(yearKey)}-${parseInt(monthKey)}`;
+            if (!assignedMonthKeys.has(monthKeyCheck)) {
+              continue; // Skip months not assigned to employee
+            }
+
+            // 1. Mark month-level notes
+            if (monthData.monthNotes && Array.isArray(monthData.monthNotes)) {
+              monthData.monthNotes.forEach((note, index) => {
+                const matchingNote = notesToMarkArray.find(unreadNote =>
+                  unreadNote.note === note.note &&
+                  unreadNote.addedBy === note.addedBy &&
+                  new Date(unreadNote.addedAt).getTime() === new Date(note.addedAt).getTime() &&
+                  parseInt(yearKey) === unreadNote.year &&
+                  parseInt(monthKey) === unreadNote.month &&
+                  unreadNote.noteLevel === 'month'
+                );
+
+                if (matchingNote && !note.isViewedByEmployee) {
+                  monthData.monthNotes[index].isViewedByEmployee = true;
+
+                  if (!monthData.monthNotes[index].viewedBy) {
+                    monthData.monthNotes[index].viewedBy = [];
+                  }
+
+                  const alreadyViewed = monthData.monthNotes[index].viewedBy.some(
+                    v => v.userId === employee.employeeId && v.userType === 'employee'
+                  );
+
+                  if (!alreadyViewed) {
+                    monthData.monthNotes[index].viewedBy.push({
+                      userId: employee.employeeId,
+                      userType: 'employee',
+                      viewedAt: new Date()
+                    });
+                  }
+
+                  markedCount++;
+                  console.log(`✅ Employee marked month-level note as read`);
+                }
+              });
+            }
+
+            // 2. Process main categories
+            ['sales', 'purchase', 'bank'].forEach(categoryType => {
+              if (monthData[categoryType] && typeof monthData[categoryType] === 'object') {
+                const category = monthData[categoryType];
+
+                // Mark category-level notes
+                if (category.categoryNotes && Array.isArray(category.categoryNotes)) {
+                  category.categoryNotes.forEach((note, index) => {
+                    const matchingNote = notesToMarkArray.find(unreadNote =>
+                      unreadNote.note === note.note &&
+                      unreadNote.addedBy === note.addedBy &&
+                      new Date(unreadNote.addedAt).getTime() === new Date(note.addedAt).getTime() &&
+                      parseInt(yearKey) === unreadNote.year &&
+                      parseInt(monthKey) === unreadNote.month &&
+                      unreadNote.noteLevel === 'category' &&
+                      unreadNote.categoryType === categoryType
+                    );
+
+                    if (matchingNote && !note.isViewedByEmployee) {
+                      category.categoryNotes[index].isViewedByEmployee = true;
+
+                      if (!category.categoryNotes[index].viewedBy) {
+                        category.categoryNotes[index].viewedBy = [];
+                      }
+
+                      const alreadyViewed = category.categoryNotes[index].viewedBy.some(
+                        v => v.userId === employee.employeeId && v.userType === 'employee'
+                      );
+
+                      if (!alreadyViewed) {
+                        category.categoryNotes[index].viewedBy.push({
+                          userId: employee.employeeId,
+                          userType: 'employee',
+                          viewedAt: new Date()
+                        });
+                      }
+
+                      markedCount++;
+                      console.log(`✅ Employee marked ${categoryType} category note as read`);
+                    }
+                  });
+                }
+
+                // Mark file-level notes
+                if (category.files && Array.isArray(category.files)) {
+                  category.files.forEach(file => {
+                    if (file && file.notes && Array.isArray(file.notes)) {
+                      file.notes.forEach((note, index) => {
+                        const matchingNote = notesToMarkArray.find(unreadNote =>
+                          unreadNote.note === note.note &&
+                          unreadNote.addedBy === note.addedBy &&
+                          new Date(unreadNote.addedAt).getTime() === new Date(note.addedAt).getTime() &&
+                          parseInt(yearKey) === unreadNote.year &&
+                          parseInt(monthKey) === unreadNote.month &&
+                          unreadNote.noteLevel === 'file' &&
+                          unreadNote.categoryType === categoryType &&
+                          unreadNote.fileName === file.fileName
+                        );
+
+                        if (matchingNote && !note.isViewedByEmployee) {
+                          file.notes[index].isViewedByEmployee = true;
+
+                          if (!file.notes[index].viewedBy) {
+                            file.notes[index].viewedBy = [];
+                          }
+
+                          const alreadyViewed = file.notes[index].viewedBy.some(
+                            v => v.userId === employee.employeeId && v.userType === 'employee'
+                          );
+
+                          if (!alreadyViewed) {
+                            file.notes[index].viewedBy.push({
+                              userId: employee.employeeId,
+                              userType: 'employee',
+                              viewedAt: new Date()
+                            });
+                          }
+
+                          markedCount++;
+                          console.log(`✅ Employee marked ${categoryType} file note as read`);
+                        }
+                      });
+                    }
+                  });
+                }
+              }
+            });
+
+            // 3. Process other categories
+            if (monthData.other && Array.isArray(monthData.other)) {
+              monthData.other.forEach((otherCategory, otherIndex) => {
+                if (otherCategory && otherCategory.document && typeof otherCategory.document === 'object') {
+                  const categoryName = otherCategory.categoryName;
+
+                  // Mark other category-level notes
+                  if (otherCategory.document.categoryNotes && Array.isArray(otherCategory.document.categoryNotes)) {
+                    otherCategory.document.categoryNotes.forEach((note, index) => {
+                      const matchingNote = notesToMarkArray.find(unreadNote =>
+                        unreadNote.note === note.note &&
+                        unreadNote.addedBy === note.addedBy &&
+                        new Date(unreadNote.addedAt).getTime() === new Date(note.addedAt).getTime() &&
+                        parseInt(yearKey) === unreadNote.year &&
+                        parseInt(monthKey) === unreadNote.month &&
+                        unreadNote.noteLevel === 'category' &&
+                        unreadNote.categoryType === 'other' &&
+                        unreadNote.categoryName === categoryName
+                      );
+
+                      if (matchingNote && !note.isViewedByEmployee) {
+                        otherCategory.document.categoryNotes[index].isViewedByEmployee = true;
+
+                        if (!otherCategory.document.categoryNotes[index].viewedBy) {
+                          otherCategory.document.categoryNotes[index].viewedBy = [];
+                        }
+
+                        const alreadyViewed = otherCategory.document.categoryNotes[index].viewedBy.some(
+                          v => v.userId === employee.employeeId && v.userType === 'employee'
+                        );
+
+                        if (!alreadyViewed) {
+                          otherCategory.document.categoryNotes[index].viewedBy.push({
+                            userId: employee.employeeId,
+                            userType: 'employee',
+                            viewedAt: new Date()
+                          });
+                        }
+
+                        markedCount++;
+                        console.log(`✅ Employee marked other category (${categoryName}) note as read`);
+                      }
+                    });
+                  }
+
+                  // Mark other category file-level notes
+                  if (otherCategory.document.files && Array.isArray(otherCategory.document.files)) {
+                    otherCategory.document.files.forEach(file => {
+                      if (file && file.notes && Array.isArray(file.notes)) {
+                        file.notes.forEach((note, index) => {
+                          const matchingNote = notesToMarkArray.find(unreadNote =>
+                            unreadNote.note === note.note &&
+                            unreadNote.addedBy === note.addedBy &&
+                            new Date(unreadNote.addedAt).getTime() === new Date(note.addedAt).getTime() &&
+                            parseInt(yearKey) === unreadNote.year &&
+                            parseInt(monthKey) === unreadNote.month &&
+                            unreadNote.noteLevel === 'file' &&
+                            unreadNote.categoryType === 'other' &&
+                            unreadNote.categoryName === categoryName &&
+                            unreadNote.fileName === file.fileName
+                          );
+
+                          if (matchingNote && !note.isViewedByEmployee) {
+                            file.notes[index].isViewedByEmployee = true;
+
+                            if (!file.notes[index].viewedBy) {
+                              file.notes[index].viewedBy = [];
+                            }
+
+                            const alreadyViewed = file.notes[index].viewedBy.some(
+                              v => v.userId === employee.employeeId && v.userType === 'employee'
+                            );
+
+                            if (!alreadyViewed) {
+                              file.notes[index].viewedBy.push({
+                                userId: employee.employeeId,
+                                userType: 'employee',
+                                viewedAt: new Date()
+                              });
+                            }
+
+                            markedCount++;
+                            console.log(`✅ Employee marked other category (${categoryName}) file note as read`);
+                          }
+                        });
+                      }
+                    });
+                  }
+                }
+              });
+            }
+          }
+        }
+
+        return true;
+      } catch (error) {
+        console.error("Employee error marking notes in documents:", error);
+        return false;
+      }
+    };
+
+    // Mark the notes in the documents
+    const markingSuccessful = markNotesInDocuments(clientObj.documents, unreadNotesToMark);
+
+    if (!markingSuccessful) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to mark notes as viewed"
+      });
+    }
+
+    // Save the updated client
+    const updatedClient = await Client.findOneAndUpdate(
+      { clientId },
+      { $set: { documents: clientObj.documents } },
+      { new: true }
+    );
+
+    if (!updatedClient) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to save updated client"
+      });
+    }
+
+    // Get updated unread count
+    const notesAfterUpdate = extractNotesForEmployee(updatedClient, employee.employeeId);
+    const updatedUnread = notesAfterUpdate.filter(n =>
+      !n.isViewedByEmployee && assignedMonthKeys.has(`${n.year}-${n.month}`)
+    ).length;
+
+    logToConsole("SUCCESS", "EMPLOYEE_NOTES_MARKED_AS_VIEWED", {
+      employeeId: employee.employeeId,
+      employeeName: employee.name,
+      clientId,
+      markedCount,
+      remainingUnread: updatedUnread
     });
 
     res.json({
       success: true,
-      employeeId,
-      employeeName: employee.name,
-      clientId,
-      clientName: client.name || clientId,
-      businessName: client.businessName || "Not specified",
-      notes: notesData.notes.map((note, index) => ({
-        id: `${note.location}_${note.year}_${note.month}_${index}_${Date.now()}`,
-        note: note.note || note.noteText,
-        addedBy: note.addedBy,
-        addedAt: note.addedAt,
-        category: note.category,
-        type: note.type,
-        source: note.source,
-        fileName: note.fileName,
-        month: `${note.monthName} ${note.year}`,
-        isUnviewed: note.isUnviewedByEmployee,
-        isNew: note.isUnviewedByEmployee,
-        viewedBy: note.viewedByEmployees,
-        totalViews: note.totalViews
-      })),
-      summary: {
-        totalNotes: notesData.totalNotes,
-        unviewedNotes: notesData.unviewedCount,
-        viewedNotes: notesData.totalNotes - notesData.unviewedCount,
-        clientNotes: notesData.notes.filter(n => n.source === 'client').length,
-        employeeNotes: notesData.notes.filter(n => n.source === 'employee').length,
-        timeFilter: timeFilter
+      message: `Marked ${markedCount} notes as viewed`,
+      markedCount,
+      remainingUnread: updatedUnread,
+      client: {
+        clientId: updatedClient.clientId,
+        name: updatedClient.name
       },
-      hasUnviewedNotes: notesData.hasUnviewedNotes,
+      employee: {
+        employeeId: employee.employeeId,
+        name: employee.name
+      },
       timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error(`❌ Error in /client-notes:`, error);
+    logToConsole("ERROR", "EMPLOYEE_MARK_NOTES_AS_VIEWED_ERROR", {
+      error: error.message,
+      stack: error.stack
+    });
+
     res.status(500).json({
       success: false,
-      message: "Error fetching client notes for employee"
+      message: "Error marking notes as viewed",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });

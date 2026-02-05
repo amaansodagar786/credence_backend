@@ -33,9 +33,18 @@ app.use(
 
 app.use(cookieParser());
 
+
+// CRON JOB  
+
+
+const { schedulePlanChangeCron } = require('./utils/planChangeCron');
+
+schedulePlanChangeCron();
 // ===============================
 // ROUTES
 // ===============================
+
+
 const adminRoutes = require("./routes/admin");
 const ClientEnrollment = require("./routes/clientEnrollment");
 const ClientAuth = require("./routes/clientAuth");
@@ -53,9 +62,10 @@ const clientDashboardRoutes = require('./routes/clientDashboardRoutes');
 const employeeDashboard = require('./routes/employeeDashboard');
 const activityLogsRoutes = require("./routes/activityLogs");
 
-const employeeNotesRoutes = require("./routes/employeeNotes");
 // Add this with other route imports
 const adminNotesRoutes = require("./routes/adminNotes");
+const employeeNotesRoutes = require('./routes/employeeNotes');
+
 
 
 
@@ -85,6 +95,7 @@ app.use("/activity-logs", activityLogsRoutes);
 app.use("/employee", employeeNotesRoutes);
 
 app.use("/admin/notes", adminNotesRoutes);
+app.use('/employee/notes', employeeNotesRoutes);
 
 
 

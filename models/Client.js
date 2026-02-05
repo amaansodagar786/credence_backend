@@ -1,4 +1,3 @@
-// models/Client.js
 const mongoose = require("mongoose");
 
 /* ===============================
@@ -22,13 +21,13 @@ const noteSchema = new mongoose.Schema(
     addedBy: { type: String },
     addedAt: { type: Date, default: Date.now },
     employeeId: { type: String },
-    
+
     // NEW: Track who has viewed this note
     viewedBy: {
       type: [noteViewSchema],
       default: []
     },
-    
+
     // NEW: Quick-check fields for filtering
     isViewedByClient: { type: Boolean, default: false },
     isViewedByEmployee: { type: Boolean, default: false },
@@ -117,7 +116,7 @@ const employeeAssignmentSchema = new mongoose.Schema(
       type: String,
       enum: [
         'Bookkeeping',
-        'VAT Filing Computation', 
+        'VAT Filing Computation',
         'VAT Filing',
         'Financial Statement Generation'
       ]
@@ -134,7 +133,7 @@ const employeeAssignmentSchema = new mongoose.Schema(
 );
 
 /* ===============================
-   UPDATED CLIENT SCHEMA (WITH ALL ENROLLMENT FIELDS)
+   UPDATED CLIENT SCHEMA WITH CORRECT PLAN MANAGEMENT
 ================================ */
 const clientSchema = new mongoose.Schema(
   {
@@ -146,7 +145,7 @@ const clientSchema = new mongoose.Schema(
     address: String,
     password: String,
     isActive: { type: Boolean, default: true },
-    
+
     // ADDITIONAL FIELDS FROM ENROLLMENT
     firstName: String,
     lastName: String,
@@ -159,12 +158,30 @@ const clientSchema = new mongoose.Schema(
     vatPeriod: String,
     businessNature: String,
     registerTrade: String,
-    planSelected: String,
-    
+
+    // ✅ CORRECT PLAN FIELDS:
+    planSelected: { type: String, default: '' }, // MAIN PLAN - shows in admin panel
+    currentPlan: { type: String, default: '' },  // CURRENT BILLING PLAN
+    nextMonthPlan: { type: String, default: '' }, // PLAN FOR NEXT MONTH
+
+    // Plan change tracking
+    planChangeRequestedAt: Date,
+    planEffectiveFrom: Date,
+    planChangeHistory: [
+      {
+        fromPlan: String,
+        toPlan: String,
+        changeDate: Date,
+        effectiveFrom: Date,
+        requestedBy: String,
+        notes: String
+      }
+    ],
+
     // STATUS & TRACKING
     enrollmentId: String,
     enrollmentDate: Date,
-    
+
     // EXISTING DOCUMENT STRUCTURE
     documents: {
       type: Map,
@@ -174,7 +191,7 @@ const clientSchema = new mongoose.Schema(
       },
       default: () => new Map()
     },
-    
+
     employeeAssignments: [employeeAssignmentSchema]
   },
   { timestamps: true }

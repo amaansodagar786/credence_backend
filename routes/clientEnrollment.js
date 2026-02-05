@@ -131,7 +131,7 @@ router.post("/enroll", async (req, res) => {
     // SEND NOTIFICATION EMAIL TO ADMIN
     // ===========================================
     try {
-      const adminEmail = "support@jladgroup.fi"; 
+      const adminEmail = "support@jladgroup.fi";
       const currentDateTime = new Date().toLocaleString("en-IN", {
         day: "numeric",
         month: "long",
@@ -793,6 +793,7 @@ router.post("/action", auth, async (req, res) => {
         businessNature: enrollment.businessNature,
         registerTrade: enrollment.registerTrade,
         planSelected: enrollment.planSelected,
+        currentPlan: enrollment.planSelected,
         enrollmentId: enrollment.enrollId,
         enrollmentDate: new Date(),
         documents: new Map(),

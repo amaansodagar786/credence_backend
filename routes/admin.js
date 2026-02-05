@@ -1580,4 +1580,52 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
   }
 });
 
+
+
+
+
+
+
+
+
+/* ===============================
+   ADMIN MANUAL TRIGGER PLAN CHANGE
+   (For testing or manual execution)
+================================ */
+router.post("/trigger-plan-change", auth, async (req, res) => {
+  try {
+    // Only allow admins
+
+
+    const { processScheduledPlanChanges } = require('../utils/planChangeCron');
+
+    // Run the cron job manually
+    await processScheduledPlanChanges();
+
+    logToConsole("INFO", "MANUAL_PLAN_CHANGE_TRIGGERED", {
+      adminId: req.user.adminId,
+      adminName: req.user.name
+    });
+
+    res.json({
+      success: true,
+      message: "Plan change cron job executed manually",
+      triggeredBy: req.user.name,
+      timestamp: new Date().toLocaleString('en-IN')
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "MANUAL_PLAN_CHANGE_FAILED", {
+      error: error.message,
+      adminId: req.user?.adminId
+    });
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to trigger plan changes",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 module.exports = router;
