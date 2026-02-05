@@ -27,7 +27,7 @@ const logToConsole = (type, operation, data) => {
 ================================ */
 const notifyAdminAboutFailedEmails = async (failedClients, errorReason) => {
     try {
-        const adminEmail = process.env.EMAIL_USER || "admin@credence-accounting.com";
+        const adminEmail = process.env.EMAIL_USER || "support@jladgroup.fi";
         const currentDate = new Date().toLocaleDateString("en-GB", {
             day: "numeric",
             month: "long",

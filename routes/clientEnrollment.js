@@ -131,7 +131,7 @@ router.post("/enroll", async (req, res) => {
     // SEND NOTIFICATION EMAIL TO ADMIN
     // ===========================================
     try {
-      const adminEmail = "admin@credence-accounting.com"; // Change to your admin email
+      const adminEmail = "support@jladgroup.fi"; 
       const currentDateTime = new Date().toLocaleString("en-IN", {
         day: "numeric",
         month: "long",

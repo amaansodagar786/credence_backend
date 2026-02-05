@@ -98,7 +98,7 @@ router.post("/submit", async (req, res) => {
 
         // Send notification email to admin
         try {
-            const adminEmail = process.env.EMAIL_USER || "admin@credence-accounting.com";
+            const adminEmail = process.env.EMAIL_USER || "support@jladgroup.fi";
 
             const adminEmailContent = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -316,7 +316,7 @@ router.post("/connect-us/submit", async (req, res) => {
 
         // Send notification email to admin
         try {
-            const adminEmail = process.env.EMAIL_USER || "admin@credence-accounting.com";
+            const adminEmail = process.env.EMAIL_USER || "support@jladgroup.fi";
 
             const adminEmailContent = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
