@@ -531,7 +531,6 @@ router.post("/upload", auth, upload.array("files"),
                 }
             }
 
-            // ADD NOTE IF REQUIRED
             if (monthData.wasLockedOnce && isUpdate && note) {
                 const targetCategory = type === "other"
                     ? monthData.other.find(x => x.categoryName === categoryName)?.document
@@ -545,13 +544,6 @@ router.post("/upload", auth, upload.array("files"),
                         addedAt: new Date()
                     });
                 }
-
-                monthData.monthNotes = monthData.monthNotes || [];
-                monthData.monthNotes.push({
-                    note,
-                    addedBy: client.clientId,
-                    addedAt: new Date()
-                });
             }
 
             await client.save();
