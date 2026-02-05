@@ -16,7 +16,7 @@ const processScheduledPlanChanges = async () => {
     const currentMonth = today.getMonth();
     const currentYear = today.getFullYear();
 
-    // Only run on 1st of month
+    // Only run on 1st of month 
     if (currentDate !== 1) {
       return;
     }
