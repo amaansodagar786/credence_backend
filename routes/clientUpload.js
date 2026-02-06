@@ -876,13 +876,13 @@ router.delete("/delete-file", auth, async (req, res) => {
             });
         }
 
-        // Add to month notes
-        monthData.monthNotes = monthData.monthNotes || [];
-        monthData.monthNotes.push({
-            note: `File deleted from ${type}${categoryName ? ` (${categoryName})` : ''}: ${fileName}`,
-            addedBy: client.clientId,
-            addedAt: new Date()
-        });
+
+        // monthData.monthNotes = monthData.monthNotes || [];
+        // monthData.monthNotes.push({
+        //     note: `File deleted from ${type}${categoryName ? ` (${categoryName})` : ''}: ${fileName}`,
+        //     addedBy: client.clientId,
+        //     addedAt: new Date()
+        // });
 
         await client.save();
 
@@ -1322,12 +1322,12 @@ router.post("/upload-and-lock", auth, upload.array("files"),
                     addedAt: new Date()
                 });
 
-                monthData.monthNotes = monthData.monthNotes || [];
-                monthData.monthNotes.push({
-                    note,
-                    addedBy: client.clientId,
-                    addedAt: new Date()
-                });
+                // monthData.monthNotes = monthData.monthNotes || [];
+                // monthData.monthNotes.push({
+                //     note,
+                //     addedBy: client.clientId,
+                //     addedAt: new Date()
+                // });
             }
 
             // LOCK THE CATEGORY
