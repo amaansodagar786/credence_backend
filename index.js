@@ -65,6 +65,7 @@ const activityLogsRoutes = require("./routes/activityLogs");
 // Add this with other route imports
 const adminNotesRoutes = require("./routes/adminNotes");
 const employeeNotesRoutes = require('./routes/employeeNotes');
+const financialStatementRoutes = require('./routes/financialStatementRoutes');
 
 
 
@@ -96,6 +97,8 @@ app.use("/employee", employeeNotesRoutes);
 
 app.use("/admin/notes", adminNotesRoutes);
 app.use('/employee/notes', employeeNotesRoutes);
+app.use('/client/financial-statement', financialStatementRoutes);
+
 
 
 

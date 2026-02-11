@@ -118,7 +118,8 @@ const employeeAssignmentSchema = new mongoose.Schema(
         'Bookkeeping',
         'VAT Filing Computation',
         'VAT Filing',
-        'Financial Statement Generation'
+        'Financial Statement Generation',
+        'Audit'
       ]
     },
     accountingDone: { type: Boolean, default: false },

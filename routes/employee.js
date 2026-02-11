@@ -1977,4 +1977,268 @@ router.get("/file-notes", async (req, res) => {
 
 
 
+
+/* ===============================
+   CHECK IF FILE IS VIEWED BY EMPLOYEE
+================================ */
+router.get("/check-file-viewed", async (req, res) => {
+  try {
+    const {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName
+    } = req.query;
+
+    // Console log
+    logToConsole("INFO", "CHECK_FILE_VIEWED_REQUEST", {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName,
+      ip: req.ip
+    });
+
+    // Validation
+    if (!clientId || !year || !month || !categoryType || !fileName) {
+      return res.status(400).json({
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName"
+      });
+    }
+
+    // Get employee from token
+    const token = req.cookies?.employeeToken;
+    if (!token) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const employee = await Employee.findOne({
+      employeeId: decoded.employeeId
+    });
+
+    if (!employee) {
+      return res.status(404).json({ message: "Employee not found" });
+    }
+
+    // Check if file exists in viewedFiles
+    const viewedFile = employee.viewedFiles.find(f =>
+      f.clientId === clientId &&
+      f.year === parseInt(year) &&
+      f.month === parseInt(month) &&
+      f.categoryType === categoryType &&
+      f.fileName === fileName &&
+      (!categoryName || f.categoryName === categoryName)
+    );
+
+    logToConsole("DEBUG", "FILE_VIEWED_STATUS", {
+      employeeId: employee.employeeId,
+      clientId,
+      fileName,
+      isViewed: !!viewedFile,
+      viewedAt: viewedFile?.viewedAt
+    });
+
+    res.json({
+      isViewed: !!viewedFile,
+      viewedAt: viewedFile?.viewedAt,
+      lastCheckedAt: viewedFile?.lastCheckedAt
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "CHECK_FILE_VIEWED_ERROR", {
+      error: error.message,
+      query: req.query,
+      ip: req.ip
+    });
+
+    if (error.name === 'JsonWebTokenError') {
+      res.clearCookie("employeeToken");
+      return res.status(401).json({ message: "Invalid token", clearedCookie: true });
+    }
+
+    res.status(500).json({
+      message: "Error checking file viewed status",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+
+/* ===============================
+   MARK FILE AS VIEWED/UNVIEWED (TOGGLE)
+================================ */
+router.post("/toggle-file-viewed", async (req, res) => {
+  try {
+    const {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName,
+      fileUrl,
+      task
+    } = req.body;
+
+    // Console log
+    logToConsole("INFO", "TOGGLE_FILE_VIEWED_REQUEST", {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName,
+      fileUrl: !!fileUrl,
+      task,
+      ip: req.ip
+    });
+
+    // Validation
+    if (!clientId || !year || !month || !categoryType || !fileName) {
+      return res.status(400).json({
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName"
+      });
+    }
+
+    // Get employee from token
+    const token = req.cookies?.employeeToken;
+    if (!token) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const employee = await Employee.findOne({
+      employeeId: decoded.employeeId
+    });
+
+    if (!employee) {
+      return res.status(404).json({ message: "Employee not found" });
+    }
+
+    // Check if already viewed
+    const existingIndex = employee.viewedFiles.findIndex(f =>
+      f.clientId === clientId &&
+      f.year === parseInt(year) &&
+      f.month === parseInt(month) &&
+      f.categoryType === categoryType &&
+      f.fileName === fileName &&
+      (!categoryName || f.categoryName === categoryName)
+    );
+
+    let action = "";
+    let viewedFile = null;
+
+    if (existingIndex !== -1) {
+      // Remove from viewed files (mark as not viewed)
+      employee.viewedFiles.splice(existingIndex, 1);
+      action = "REMOVED";
+
+      logToConsole("DEBUG", "FILE_REMOVED_FROM_VIEWED", {
+        employeeId: employee.employeeId,
+        clientId,
+        fileName,
+        action: "unchecked"
+      });
+    } else {
+      // Add to viewed files
+      viewedFile = {
+        clientId,
+        year: parseInt(year),
+        month: parseInt(month),
+        categoryType,
+        fileName,
+        fileUrl,
+        viewedAt: new Date(),
+        lastCheckedAt: new Date()
+      };
+
+      // Add categoryName for 'other' category
+      if (categoryType === 'other' && categoryName) {
+        viewedFile.categoryName = categoryName;
+      }
+
+      // Add task if provided
+      if (task) {
+        viewedFile.task = task;
+      }
+
+      employee.viewedFiles.push(viewedFile);
+      action = "ADDED";
+
+      logToConsole("DEBUG", "FILE_ADDED_TO_VIEWED", {
+        employeeId: employee.employeeId,
+        clientId,
+        fileName,
+        action: "checked"
+      });
+    }
+
+    await employee.save();
+
+    // Create activity log
+    try {
+      await ActivityLog.create({
+        userName: employee.name,
+        role: "EMPLOYEE",
+        employeeId: employee.employeeId,
+        clientId,
+        action: action === "ADDED" ? "FILE_MARKED_VIEWED" : "FILE_MARKED_UNVIEWED",
+        details: `Employee ${action === "ADDED" ? 'marked' : 'unmarked'} file "${fileName}" as viewed for client ${clientId}`,
+        dateTime: new Date().toLocaleString("en-IN"),
+        metadata: {
+          clientId,
+          year,
+          month,
+          categoryType,
+          categoryName,
+          fileName,
+          action,
+          timestamp: new Date().toISOString()
+        }
+      });
+    } catch (logError) {
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED_TOGGLE_FILE", {
+        error: logError.message
+      });
+    }
+
+    logToConsole("SUCCESS", "FILE_VIEWED_TOGGLED", {
+      employeeId: employee.employeeId,
+      clientId,
+      fileName,
+      action,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      message: action === "ADDED" ? "File marked as viewed" : "File marked as not viewed",
+      isViewed: action === "ADDED",
+      action,
+      viewedAt: viewedFile?.viewedAt
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "TOGGLE_FILE_VIEWED_ERROR", {
+      error: error.message,
+      body: req.body,
+      ip: req.ip
+    });
+
+    if (error.name === 'JsonWebTokenError') {
+      res.clearCookie("employeeToken");
+      return res.status(401).json({ message: "Invalid token", clearedCookie: true });
+    }
+
+    res.status(500).json({
+      message: "Error toggling file viewed status",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 module.exports = router;

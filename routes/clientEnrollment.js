@@ -835,7 +835,7 @@ router.post("/action", auth, async (req, res) => {
         });
 
         // Client portal URL (update with your actual URL)
-        const portalUrl = "https://credence-client.techorses.com/login";
+        const portalUrl = "https://jladgroup.fi/login";
 
         await sendEmail(
           enrollment.email,
@@ -848,7 +848,7 @@ router.post("/action", auth, async (req, res) => {
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <title>Account Approval Confirmation</title>
               <style>
-                body { font-family: 'Arial', 'Helvetica Neue', Helvetica, sans-serif; line-height: 1.6; color: #333; max-width: 700px; margin: 0 auto; }
+                body { font-family: 'Arial', 'Helvetica Neue', Helvetica, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; }
                 .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
                 .header h1 { margin: 0; font-size: 26px; color: #7cd64b; }
                 .content { padding: 35px; background: #ffffff; }
@@ -873,6 +873,18 @@ router.post("/action", auth, async (req, res) => {
                 .sub-heading { color: #2c3e50; font-weight: 600; margin-top: 20px; margin-bottom: 10px; }
                 .guideline-item { margin-bottom: 15px; padding-left: 10px; border-left: 3px solid #7cd64b; }
                 .guideline-number { font-weight: 700; color: #2c3e50; margin-right: 8px; }
+                .plan-table { width: 100%; border: 1px solid #dee2e6; border-collapse: collapse; margin: 15px 0; }
+                .plan-table th { background: #7cd64b; color: #000; padding: 12px; text-align: center; }
+                .plan-table td { padding: 10px; text-align: center; border: 1px solid #dee2e6; }
+                .plan-table .lite-bg { background: #f8f9fa; }
+                .plan-table .taxi-bg { background: #f8f9fa; }
+                .plan-table .premium-bg { background: #f8f9fa; }
+                .plan-table .pro-bg { background: #f8f9fa; }
+                .plan-table .restaurant-bg { background: #f8f9fa; }
+                .services-table { width: 100%; border: 1px solid #dee2e6; border-collapse: collapse; margin: 15px 0; }
+                .services-table th { background: #2c3e50; color: #fff; padding: 12px; text-align: left; }
+                .services-table td { padding: 12px; text-align: left; border: 1px solid #dee2e6; }
+                .services-table tr:nth-child(even) { background: #f8f9fa; }
               </style>
             </head>
             <body>
@@ -939,6 +951,122 @@ router.post("/action", auth, async (req, res) => {
                       <td>${enrollment.enrollId}</td>
                     </tr>
                   </table>
+                </div>
+
+                <!-- ADDED: PACKAGE PLANS TABLE (STATIC) -->
+                <div class="client-info">
+                  <h3 class="section-title">📊 Our Package Plans Overview</h3>
+                  <p>Here's a complete overview of all our available packages:</p>
+                  
+                  <table class="plan-table">
+                    <thead>
+                      <tr>
+                        <th>Features</th>
+                        <th class="lite-bg">Lite</th>
+                        <th class="taxi-bg">Taxi</th>
+                        <th class="premium-bg">Premium</th>
+                        <th class="pro-bg">Pro</th>
+                        <th class="restaurant-bg">Restaurant</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><strong>Monthly Price</strong></td>
+                        <td class="lite-bg">€40</td>
+                        <td class="taxi-bg">€45</td>
+                        <td class="premium-bg">€50</td>
+                        <td class="pro-bg">€60</td>
+                        <td class="restaurant-bg">€80</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Income Sources Covered</strong></td>
+                        <td class="lite-bg">1</td>
+                        <td class="taxi-bg">1</td>
+                        <td class="premium-bg">2</td>
+                        <td class="pro-bg">3</td>
+                        <td class="restaurant-bg">1</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Outgoing Invoices</strong></td>
+                        <td class="lite-bg">Up to 2</td>
+                        <td class="taxi-bg">Up to 4</td>
+                        <td class="premium-bg">Up to 4</td>
+                        <td class="pro-bg">Up to 8</td>
+                        <td class="restaurant-bg">Up to 10</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Expense Receipts</strong></td>
+                        <td class="lite-bg">Up to 10</td>
+                        <td class="taxi-bg">Up to 40</td>
+                        <td class="premium-bg">Up to 40</td>
+                        <td class="pro-bg">Up to 50</td>
+                        <td class="restaurant-bg">Up to 50</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Support Availability</strong></td>
+                        <td class="lite-bg">Mon-Fri (9am-4pm)</td>
+                        <td class="taxi-bg">Mon-Fri (9am-4pm)</td>
+                        <td class="premium-bg">Mon-Fri (9am-4pm)</td>
+                        <td class="pro-bg">Mon-Fri (9am-4pm)</td>
+                        <td class="restaurant-bg">Mon-Fri (9am-4pm)</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Invoice Generation via Email</strong></td>
+                        <td class="lite-bg">✔ Yes</td>
+                        <td class="taxi-bg">✔ Yes</td>
+                        <td class="premium-bg">✔ Yes</td>
+                        <td class="pro-bg">✔ Yes</td>
+                        <td class="restaurant-bg">✖ No</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p style="font-size: 14px; color: #6c757d; margin-top: 10px;">
+                    <em>All prices are Monthly Fixed Pricing | VAT Excluded</em>
+                  </p>
+                </div>
+
+                <!-- ADDED: ADDITIONAL SERVICES TABLE (STATIC) -->
+                <div class="client-info">
+                  <h3 class="section-title">💰 Additional Services & Charges</h3>
+                  <p>Applicable only when required | Prices exclude VAT</p>
+                  
+                  <table class="services-table">
+                    <thead>
+                      <tr>
+                        <th>Additional Service</th>
+                        <th>Price (Excl. VAT)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>New Tax Card / New Tax Declaration / Amendment</td>
+                        <td>€25</td>
+                      </tr>
+                      <tr>
+                        <td>Salary Processing (Palkka)</td>
+                        <td>€20 per salary</td>
+                      </tr>
+                      <tr>
+                        <td>Financial Statement (Interim / Year-End) – Toiminimi</td>
+                        <td>Equivalent to <strong>1 month's accounting fee</strong></td>
+                      </tr>
+                      <tr>
+                        <td>Financial Statement (Interim / Year-End) – OY</td>
+                        <td>€150</td>
+                      </tr>
+                      <tr>
+                        <td>Tax Return (Year-End)</td>
+                        <td>Equivalent to <strong>1 month's accounting fee</strong></td>
+                      </tr>
+                      <tr>
+                        <td>Other Accounting Services</td>
+                        <td>€50 per hour</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p style="font-size: 14px; color: #6c757d; margin-top: 10px;">
+                    <em>These services are available at additional cost when required</em>
+                  </p>
                 </div>
                 
                 <div class="important-box">
@@ -1151,6 +1279,8 @@ router.post("/action", auth, async (req, res) => {
     });
   }
 });
+
+
 /* ===============================
    GET SINGLE ENROLLMENT DETAILS (FOR VIEW MODAL)
 ================================ */

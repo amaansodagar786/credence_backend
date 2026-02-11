@@ -409,7 +409,7 @@ router.post("/assign-client", auth, async (req, res) => {
     }
 
     // Validate task
-    const validTasks = ['Bookkeeping', 'VAT Filing Computation', 'VAT Filing', 'Financial Statement Generation'];
+    const validTasks = ['Bookkeeping', 'VAT Filing Computation', 'VAT Filing', 'Financial Statement Generation', 'Audit'];
     if (!validTasks.includes(task)) {
         logToConsole("WARN", "INVALID_TASK", {
             task,
@@ -1555,7 +1555,8 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
             'Bookkeeping',
             'VAT Filing Computation',
             'VAT Filing',
-            'Financial Statement Generation'
+            'Financial Statement Generation' ,
+            'Audit'
         ];
 
         // Create status for each task (CASE SENSITIVE MATCH)

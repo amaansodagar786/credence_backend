@@ -4,7 +4,9 @@ const auth = require("../middleware/authMiddleware");
 
 const Client = require("../models/Client");
 const Employee = require("../models/Employee");
-const ActivityLog = require("../models/ActivityLog");
+const ActivityLog = require("../models/ActivityLog"); 
+const FinancialStatementRequest = require("../models/FinancialStatementRequest"); 
+
 
 const router = express.Router();
 
@@ -348,14 +350,19 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             });
         });
 
+        // 7. PENDING FINANCIAL STATEMENT REQUESTS COUNT ← NEW METRIC
+        const pendingFinancialRequestsCount = await FinancialStatementRequest.countDocuments({
+            status: 'pending'
+        });
+
         // Add Activity Log
         try {
             await ActivityLog.create({
                 userName: req.user.name,
                 role: "ADMIN",
-                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                adminId: req.user.adminId,
                 action: "DASHBOARD_OVERVIEW_VIEWED",
-                details: `Viewed dashboard overview with filter: ${timeFilter}. Metrics: ${activeClientsCount} active clients, ${activeEmployeesCount} active employees`,
+                details: `Viewed dashboard overview with filter: ${timeFilter}. Metrics: ${activeClientsCount} active clients, ${activeEmployeesCount} active employees, ${pendingFinancialRequestsCount} pending finance requests`,
                 dateTime: new Date(),
                 metadata: {
                     timeFilter,
@@ -366,7 +373,8 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                     unassignedClientsCount,
                     idleEmployeesCount,
                     incompleteTasksCount,
-                    recentNotesCount
+                    recentNotesCount,
+                    pendingFinancialRequestsCount // ADD THIS
                 }
             });
 
@@ -385,6 +393,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             adminId: req.user.adminId,
             activeClientsCount,
             activeEmployeesCount,
+            pendingFinancialRequestsCount,
             timeFilter
         });
 
@@ -396,7 +405,8 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                 unassignedClients: unassignedClientsCount,
                 idleEmployees: idleEmployeesCount,
                 incompleteTasks: incompleteTasksCount,
-                recentNotes: recentNotesCount
+                recentNotes: recentNotesCount,
+                pendingFinancialRequests: pendingFinancialRequestsCount // ADD THIS
             },
             timeFilter: dateRange.timeFilter,
             currentMonth,
@@ -421,6 +431,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         });
     }
 });
+
 
 /* ===============================
    2. GET ACTIVE CLIENTS (FOR TABLE MODAL)

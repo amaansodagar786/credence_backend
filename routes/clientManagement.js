@@ -3,6 +3,10 @@ const mongoose = require("mongoose");
 const Client = require("../models/Client");
 const auth = require("../middleware/authMiddleware");
 const ActivityLog = require("../models/ActivityLog"); // ADDED
+const FinancialStatementRequest = require('../models/FinancialStatementRequest');
+
+const sendEmail = require("../utils/sendEmail");
+
 
 const router = express.Router();
 
@@ -470,6 +474,363 @@ router.patch("/update-client/:clientId", auth, async (req, res) => {
       success: false,
       message: "Server error",
       error: error.message
+    });
+  }
+});
+
+
+
+
+
+
+
+
+// ==================== ADMIN ROUTES ====================
+
+// 5. ADMIN: Get all financial statement requests (using existing auth)
+router.get('/all-requests', auth, async (req, res) => {
+  try {
+    const { status, page = 1, limit = 20, search } = req.query;
+
+    // Build query
+    const query = {};
+
+    // Filter by status if provided
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+
+    // Search by client name, email, or requestId
+    if (search) {
+      query.$or = [
+        { clientName: { $regex: search, $options: 'i' } },
+        { clientEmail: { $regex: search, $options: 'i' } },
+        { requestId: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // Pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get requests with pagination
+    const requests = await FinancialStatementRequest.find(query)
+      .sort({ requestedAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .select('-__v -updatedAt');
+
+    // Get total count
+    const total = await FinancialStatementRequest.countDocuments(query);
+
+    // Get counts by status for filters
+    const statusCounts = {
+      pending: await FinancialStatementRequest.countDocuments({ status: 'pending' }),
+      in_progress: await FinancialStatementRequest.countDocuments({ status: 'in_progress' }),
+      approved: await FinancialStatementRequest.countDocuments({ status: 'approved' }),
+      sent: await FinancialStatementRequest.countDocuments({ status: 'sent' }),
+      cancelled: await FinancialStatementRequest.countDocuments({ status: 'cancelled' }),
+      all: total
+    };
+
+    res.json({
+      success: true,
+      data: requests,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      },
+      statusCounts
+    });
+
+  } catch (error) {
+    console.error('Error fetching admin requests:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch requests'
+    });
+  }
+});
+
+// 6. ADMIN: Get single request details
+router.get('/request/:requestId', auth, async (req, res) => {
+  try {
+    const request = await FinancialStatementRequest.findOne({
+      requestId: req.params.requestId
+    });
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Request not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: request
+    });
+
+  } catch (error) {
+    console.error('Error fetching request details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch request details'
+    });
+  }
+});
+
+// 7. ADMIN: Approve and send statements
+router.put('/approve/:requestId', auth, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { adminNotes, downloadUrl } = req.body;
+
+    // Find the request
+    const request = await FinancialStatementRequest.findOne({ requestId });
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Request not found'
+      });
+    }
+
+
+    // Check if already approved/sent
+    if (request.status === 'approved' || request.status === 'sent') { 
+      return res.status(400).json({
+        success: false,
+        message: `Request already ${request.status}`
+      });
+    }
+
+    // Update request status to approved
+    request.status = 'approved';
+    request.sentDate = new Date();
+    request.processedAt = new Date();
+    request.processedBy = {
+      adminId: req.user.adminId,
+      adminName: req.user.name
+    };
+
+    if (adminNotes) {
+      request.adminNotes = adminNotes;
+    }
+
+    if (downloadUrl) {
+      request.downloadUrl = downloadUrl;
+    }
+
+    await request.save();
+
+    // Send email to client ONLY (no email to admin)
+    const clientEmail = request.clientEmail;
+    const clientName = request.clientName;
+    const monthYear = `${request.month} ${request.year}`;
+
+    const clientSubject = `✅ Your Financial Statements for ${monthYear} are Ready!`;
+    const clientHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #7cd64b;">Your Financial Statements are Ready!</h2>
+        <div style="background: #f8fff5; padding: 20px; border-radius: 10px; margin: 20px 0; border-left: 4px solid #7cd64b;">
+          <h3>Request Details:</h3>
+          <p><strong>Request ID:</strong> ${request.requestId}</p>
+          <p><strong>Period:</strong> ${monthYear}</p>
+          <p><strong>Status:</strong> <span style="color: #27ae60; font-weight: bold;">✅ Approved & Sent</span></p>
+          <p><strong>Sent Date:</strong> ${new Date().toLocaleString('en-IN')}</p>
+          ${downloadUrl ? `<p><strong>Download Link:</strong> <a href="${downloadUrl}" style="color: #3498db;">Click here to download</a></p>` : ''}
+          ${adminNotes ? `<p><strong>Admin Notes:</strong> ${adminNotes}</p>` : ''}
+        </div>
+        
+       
+        
+        <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2196f3;">
+          <p><strong>💡 Important:</strong></p>
+          <p>• Review the statements carefully</p>
+          <p>• Keep a copy for your records</p>
+          <p>• Contact us if you have any questions</p>
+        </div>
+        
+        <p style="margin-top: 30px;">Thank you for using our accounting services!</p>
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+          <small>This is an automated notification from Credence Accounting Portal.</small>
+        </div>
+      </div>
+    `;
+
+    // Send email to client
+    sendEmail(clientEmail, clientSubject, clientHtml)
+      .then(() => {
+        // Update email sent status
+        request.statementSentEmail = true;
+        request.save().catch(console.error);
+
+        // Log activity
+        console.log(`Email sent to client ${clientEmail} for request ${requestId}`);
+      })
+      .catch(error => {
+        console.error('Failed to send email to client:', error);
+        // Don't fail the request if email fails
+      });
+
+    // Create activity log
+    try {
+      await ActivityLog.create({
+        userName: req.user.name,
+        role: req.user.role,
+        adminId: req.user.adminId,
+        clientId: request.clientId,
+        clientName: request.clientName,
+        action: "FINANCIAL_STATEMENT_APPROVED",
+        details: `Approved financial statement request ${requestId} for ${monthYear}`,
+        dateTime: new Date(),
+        metadata: {
+          requestId: requestId,
+          month: request.month,
+          year: request.year,
+          clientEmail: request.clientEmail,
+          downloadUrl: downloadUrl || null,
+          adminNotes: adminNotes || null
+        }
+      });
+    } catch (logError) {
+      console.error('Activity log error:', logError);
+    }
+
+    res.json({
+      success: true,
+      message: 'Request approved successfully. Email sent to client.',
+      data: request
+    });
+
+  } catch (error) {
+    console.error('Error approving request:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to approve request'
+    });
+  }
+});
+
+// 8. ADMIN: Update request status (for in_progress, sent, etc.)
+router.put('/update-status/:requestId', auth, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { status, adminNotes } = req.body;
+
+    // Validate status
+    const validStatuses = ['pending', 'in_progress', 'approved', 'sent', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
+    // Find the request
+    const request = await FinancialStatementRequest.findOne({ requestId });
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Request not found'
+      });
+    }
+
+    // Update status
+    request.status = status;
+
+    if (status === 'sent') {
+      request.sentDate = new Date();
+    }
+
+    if (status === 'approved' || status === 'sent') {
+      request.processedAt = new Date();
+      request.processedBy = {
+        adminId: req.user.adminId,
+        adminName: req.user.name
+      };
+    }
+
+    if (adminNotes) {
+      request.adminNotes = adminNotes;
+    }
+
+    await request.save();
+
+    // Create activity log
+    try {
+      await ActivityLog.create({
+        userName: req.user.name,
+        role: req.user.role,
+        adminId: req.user.adminId,
+        clientId: request.clientId,
+        clientName: request.clientName,
+        action: `FINANCIAL_STATEMENT_${status.toUpperCase()}`,
+        details: `Changed status to ${status} for request ${requestId}`,
+        dateTime: new Date(),
+        metadata: {
+          requestId: requestId,
+          previousStatus: request.status,
+          newStatus: status,
+          adminNotes: adminNotes || null
+        }
+      });
+    } catch (logError) {
+      console.error('Activity log error:', logError);
+    }
+
+    res.json({
+      success: true,
+      message: `Status updated to ${status} successfully`,
+      data: request
+    });
+
+  } catch (error) {
+    console.error('Error updating status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update status'
+    });
+  }
+});
+
+// 9. ADMIN: Get statistics/dashboard counts
+router.get('/statistics', auth, async (req, res) => {
+  try {
+    const totalRequests = await FinancialStatementRequest.countDocuments();
+    const pendingRequests = await FinancialStatementRequest.countDocuments({ status: 'pending' });
+    const inProgressRequests = await FinancialStatementRequest.countDocuments({ status: 'in_progress' });
+    const approvedRequests = await FinancialStatementRequest.countDocuments({ status: 'approved' });
+    const sentRequests = await FinancialStatementRequest.countDocuments({ status: 'sent' });
+
+    // Recent requests (last 7 days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const recentRequests = await FinancialStatementRequest.countDocuments({
+      requestedAt: { $gte: sevenDaysAgo }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        total: totalRequests,
+        pending: pendingRequests,
+        in_progress: inProgressRequests,
+        approved: approvedRequests,
+        sent: sentRequests,
+        recent_7_days: recentRequests
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch statistics'
     });
   }
 });
