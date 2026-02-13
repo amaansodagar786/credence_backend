@@ -2059,7 +2059,7 @@ router.post("/dashboard/notes/mark-note-read", auth, async (req, res) => {
                 clientName: client.name,
                 action: "NOTE_MARKED_AS_READ",
                 details: `Admin marked note as read for client ${client.name}`,
-                dateTime: now
+                // dateTime: now.
             });
         } catch (logError) {
             logToConsole("ERROR", "NOTE_MARKED_READ_ACTIVITY_LOG_FAILED", { error: logError.message });
@@ -2211,7 +2211,7 @@ router.post("/dashboard/notes/mark-client-read/:clientId", auth, async (req, res
                 clientName: client.name,
                 action: "CLIENT_NOTES_MARKED_READ",
                 details: `Admin marked ${notesMarked} notes as read for client ${client.name}`,
-                dateTime: now
+                // dateTime: now
             });
         } catch (logError) {
             logToConsole("ERROR", "CLIENT_NOTES_MARKED_READ_ACTIVITY_LOG_FAILED", { error: logError.message });
@@ -2360,7 +2360,7 @@ router.post("/dashboard/notes/mark-all-read", auth, async (req, res) => {
                 adminId: adminId,
                 action: "ALL_NOTES_MARKED_READ",
                 details: `Admin marked all ${totalNotesMarked} unviewed notes as read for ${timeFilter}`,
-                dateTime: now
+                // dateTime: now 
             });
         } catch (logError) {
             logToConsole("ERROR", "ALL_NOTES_MARKED_READ_ACTIVITY_LOG_FAILED", { error: logError.message });

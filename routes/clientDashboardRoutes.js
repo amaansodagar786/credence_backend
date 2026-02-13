@@ -1165,7 +1165,7 @@ router.post("/notes/mark-all-viewed", auth, async (req, res) => {
       clientId: clientId,
       action: "NOTES_VIEWED",
       details: `Client marked all notes as viewed (${result.notesMarked} notes marked, total: ${result.totalNotes})`,
-      dateTime: new Date().toLocaleString("en-IN"),
+      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         clientId,
         notesMarked: result.notesMarked,
@@ -1338,7 +1338,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
       clientId: client.clientId,
       action: "DASHBOARD_VIEWED",
       details: `Client viewed dashboard overview with filter: ${timeFilter}`,
-      dateTime: new Date().toLocaleString("en-IN"),
+      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         timeFilter,
         customStart,
@@ -1598,7 +1598,7 @@ router.get("/dashboard/month-details", auth, async (req, res) => {
       clientId: client.clientId,
       action: "MONTH_DETAILS_VIEWED",
       details: `Client viewed details for ${year}-${month}`,
-      dateTime: new Date().toLocaleString("en-IN"),
+      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         year,
         month,
@@ -1809,7 +1809,7 @@ router.get("/dashboard/employee-contact", auth, async (req, res) => {
       employeeName: employee.name,
       action: "EMPLOYEE_CONTACT_VIEWED",
       details: `Client viewed contact details for employee: ${employee.name}`,
-      dateTime: new Date().toLocaleString("en-IN"),
+      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         employeeId,
         employeeName: employee.name,
@@ -1894,7 +1894,7 @@ router.get("/dashboard/upload-history", auth, async (req, res) => {
       clientId: client.clientId,
       action: "UPLOAD_HISTORY_VIEWED",
       details: `Client viewed document upload history (limit: ${limit})`,
-      dateTime: new Date().toLocaleString("en-IN"),
+      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         limit,
         clientName: client.name

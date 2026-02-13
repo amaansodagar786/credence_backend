@@ -83,7 +83,7 @@ router.post("/login", async (req, res) => {
       clientId: client.clientId,
       action: "CLIENT_LOGIN",
       details: "Client logged in successfully",
-      dateTime: new Date().toLocaleString("en-IN")
+      // dateTime: new Date().toLocaleString("en-IN")
     });
 
     logToConsole("SUCCESS", "CLIENT_LOGIN_SUCCESS", {
@@ -141,7 +141,7 @@ router.get("/me", async (req, res) => {
       clientId: client.clientId,
       action: "CLIENT_SESSION_CHECK",
       details: "Client checked login status",
-      dateTime: new Date().toLocaleString("en-IN")
+      // dateTime: new Date().toLocaleString("en-IN")
     });
 
     logToConsole("INFO", "CLIENT_SESSION_CHECKED", {
@@ -192,7 +192,7 @@ router.post("/logout", async (req, res) => {
             clientId: client.clientId,
             action: "CLIENT_LOGOUT",
             details: "Client logged out",
-            dateTime: new Date().toLocaleString("en-IN")
+            // dateTime: new Date().toLocaleString("en-IN")
           });
 
           logToConsole("INFO", "CLIENT_LOGOUT", {
@@ -308,7 +308,7 @@ router.post("/forgot-password", async (req, res) => {
       clientId: client.clientId,
       action: "FORGOT_PASSWORD_REQUEST",
       details: "Requested password reset OTP",
-      dateTime: new Date().toLocaleString("en-IN")
+      // dateTime: new Date().toLocaleString("en-IN")
     });
 
     logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
@@ -399,7 +399,7 @@ router.post("/verify-otp", async (req, res) => {
       clientId: otpRecord.clientId,
       action: "OTP_VERIFIED",
       details: "OTP verified for password reset",
-      dateTime: new Date().toLocaleString("en-IN")
+      // dateTime: new Date().toLocaleString("en-IN")
     });
 
     logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
@@ -522,7 +522,7 @@ router.post("/reset-password", async (req, res) => {
       clientId: client.clientId,
       action: "PASSWORD_RESET",
       details: "Password reset successfully via forgot password",
-      dateTime: new Date().toLocaleString("en-IN")
+      // dateTime: new Date().toLocaleString("en-IN")
     });
 
     logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
@@ -662,7 +662,7 @@ router.post("/change-password", async (req, res) => {
       clientId: client.clientId,
       action: "PASSWORD_CHANGED",
       details: "Password changed from profile settings",
-      dateTime: new Date().toLocaleString("en-IN")
+      // dateTime: new Date().toLocaleString("en-IN")
     });
 
     logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
@@ -813,7 +813,7 @@ router.patch("/update-profile", async (req, res) => {
         clientId: clientId,
         action: "CLIENT_PROFILE_UPDATED_SELF",
         details: `Client updated their own profile. Fields changed: ${changes.map(c => c.field).join(', ')}`,
-        dateTime: new Date(),
+        // dateTime: new Date(),
         metadata: {
           clientId,
           clientName: updatedClient.name,
@@ -1538,7 +1538,7 @@ router.patch("/change-plan", async (req, res) => {
         clientId: clientId,
         action: "PLAN_CHANGE_REQUESTED",
         details: `Plan change requested: ${currentActivePlan} → ${newPlan}. ${isFirstOfMonth ? 'Applied immediately (1st of month)' : 'Scheduled for ' + formatDate(effectiveDate)}`,
-        dateTime: new Date(),
+        // dateTime: new Date(),
         metadata: {
           clientId,
           clientName: client.name,

@@ -157,7 +157,7 @@ router.post("/login", async (req, res) => {
         employeeId: employee.employeeId,
         action: "EMPLOYEE_LOGIN",
         details: "Employee logged in successfully",
-        dateTime: new Date().toLocaleString("en-IN"),
+        // dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           email: employee.email,
           loginTime: new Date().toISOString(),
@@ -278,7 +278,7 @@ router.get("/me", async (req, res) => {
         employeeId: employee.employeeId,
         action: "EMPLOYEE_SESSION_CHECK",
         details: "Employee checked login status",
-        dateTime: new Date().toLocaleString("en-IN"),
+        // dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           checkTime: new Date().toISOString(),
           ip: req.ip
@@ -364,7 +364,7 @@ router.post("/logout", async (req, res) => {
             employeeId: decoded.employeeId,
             action: "EMPLOYEE_LOGOUT",
             details: "Employee logged out successfully",
-            dateTime: new Date().toLocaleString("en-IN"),
+            // dateTime: new Date().toLocaleString("en-IN"),
             metadata: {
               logoutTime: new Date().toISOString(),
               ip: req.ip
@@ -675,7 +675,7 @@ router.get("/assigned-clients", async (req, res) => {
         employeeId: employee.employeeId,
         action: "VIEWED_ASSIGNED_CLIENTS",
         details: `Employee viewed assigned clients - ${activeAssignments} active assignments (${removedAssignments} removed)`,
-        dateTime: new Date().toLocaleString("en-IN"),
+        // dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           activeAssignments,
           removedAssignments,
@@ -916,7 +916,7 @@ router.put("/toggle-accounting-done", async (req, res) => {
         clientId: clientId,
         action: accountingDone ? "ACCOUNTING_MARKED_DONE" : "ACCOUNTING_MARKED_PENDING",
         details: `Accounting ${accountingDone ? 'marked as done' : 'marked as pending'} for client ${clientId}, ${month}/${year}, task: ${task}`,
-        dateTime: new Date().toLocaleString("en-IN"),
+        // dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           clientId,
           year,
@@ -1312,7 +1312,7 @@ router.post("/add-file-note", async (req, res) => {
         clientId: clientId,
         action: "ADDED_FILE_NOTE",
         details: `Added note to file "${fileName}" in ${categoryPath} for client ${client.name} (${month}/${year})`,
-        dateTime: new Date().toLocaleString("en-IN"),
+        // dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           clientId,
           year,
@@ -1713,7 +1713,7 @@ router.get("/assignment-files", async (req, res) => {
         clientId: clientId,
         action: "VIEWED_ASSIGNMENT_FILES",
         details: `Employee viewed files for client ${client.name} (${month}/${year})`,
-        dateTime: new Date().toLocaleString("en-IN"),
+        // dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           clientId,
           year,
@@ -1922,7 +1922,7 @@ router.get("/file-notes", async (req, res) => {
         clientId: clientId,
         action: "VIEWED_FILE_NOTES",
         details: `Employee viewed notes for file "${fileName}" in ${categoryPath} for client ${client.name}`,
-        dateTime: new Date().toLocaleString("en-IN"),
+        // dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           clientId,
           year,
@@ -2189,7 +2189,7 @@ router.post("/toggle-file-viewed", async (req, res) => {
         clientId,
         action: action === "ADDED" ? "FILE_MARKED_VIEWED" : "FILE_MARKED_UNVIEWED",
         details: `Employee ${action === "ADDED" ? 'marked' : 'unmarked'} file "${fileName}" as viewed for client ${clientId}`,
-        dateTime: new Date().toLocaleString("en-IN"),
+        // dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           clientId,
           year,

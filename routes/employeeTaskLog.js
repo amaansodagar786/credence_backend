@@ -321,7 +321,7 @@ router.put("/complete/:taskId", async (req, res) => {
         employeeId: task.employeeId,
         action: "TASK_COMPLETED",
         details: `Task completed: ${task.projectName}`,
-        dateTime: new Date().toLocaleString("en-IN")
+        // dateTime: new Date().toLocaleString("en-IN")
       });
 
       // Console log: Activity log created
@@ -440,7 +440,7 @@ router.get("/my-tasks", async (req, res) => {
         employeeId: decoded.employeeId,
         action: "FETCHED_TASK_LOGS",
         details: `Fetched ${tasks.length} task logs`,
-        dateTime: new Date().toLocaleString("en-IN")
+        // dateTime: new Date().toLocaleString("en-IN")
       });
 
       // Console log: Activity log created
@@ -569,7 +569,7 @@ router.delete("/delete/:taskId", async (req, res) => {
         employeeId: decoded.employeeId,
         action: "TASK_LOG_DELETED",
         details: `Task deleted: ${task.projectName}`,
-        dateTime: new Date().toLocaleString("en-IN")
+        // dateTime: new Date().toLocaleString("en-IN")
       });
 
       // Console log: Activity log created

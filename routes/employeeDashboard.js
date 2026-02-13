@@ -794,7 +794,7 @@ router.post("/notes/mark-all-viewed", auth, async (req, res) => {
       employeeName: employee?.name || "Employee",
       action: "EMPLOYEE_NOTES_VIEWED",
       details: `Employee "${employee?.name || "Employee"}" marked ${result.notesMarked} client notes as viewed`,
-      dateTime: new Date().toLocaleString("en-IN"),
+      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         employeeId,
         employeeName: employee?.name || "Employee",
@@ -930,7 +930,7 @@ router.get("/notes/all-notes", auth, async (req, res) => {
       employeeName: employee?.name || "Employee",
       action: "EMPLOYEE_ALL_NOTES_VIEWED",
       details: `Employee "${employee?.name || "Employee"}" viewed all notes (${result.totalNotes} total, ${result.unviewedCount} unviewed)`,
-      dateTime: new Date().toLocaleString("en-IN"),
+      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         employeeId,
         employeeName: employee?.name || "Employee",

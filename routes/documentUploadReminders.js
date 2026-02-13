@@ -199,7 +199,7 @@ const sendDocumentUploadReminders = async () => {
             role: "SYSTEM",
             action: "DOCUMENT_UPLOAD_REMINDER_SENT",
             details: `Document upload reminders sent for ${previousMonthYear} to ${results.sent.length} active clients. ${results.failed.length} failed.`,
-            dateTime: new Date().toLocaleString("en-IN")
+            // dateTime: new Date().toLocaleString("en-IN")
         });
 
         // 4. NOTIFY ADMIN IF ANY FAILURES

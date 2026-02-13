@@ -134,7 +134,7 @@ router.post("/submit", async (req, res) => {
             userName: fullName,
             action: "CALL_REQUEST_SUBMITTED",
             details: `Call request submitted by ${fullName} (${phone})`,
-            dateTime: new Date().toLocaleString("en-IN")
+            // dateTime: new Date().toLocaleString("en-IN")
         });
 
         // Success response
@@ -361,7 +361,7 @@ router.post("/connect-us/submit", async (req, res) => {
             userName: name,
             action: "CONNECT_REQUEST_SUBMITTED",
             details: `Connect request for ${selectedService} by ${name} (${mobile})`,
-            dateTime: new Date().toLocaleString("en-IN")
+            // dateTime: new Date().toLocaleString("en-IN")
         });
 
         // Success response

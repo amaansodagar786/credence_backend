@@ -167,7 +167,7 @@ const sendPaymentReminders = async () => {
             role: "SYSTEM",
             action: "PAYMENT_REMINDER_SENT",
             details: `Payment reminders sent to ${results.sent.length} active clients. ${results.failed.length} failed.`,
-            dateTime: new Date().toLocaleString("en-IN")
+            // dateTime: new Date().toLocaleString("en-IN")
         });
 
         // 4. NOTIFY ADMIN IF ANY FAILURES
