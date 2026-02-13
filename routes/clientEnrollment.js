@@ -118,7 +118,7 @@ router.post("/enroll", async (req, res) => {
       enrollId,
       action: "CLIENT_ENROLL",
       details: `Client enrollment submitted for ${enrollmentData.planSelected} plan`,
-      dateTime: new Date().toLocaleString("en-IN")
+      // dateTime: new Date().toLocaleString("en-IN")
     });
 
     logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
@@ -459,7 +459,7 @@ router.get("/all", auth, async (req, res) => {
       adminId: req.user.adminId,
       action: "ALL_ENROLLMENTS_VIEWED",
       details: `Admin viewed all client enrollments (${data.length} records)`,
-      dateTime: new Date().toLocaleString("en-IN")
+      // dateTime: new Date().toLocaleString("en-IN")
     });
 
     logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
@@ -528,7 +528,7 @@ router.get("/:enrollId", auth, async (req, res) => {
       enrollId: enrollment.enrollId,
       action: "SINGLE_ENROLLMENT_VIEWED",
       details: `Admin viewed enrollment details for ${enrollment.firstName} ${enrollment.lastName}`,
-      dateTime: new Date().toLocaleString("en-IN"),
+      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         clientName: `${enrollment.firstName} ${enrollment.lastName}`,
         email: enrollment.email,
@@ -730,7 +730,7 @@ router.post("/action", auth, async (req, res) => {
         enrollId,
         action: "CLIENT_REJECTED",
         details: `Client enrollment rejected. Reason: ${enrollment.rejectionReason}`,
-        dateTime: new Date().toLocaleString("en-IN")
+        // dateTime: new Date().toLocaleString("en-IN")
       });
 
       logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
@@ -1216,7 +1216,7 @@ router.post("/action", auth, async (req, res) => {
         clientId,
         action: "CLIENT_APPROVED",
         details: `Client approved and account created for ${enrollment.planSelected} plan`,
-        dateTime: new Date().toLocaleString("en-IN"),
+        // dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           clientName: clientData.name,
           planSelected: clientData.planSelected,
@@ -1316,7 +1316,7 @@ router.get("/enrollment/:enrollId", auth, async (req, res) => {
       enrollId: enrollment.enrollId,
       action: "ENROLLMENT_DETAILS_VIEWED",
       details: `Admin viewed detailed enrollment information for ${enrollment.firstName} ${enrollment.lastName}`,
-      dateTime: new Date().toLocaleString("en-IN"),
+      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         clientName: `${enrollment.firstName} ${enrollment.lastName}`,
         email: enrollment.email,
