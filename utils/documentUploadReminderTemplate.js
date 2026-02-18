@@ -6,23 +6,26 @@ const documentUploadReminderTemplate = (client) => {
   
   const previousMonthYear = previousMonth.toLocaleDateString("en-GB", {
     month: "long",
-    year: "numeric"
+    year: "numeric",
+    timeZone: "Europe/Helsinki"  // Finland timezone
   });
   
   const currentMonth = currentDate.toLocaleDateString("en-GB", {
     month: "long",
-    year: "numeric"
+    year: "numeric",
+    timeZone: "Europe/Helsinki"  // Finland timezone
   });
   
   const currentDateTime = new Date().toLocaleDateString("en-GB", {
     day: "numeric",
     month: "long",
-    year: "numeric"
+    year: "numeric",
+    timeZone: "Europe/Helsinki"  // Finland timezone
   }) + " at " + new Date().toLocaleTimeString("en-IN", {
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "Asia/Kolkata"
-  }) + " IST";
+    timeZone: "Europe/Helsinki"  // Changed from Asia/Kolkata
+  }) + " EET/EEST";  // Changed from IST
   
   const deadlineDate = `25th ${currentMonth}`;
   
@@ -86,7 +89,6 @@ const documentUploadReminderTemplate = (client) => {
           <div class="client-info">
             <h3 class="section-title">📋 Your Account Information</h3>
             <table>
-             
               <tr>
                 <th>Business Name</th>
                 <td>${client.businessName || "Not specified"}</td>
@@ -121,7 +123,7 @@ const documentUploadReminderTemplate = (client) => {
             <p><strong>Support Email:</strong> support@credence-accounting.com</p>
             <p><strong>Upload Assistance:</strong> uploads@credence-accounting.com</p>
             <p><strong>Phone Support:</strong> +91 12345 67890</p>
-            <p><strong>Business Hours:</strong> Monday - Friday, 9:00 AM - 6:00 PM (IST)</p>
+            <p><strong>Business Hours:</strong> Monday - Friday, 9:00 AM - 6:00 PM (EET/EEST)</p>  <!-- Changed from IST -->
           </div>
           
           <p style="margin-top: 25px; font-size: 14px; color: #666;">

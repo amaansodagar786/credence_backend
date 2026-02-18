@@ -61,12 +61,12 @@ router.get("/all-clients", auth, async (req, res) => {
 });
 
 /* ===============================
-   TOGGLE CLIENT ACTIVE STATUS
+   TOGGLE CLIENT ACTIVE STATUS - SIMPLIFIED (STORE ONLY DATES)
 ================================ */
 router.patch("/toggle-status/:clientId", auth, async (req, res) => {
   try {
     const { clientId } = req.params;
-    const { isActive } = req.body;
+    const { isActive, reason } = req.body;
 
     if (typeof isActive !== 'boolean') {
       return res.status(400).json({
@@ -79,55 +79,88 @@ router.patch("/toggle-status/:clientId", auth, async (req, res) => {
     const clientBefore = await Client.findOne({ clientId })
       .select("clientId name email isActive");
 
-    const client = await Client.findOneAndUpdate(
-      { clientId },
-      {
-        isActive,
-        ...(isActive === false ? { deactivatedAt: new Date() } : { deactivatedAt: null })
-      },
-      { new: true }
-    );
-
-    if (!client) {
+    if (!clientBefore) {
       return res.status(404).json({
         success: false,
         message: "Client not found"
       });
     }
 
-    // ADDED: Activity Log
+    // Get current date for tracking
+    const currentDate = new Date();
+
+    // Prepare update object based on action
+    const updateObj = {
+      isActive,
+      ...(isActive === false ? {
+        deactivatedAt: currentDate,
+        deactivatedBy: req.user.adminId,
+        deactivationReason: reason || "No reason provided",
+        reactivatedAt: null, // Clear reactivation if exists
+        reactivatedBy: null,
+        reactivationReason: null
+      } : {
+        reactivatedAt: currentDate,
+        reactivatedBy: req.user.adminId,
+        reactivationReason: reason || "No reason provided"
+        // DO NOT clear deactivatedAt - we need it for history!
+      })
+    };
+
+    // Add to global status history
+    updateObj.$push = {
+      globalStatusHistory: {
+        status: isActive ? 'active' : 'inactive',
+        changedAt: currentDate,
+        changedBy: req.user.adminId,
+        adminName: req.user.name,
+        reason: reason || "No reason provided",
+        metadata: {
+          action: isActive ? 'REACTIVATION' : 'DEACTIVATION'
+        }
+      }
+    };
+
+    // Update the client
+    const client = await Client.findOneAndUpdate(
+      { clientId },
+      updateObj,
+      { new: true }
+    );
+
+    // Activity Log
     try {
       await ActivityLog.create({
         userName: req.user.name,
         role: req.user.role,
         adminId: req.user.adminId,
         clientId: clientId,
-        action: "CLIENT_STATUS_TOGGLED",
-        details: `Changed client status from ${clientBefore?.isActive} to ${isActive} for client: ${clientBefore?.name} (${clientId})`,
+        action: isActive ? "CLIENT_REACTIVATED" : "CLIENT_DEACTIVATED",
+        details: `${isActive ? 'Reactivated' : 'Deactivated'} client: ${clientBefore.name} (${clientId})${reason ? `. Reason: ${reason}` : ''}`,
         dateTime: new Date(),
         metadata: {
           clientId,
-          clientName: clientBefore?.name,
-          previousStatus: clientBefore?.isActive,
+          clientName: clientBefore.name,
+          previousStatus: clientBefore.isActive,
           newStatus: isActive,
-          changedByAdmin: req.user.name
+          changedByAdmin: req.user.name,
+          reason: reason || "No reason provided"
         }
       });
     } catch (logError) {
-      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
-        error: logError.message,
-        adminId: req.user.adminId
-      });
+      console.error("Activity log failed:", logError);
     }
 
     res.json({
       success: true,
-      message: `Client ${isActive ? 'activated' : 'deactivated'} successfully`,
+      message: `Client ${isActive ? 'activated' : 'deactivated'} successfully.`,
       client: {
         clientId: client.clientId,
         name: client.name,
         email: client.email,
-        isActive: client.isActive
+        isActive: client.isActive,
+        deactivatedAt: client.deactivatedAt,
+        reactivatedAt: client.reactivatedAt
       }
     });
 
@@ -140,6 +173,8 @@ router.patch("/toggle-status/:clientId", auth, async (req, res) => {
     });
   }
 });
+
+
 
 /* ===============================
    GET SINGLE CLIENT DETAILS
@@ -599,7 +634,7 @@ router.put('/approve/:requestId', auth, async (req, res) => {
 
 
     // Check if already approved/sent
-    if (request.status === 'approved' || request.status === 'sent') { 
+    if (request.status === 'approved' || request.status === 'sent') {
       return res.status(400).json({
         success: false,
         message: `Request already ${request.status}`

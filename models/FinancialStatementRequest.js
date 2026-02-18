@@ -1,4 +1,3 @@
-// models/FinancialStatementRequest.js
 const mongoose = require('mongoose');
 
 const financialStatementRequestSchema = new mongoose.Schema({
@@ -20,23 +19,23 @@ const financialStatementRequestSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    month: {
-        type: String,
-        required: true,
-        enum: [
-            'January', 'February', 'March', 'April', 'May', 'June',
-            'July', 'August', 'September', 'October', 'November', 'December'
-        ]
+    // Date range fields
+    fromDate: {
+        type: Date,
+        required: true
     },
-    year: {
-        type: Number,
-        required: true,
-        min: 2020,
-        max: new Date().getFullYear() + 1
+    toDate: {
+        type: Date,
+        required: true
+    },
+    // Store as string for display (e.g., "15 Jan 2026 - 15 Feb 2026")
+    dateRangeDisplay: {
+        type: String,
+        required: true
     },
     status: {
         type: String,
-        enum: ['pending', 'in_progress', 'completed', 'approved' , 'sent', 'cancelled'],
+        enum: ['pending', 'in_progress', 'completed', 'approved', 'sent', 'cancelled'],
         default: 'pending'
     },
     requestedAt: {
@@ -78,8 +77,15 @@ const financialStatementRequestSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Index for faster queries
-financialStatementRequestSchema.index({ clientId: 1, month: 1, year: 1 });
+// COMPOUND INDEX for overlapping date queries
+financialStatementRequestSchema.index({
+    clientId: 1,
+    fromDate: 1,
+    toDate: 1,
+    status: 1
+});
+
+// Index for quick status queries
 financialStatementRequestSchema.index({ status: 1 });
 financialStatementRequestSchema.index({ requestedAt: -1 });
 

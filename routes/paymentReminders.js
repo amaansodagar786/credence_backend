@@ -11,7 +11,9 @@ const router = express.Router();
    LOGGING UTILITY
 ================================ */
 const logToConsole = (type, operation, data) => {
-    const timestamp = new Date().toLocaleString("en-IN");
+    const timestamp = new Date().toLocaleString("en-IN", {
+        timeZone: "Europe/Helsinki"  // Finland timezone
+    });
     const logEntry = {
         timestamp,
         type,
@@ -31,7 +33,8 @@ const notifyAdminAboutFailedEmails = async (failedClients, errorReason) => {
         const currentDate = new Date().toLocaleDateString("en-GB", {
             day: "numeric",
             month: "long",
-            year: "numeric"
+            year: "numeric",
+            timeZone: "Europe/Helsinki"  // Finland timezone
         });
 
         const failedList = failedClients.map(client =>
@@ -92,7 +95,9 @@ const sendPaymentReminders = async () => {
 
     logToConsole("INFO", "PAYMENT_REMINDER_STARTED", {
         operationId,
-        startTime: new Date(startTime).toLocaleString("en-IN")
+        startTime: new Date(startTime).toLocaleString("en-IN", {
+            timeZone: "Europe/Helsinki"  // Finland timezone
+        })
     });
 
     try {
@@ -161,13 +166,13 @@ const sendPaymentReminders = async () => {
             }
         }
 
-        // 3. LOG ACTIVITY
+        // 3. LOG ACTIVITY (dateTime line removed - let schema handle it)
         await ActivityLog.create({
             userName: "SYSTEM",
             role: "SYSTEM",
             action: "PAYMENT_REMINDER_SENT",
-            details: `Payment reminders sent to ${results.sent.length} active clients. ${results.failed.length} failed.`,
-            // dateTime: new Date().toLocaleString("en-IN")
+            details: `Payment reminders sent to ${results.sent.length} active clients. ${results.failed.length} failed.`
+            // dateTime line removed
         });
 
         // 4. NOTIFY ADMIN IF ANY FAILURES
@@ -217,24 +222,24 @@ const sendPaymentReminders = async () => {
 };
 
 /* ===============================
-   SCHEDULED JOBS
+   SCHEDULED JOBS - UPDATED TO FINLAND TIME
 ================================ */
-// Schedule for 20th of each month at 12:00 PM
+// Schedule for 20th of each month at 12:00 PM Finland time
 cron.schedule('0 12 20 * *', async () => {
     console.log("⏰ Running payment reminder (20th of month)...");
     await sendPaymentReminders();
 }, {
     scheduled: true,
-    timezone: "Asia/Kolkata"
+    timezone: "Europe/Helsinki"  // Finland timezone
 });
 
-// Schedule for 25th of each month at 12:00 PM  
+// Schedule for 25th of each month at 12:00 PM Finland time  
 cron.schedule('0 12 25 * *', async () => {
     console.log("⏰ Running payment reminder (25th of month)...");
     await sendPaymentReminders();
 }, {
     scheduled: true,
-    timezone: "Asia/Kolkata"
+    timezone: "Europe/Helsinki"  // Finland timezone
 });
 
 /* ===============================
@@ -271,7 +276,9 @@ router.get("/test", async (req, res) => {
             clientIds: activeClients.map(c => c.clientId),
             adminEmail: adminEmail || "NOT CONFIGURED",
             emailService: adminEmail ? "Configured" : "Not Configured",
-            currentTime: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+            currentTime: new Date().toLocaleString("en-IN", { 
+                timeZone: "Europe/Helsinki"  // Finland timezone
+            })
         });
 
     } catch (error) {
@@ -291,16 +298,16 @@ router.get("/status", (req, res) => {
         message: "Payment Reminder System is active",
         schedules: [
             {
-                schedule: "20th of each month at 12:00 PM IST",
+                schedule: "20th of each month at 12:00 PM EET/EEST",  // Changed from IST
                 description: "Monthly payment reminder"
             },
             {
-                schedule: "25th of each month at 12:00 PM IST",
+                schedule: "25th of each month at 12:00 PM EET/EEST",  // Changed from IST
                 description: "Monthly payment reminder"
             }
         ],
         currentTime: new Date().toLocaleString("en-IN", {
-            timeZone: "Asia/Kolkata"
+            timeZone: "Europe/Helsinki"  // Finland timezone
         }),
         adminEmail: process.env.EMAIL_USER || "Not configured"
     });

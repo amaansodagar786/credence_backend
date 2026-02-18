@@ -4,9 +4,8 @@ const auth = require("../middleware/authMiddleware");
 
 const Client = require("../models/Client");
 const Employee = require("../models/Employee");
-const ActivityLog = require("../models/ActivityLog"); 
-const FinancialStatementRequest = require("../models/FinancialStatementRequest"); 
-
+const ActivityLog = require("../models/ActivityLog");
+const FinancialStatementRequest = require("../models/FinancialStatementRequest");
 
 const router = express.Router();
 
@@ -34,7 +33,6 @@ const getDateRange = (timeFilter, customStart = null, customEnd = null) => {
             break;
 
         case 'this_week':
-            // Get start of week (Monday)
             const day = now.getDay();
             const diff = now.getDate() - day + (day === 0 ? -6 : 1);
             const startOfWeek = new Date(now.setDate(diff));
@@ -42,7 +40,6 @@ const getDateRange = (timeFilter, customStart = null, customEnd = null) => {
             startDate = startOfWeek;
             endDate = endOfDay;
 
-            // Get all days in this week
             for (let i = 0; i < 7; i++) {
                 const date = new Date(startOfWeek);
                 date.setDate(startOfWeek.getDate() + i);
@@ -96,7 +93,6 @@ const getDateRange = (timeFilter, customStart = null, customEnd = null) => {
                 endDate = new Date(customEnd);
                 endDate.setHours(23, 59, 59, 999);
 
-                // Generate months between custom dates
                 const start = new Date(startDate);
                 const end = new Date(endDate);
                 const current = new Date(start.getFullYear(), start.getMonth(), 1);
@@ -109,7 +105,6 @@ const getDateRange = (timeFilter, customStart = null, customEnd = null) => {
                     current.setMonth(current.getMonth() + 1);
                 }
             } else {
-                // Default to this month if no custom dates
                 const currentYear = now.getFullYear();
                 const currentMonth = now.getMonth() + 1;
                 startDate = new Date(currentYear, currentMonth - 1, 1);
@@ -135,23 +130,18 @@ const getDateRange = (timeFilter, customStart = null, customEnd = null) => {
 };
 
 /* ===============================
-   HELPER: GET CURRENT MONTH FROM DATE RANGE
+   HELPER: ALL TASKS CONSTANT (NOW INCLUDES AUDIT)
 ================================ */
-const getCurrentMonthFromRange = (dateRange) => {
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth() + 1;
-
-    // Find current month in the range, or use first month
-    const currentInRange = dateRange.months.find(m =>
-        m.year === currentYear && m.month === currentMonth
-    );
-
-    return currentInRange || dateRange.months[0] || { year: currentYear, month: currentMonth };
-};
+const ALL_TASKS = [
+    'Bookkeeping',
+    'VAT Filing Computation',
+    'VAT Filing',
+    'Financial Statement Generation',
+    'Audit'
+];
 
 /* ===============================
-   1. GET DASHBOARD OVERVIEW METRICS
+   1. GET DASHBOARD OVERVIEW METRICS - FIXED FOR MULTI-MONTH FILTERS
 ================================ */
 router.get("/dashboard/overview", auth, async (req, res) => {
     try {
@@ -165,7 +155,6 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         });
 
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
-        const currentMonth = getCurrentMonthFromRange(dateRange);
 
         // 1. Active Clients Count (always total, not filtered by time)
         const activeClientsCount = await Client.countDocuments({ isActive: true });
@@ -173,118 +162,103 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         // 2. Active Employees Count (always total, not filtered by time)
         const activeEmployeesCount = await Employee.countDocuments({ isActive: true });
 
-        // 3. Unassigned Clients Count (clients without any assignment for current month)
-        const unassignedClients = await Client.aggregate([
-            { $match: { isActive: true } },
+        // 3. FIXED: Unassigned Clients Count (clients with MISSING TASKS across ALL months in filter)
+        const allClients = await Client.find(
+            { isActive: true },
             {
-                $project: {
-                    clientId: 1,
-                    name: 1,
-                    employeeAssignments: {
-                        $filter: {
-                            input: "$employeeAssignments",
-                            as: "assignment",
-                            cond: {
-                                $and: [
-                                    { $eq: ["$$assignment.year", currentMonth.year] },
-                                    { $eq: ["$$assignment.month", currentMonth.month] },
-                                    { $eq: ["$$assignment.isRemoved", false] }
-                                ]
-                            }
-                        }
-                    }
-                }
-            },
-            { $match: { employeeAssignments: { $size: 0 } } },
-            { $count: "count" }
-        ]);
-        const unassignedClientsCount = unassignedClients[0]?.count || 0;
+                clientId: 1,
+                name: 1,
+                employeeAssignments: 1
+            }
+        ).lean();
 
-        // 4. Idle Employees Count (employees without any assignment for current month)
-        const idleEmployees = await Employee.aggregate([
-            { $match: { isActive: true } },
-            {
-                $project: {
-                    employeeId: 1,
-                    name: 1,
-                    assignedClients: {
-                        $filter: {
-                            input: "$assignedClients",
-                            as: "assignment",
-                            cond: {
-                                $and: [
-                                    { $eq: ["$$assignment.year", currentMonth.year] },
-                                    { $eq: ["$$assignment.month", currentMonth.month] },
-                                    { $eq: ["$$assignment.isRemoved", false] }
-                                ]
-                            }
-                        }
-                    }
-                }
-            },
-            { $match: { assignedClients: { $size: 0 } } },
-            { $count: "count" }
-        ]);
-        const idleEmployeesCount = idleEmployees[0]?.count || 0;
+        const clientsWithMissingTasks = new Set();
 
-        // 5. Clients with Incomplete Tasks (for current month)
-        const clientsWithIncompleteTasks = await Client.aggregate([
-            { $match: { isActive: true } },
-            { $unwind: { path: "$employeeAssignments", preserveNullAndEmptyArrays: true } },
-            {
-                $match: {
-                    $or: [
-                        { employeeAssignments: null },
-                        {
-                            "employeeAssignments.year": currentMonth.year,
-                            "employeeAssignments.month": currentMonth.month,
-                            "employeeAssignments.isRemoved": false,
-                            "employeeAssignments.accountingDone": false
-                        }
-                    ]
-                }
-            },
-            {
-                $group: {
-                    _id: "$_id",
-                    clientId: { $first: "$clientId" },
-                    name: { $first: "$name" },
-                    email: { $first: "$email" },
-                    phone: { $first: "$phone" },
-                    incompleteTasks: {
-                        $push: {
-                            task: "$employeeAssignments.task",
-                            accountingDone: "$employeeAssignments.accountingDone",
-                            employeeName: "$employeeAssignments.employeeName"
-                        }
-                    }
-                }
-            },
-            {
-                $project: {
-                    clientId: 1,
-                    name: 1,
-                    email: 1,
-                    phone: 1,
-                    incompleteTasks: {
-                        $filter: {
-                            input: "$incompleteTasks",
-                            as: "task",
-                            cond: { $eq: ["$$task.accountingDone", false] }
-                        }
-                    }
-                }
-            },
-            { $match: { $expr: { $gt: [{ $size: "$incompleteTasks" }, 0] } } },
-            { $count: "count" }
-        ]);
-        const incompleteTasksCount = clientsWithIncompleteTasks[0]?.count || 0;
+        allClients.forEach(client => {
+            const assignments = client.employeeAssignments || [];
 
-        // 6. Recent Notes Count (filtered by date range)
+            // Check each month in the date range
+            dateRange.months.forEach(monthRange => {
+                const monthAssignments = assignments.filter(a =>
+                    a.year === monthRange.year &&
+                    a.month === monthRange.month &&
+                    a.isRemoved === false
+                );
+
+                const assignedTasks = monthAssignments.map(a => a.task);
+                const missingTasks = ALL_TASKS.filter(task => !assignedTasks.includes(task));
+
+                if (missingTasks.length > 0) {
+                    clientsWithMissingTasks.add(client.clientId);
+                }
+            });
+        });
+
+        const unassignedClientsCount = clientsWithMissingTasks.size;
+
+        // 4. FIXED: Idle Employees Count (employees with NO assignments in AT LEAST ONE month)
+        const allEmployees = await Employee.find(
+            { isActive: true },
+            {
+                employeeId: 1,
+                name: 1,
+                assignedClients: 1
+            }
+        ).lean();
+
+        const idleEmployeeIds = new Set();
+
+        allEmployees.forEach(employee => {
+            const assignments = employee.assignedClients || [];
+
+            // Check each month in the date range
+            dateRange.months.forEach(monthRange => {
+                const monthAssignments = assignments.filter(a =>
+                    a.year === monthRange.year &&
+                    a.month === monthRange.month &&
+                    a.isRemoved === false
+                );
+
+                // If NO assignments in THIS month, employee is idle (for at least one month)
+                if (monthAssignments.length === 0) {
+                    idleEmployeeIds.add(employee.employeeId);
+                }
+            });
+        });
+
+        const idleEmployeesCount = idleEmployeeIds.size;
+
+        // 5. FIXED: Clients with Incomplete Tasks (accountingDone = false across ALL months in filter)
+        const clientsWithIncompleteTasksSet = new Set();
+
+        allClients.forEach(client => {
+            const assignments = client.employeeAssignments || [];
+            let hasIncomplete = false;
+
+            dateRange.months.forEach(monthRange => {
+                const monthIncomplete = assignments.some(a =>
+                    a.year === monthRange.year &&
+                    a.month === monthRange.month &&
+                    a.isRemoved === false &&
+                    a.accountingDone === false
+                );
+
+                if (monthIncomplete) {
+                    hasIncomplete = true;
+                }
+            });
+
+            if (hasIncomplete) {
+                clientsWithIncompleteTasksSet.add(client.clientId);
+            }
+        });
+
+        const incompleteTasksCount = clientsWithIncompleteTasksSet.size;
+
+        // 6. Recent Notes Count (filtered by date range) - NO CHANGE
         let recentNotesCount = 0;
 
-        // Get all active clients
-        const allClients = await Client.find(
+        const allClientsWithDocs = await Client.find(
             { isActive: true },
             {
                 clientId: 1,
@@ -294,28 +268,23 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             }
         ).lean();
 
-        // Count notes within date range
-        allClients.forEach(client => {
+        allClientsWithDocs.forEach(client => {
             if (!client.documents) return;
 
-            // Check each year/month in the date range
             dateRange.months.forEach(monthRange => {
                 const yearKey = String(monthRange.year);
                 const monthKey = String(monthRange.month);
                 const monthData = client.documents?.[yearKey]?.[monthKey];
                 if (!monthData) return;
 
-                // Count notes in this month
                 ['sales', 'purchase', 'bank'].forEach(category => {
                     const categoryData = monthData[category];
                     if (!categoryData) return;
 
-                    // Category notes
                     if (categoryData.categoryNotes && categoryData.categoryNotes.length > 0) {
                         recentNotesCount += categoryData.categoryNotes.length;
                     }
 
-                    // File notes
                     if (categoryData.files && Array.isArray(categoryData.files)) {
                         categoryData.files.forEach(file => {
                             if (file.notes && file.notes.length > 0) {
@@ -325,18 +294,15 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                     }
                 });
 
-                // Check other categories
                 if (monthData.other && Array.isArray(monthData.other)) {
                     monthData.other.forEach(otherCategory => {
                         if (otherCategory.document) {
                             const otherDoc = otherCategory.document;
 
-                            // Category notes
                             if (otherDoc.categoryNotes && otherDoc.categoryNotes.length > 0) {
                                 recentNotesCount += otherDoc.categoryNotes.length;
                             }
 
-                            // File notes
                             if (otherDoc.files && Array.isArray(otherDoc.files)) {
                                 otherDoc.files.forEach(file => {
                                     if (file.notes && file.notes.length > 0) {
@@ -350,10 +316,35 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             });
         });
 
-        // 7. PENDING FINANCIAL STATEMENT REQUESTS COUNT ← NEW METRIC
-        const pendingFinancialRequestsCount = await FinancialStatementRequest.countDocuments({
-            status: 'pending'
-        });
+        // 7. PENDING FINANCIAL STATEMENT REQUESTS COUNT - BASED ON REQUEST DATE
+        let pendingFinancialRequestsCount = 0;
+
+        if (dateRange.months.length > 0) {
+            const startDate = dateRange.startDate;
+            const endDate = dateRange.endDate;
+
+            // Count pending requests where requestedAt falls within the date range
+            pendingFinancialRequestsCount = await FinancialStatementRequest.countDocuments({
+                status: 'pending',
+                requestedAt: {
+                    $gte: startDate,  // Requested on or after month start
+                    $lte: endDate      // Requested on or before month end
+                }
+            });
+
+            logToConsole("INFO", "PENDING_REQUESTS_COUNT", {
+                count: pendingFinancialRequestsCount,
+                basedOn: "requestedAt",
+                dateRange: {
+                    start: startDate.toISOString(),
+                    end: endDate.toISOString()
+                }
+            });
+        } else {
+            pendingFinancialRequestsCount = await FinancialStatementRequest.countDocuments({
+                status: 'pending'
+            });
+        }
 
         // Add Activity Log
         try {
@@ -374,7 +365,8 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                     idleEmployeesCount,
                     incompleteTasksCount,
                     recentNotesCount,
-                    pendingFinancialRequestsCount // ADD THIS
+                    pendingFinancialRequestsCount,
+                    monthsInRange: dateRange.months.length
                 }
             });
 
@@ -393,7 +385,11 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             adminId: req.user.adminId,
             activeClientsCount,
             activeEmployeesCount,
+            unassignedClientsCount,
+            idleEmployeesCount,
+            incompleteTasksCount,
             pendingFinancialRequestsCount,
+            monthsInRange: dateRange.months.length,
             timeFilter
         });
 
@@ -406,10 +402,10 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                 idleEmployees: idleEmployeesCount,
                 incompleteTasks: incompleteTasksCount,
                 recentNotes: recentNotesCount,
-                pendingFinancialRequests: pendingFinancialRequestsCount // ADD THIS
+                pendingFinancialRequests: pendingFinancialRequestsCount
             },
             timeFilter: dateRange.timeFilter,
-            currentMonth,
+            currentMonth: dateRange.months[0] || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 },
             dateRange: {
                 startDate: dateRange.startDate.toISOString(),
                 endDate: dateRange.endDate.toISOString(),
@@ -432,9 +428,8 @@ router.get("/dashboard/overview", auth, async (req, res) => {
     }
 });
 
-
 /* ===============================
-   2. GET ACTIVE CLIENTS (FOR TABLE MODAL)
+   2. GET ACTIVE CLIENTS (FOR TABLE MODAL) - NO CHANGE
 ================================ */
 router.get("/dashboard/active-clients", auth, async (req, res) => {
     try {
@@ -456,12 +451,11 @@ router.get("/dashboard/active-clients", auth, async (req, res) => {
             .sort({ name: 1 })
             .lean();
 
-        // Add Activity Log
         try {
             await ActivityLog.create({
                 userName: req.user.name,
                 role: "ADMIN",
-                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                adminId: req.user.adminId,
                 action: "ACTIVE_CLIENTS_VIEWED",
                 details: `Viewed list of active clients. Total: ${clients.length} clients`,
                 dateTime: new Date(),
@@ -518,7 +512,7 @@ router.get("/dashboard/active-clients", auth, async (req, res) => {
 });
 
 /* ===============================
-   3. GET ACTIVE EMPLOYEES (FOR TABLE MODAL)
+   3. GET ACTIVE EMPLOYEES (FOR TABLE MODAL) - NO CHANGE
 ================================ */
 router.get("/dashboard/active-employees", auth, async (req, res) => {
     try {
@@ -539,12 +533,11 @@ router.get("/dashboard/active-employees", auth, async (req, res) => {
             .sort({ name: 1 })
             .lean();
 
-        // Add Activity Log
         try {
             await ActivityLog.create({
                 userName: req.user.name,
                 role: "ADMIN",
-                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                adminId: req.user.adminId,
                 action: "ACTIVE_EMPLOYEES_VIEWED",
                 details: `Viewed list of active employees. Total: ${employees.length} employees`,
                 dateTime: new Date(),
@@ -600,30 +593,22 @@ router.get("/dashboard/active-employees", auth, async (req, res) => {
 });
 
 /* ===============================
-   4. GET UNASSIGNED CLIENTS WITH MISSING TASKS
+   4. GET UNASSIGNED CLIENTS WITH MISSING TASKS - FIXED FOR MULTI-MONTH
 ================================ */
 router.get("/dashboard/unassigned-clients", auth, async (req, res) => {
     try {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
-        const currentMonth = getCurrentMonthFromRange(dateRange);
 
         logToConsole("INFO", "UNASSIGNED_CLIENTS_REQUEST", {
             adminId: req.user.adminId,
             timeFilter,
             customStart,
-            customEnd
+            customEnd,
+            monthsCount: dateRange.months.length
         });
 
-        // All tasks that should be assigned
-        const allTasks = [
-            'Bookkeeping',
-            'VAT Filing Computation',
-            'VAT Filing',
-            'Financial Statement Generation'
-        ];
-
-        // Get all active clients
+        // Get all active clients with their assignments
         const allClients = await Client.find(
             { isActive: true },
             {
@@ -636,50 +621,68 @@ router.get("/dashboard/unassigned-clients", auth, async (req, res) => {
             }
         ).lean();
 
-        // Find unassigned clients and their missing tasks
-        const unassignedClients = allClients
-            .map(client => {
-                const currentAssignments = (client.employeeAssignments || []).filter(assignment =>
-                    assignment.year === currentMonth.year &&
-                    assignment.month === currentMonth.month &&
-                    assignment.isRemoved === false
+        // Build response with month-wise missing tasks
+        const unassignedClientsData = [];
+
+        allClients.forEach(client => {
+            const assignments = client.employeeAssignments || [];
+            const missingTasksByMonth = [];
+
+            // Check each month in the date range
+            dateRange.months.forEach(monthRange => {
+                const monthAssignments = assignments.filter(a =>
+                    a.year === monthRange.year &&
+                    a.month === monthRange.month &&
+                    a.isRemoved === false
                 );
 
-                // Find which tasks are missing
-                const assignedTasks = currentAssignments.map(a => a.task);
-                const missingTasks = allTasks.filter(task => !assignedTasks.includes(task));
+                const assignedTasks = monthAssignments.map(a => a.task);
+                const missingTasks = ALL_TASKS.filter(task => !assignedTasks.includes(task));
 
-                // Only include clients with missing tasks
                 if (missingTasks.length > 0) {
-                    return {
-                        clientId: client.clientId,
-                        name: client.name,
-                        email: client.email,
-                        phone: client.phone || "N/A",
-                        plan: client.planSelected || "N/A",
+                    const monthName = new Date(monthRange.year, monthRange.month - 1, 1)
+                        .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+                    missingTasksByMonth.push({
+                        year: monthRange.year,
+                        month: monthRange.month,
+                        monthName,
                         missingTasks,
                         totalMissing: missingTasks.length
-                    };
+                    });
                 }
-                return null;
-            })
-            .filter(client => client !== null);
+            });
 
-        // Add Activity Log
+            // Only include clients with missing tasks in at least one month
+            if (missingTasksByMonth.length > 0) {
+                unassignedClientsData.push({
+                    clientId: client.clientId,
+                    name: client.name,
+                    email: client.email,
+                    phone: client.phone || "N/A",
+                    plan: client.planSelected || "N/A",
+                    missingTasksByMonth,
+                    totalMissingAcrossMonths: missingTasksByMonth.reduce((sum, m) => sum + m.totalMissing, 0)
+                });
+            }
+        });
+
+        // Sort by total missing tasks (descending)
+        unassignedClientsData.sort((a, b) => b.totalMissingAcrossMonths - a.totalMissingAcrossMonths);
+
         try {
             await ActivityLog.create({
                 userName: req.user.name,
                 role: "ADMIN",
-                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                adminId: req.user.adminId,
                 action: "UNASSIGNED_CLIENTS_VIEWED",
-                details: `Viewed unassigned clients for ${currentMonth.month}/${currentMonth.year}. Found ${unassignedClients.length} clients with missing tasks`,
+                details: `Viewed unassigned clients for ${dateRange.months.length} month(s). Found ${unassignedClientsData.length} clients with missing tasks`,
                 dateTime: new Date(),
                 metadata: {
                     timeFilter,
-                    year: currentMonth.year,
-                    month: currentMonth.month,
-                    totalClients: unassignedClients.length,
-                    totalTasksMissing: unassignedClients.reduce((sum, client) => sum + client.totalMissing, 0)
+                    monthsInRange: dateRange.months.length,
+                    totalClients: unassignedClientsData.length,
+                    totalTasksMissing: unassignedClientsData.reduce((sum, client) => sum + client.totalMissingAcrossMonths, 0)
                 }
             });
 
@@ -696,16 +699,17 @@ router.get("/dashboard/unassigned-clients", auth, async (req, res) => {
 
         logToConsole("SUCCESS", "UNASSIGNED_CLIENTS_FETCHED", {
             adminId: req.user.adminId,
-            count: unassignedClients.length,
+            count: unassignedClientsData.length,
+            monthsInRange: dateRange.months.length,
             timeFilter
         });
 
         res.json({
             success: true,
             timeFilter: dateRange.timeFilter,
-            currentMonth,
-            count: unassignedClients.length,
-            clients: unassignedClients
+            monthsInRange: dateRange.months.length,
+            count: unassignedClientsData.length,
+            clients: unassignedClientsData
         });
 
     } catch (error) {
@@ -724,19 +728,19 @@ router.get("/dashboard/unassigned-clients", auth, async (req, res) => {
 });
 
 /* ===============================
-   5. GET IDLE EMPLOYEES (NO ASSIGNMENTS)
+   5. GET IDLE EMPLOYEES (NO ASSIGNMENTS) - FIXED FOR MULTI-MONTH
 ================================ */
 router.get("/dashboard/idle-employees", auth, async (req, res) => {
     try {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
-        const currentMonth = getCurrentMonthFromRange(dateRange);
 
         logToConsole("INFO", "IDLE_EMPLOYEES_REQUEST", {
             adminId: req.user.adminId,
             timeFilter,
             customStart,
-            customEnd
+            customEnd,
+            monthsCount: dateRange.months.length
         });
 
         const employees = await Employee.find(
@@ -750,41 +754,61 @@ router.get("/dashboard/idle-employees", auth, async (req, res) => {
             }
         ).lean();
 
-        // Find employees with no assignments for current month
-        const idleEmployees = employees
-            .map(employee => {
-                const currentAssignments = (employee.assignedClients || []).filter(assignment =>
-                    assignment.year === currentMonth.year &&
-                    assignment.month === currentMonth.month &&
-                    assignment.isRemoved === false
+        // Find idle employees with month-wise breakdown
+        const idleEmployeesData = [];
+
+        employees.forEach(employee => {
+            const assignments = employee.assignedClients || [];
+            const idleMonths = [];
+
+            // Check each month in the date range
+            dateRange.months.forEach(monthRange => {
+                const monthAssignments = assignments.filter(a =>
+                    a.year === monthRange.year &&
+                    a.month === monthRange.month &&
+                    a.isRemoved === false
                 );
 
-                if (currentAssignments.length === 0) {
-                    return {
-                        employeeId: employee.employeeId,
-                        name: employee.name,
-                        email: employee.email,
-                        phone: employee.phone || "N/A"
-                    };
-                }
-                return null;
-            })
-            .filter(emp => emp !== null);
+                if (monthAssignments.length === 0) {
+                    const monthName = new Date(monthRange.year, monthRange.month - 1, 1)
+                        .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 
-        // Add Activity Log
+                    idleMonths.push({
+                        year: monthRange.year,
+                        month: monthRange.month,
+                        monthName
+                    });
+                }
+            });
+
+            // Only include employees idle in at least one month
+            if (idleMonths.length > 0) {
+                idleEmployeesData.push({
+                    employeeId: employee.employeeId,
+                    name: employee.name,
+                    email: employee.email,
+                    phone: employee.phone || "N/A",
+                    idleMonths,
+                    totalIdleMonths: idleMonths.length
+                });
+            }
+        });
+
+        // Sort by most idle months (descending)
+        idleEmployeesData.sort((a, b) => b.totalIdleMonths - a.totalIdleMonths);
+
         try {
             await ActivityLog.create({
                 userName: req.user.name,
                 role: "ADMIN",
-                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                adminId: req.user.adminId,
                 action: "IDLE_EMPLOYEES_VIEWED",
-                details: `Viewed idle employees for ${currentMonth.month}/${currentMonth.year}. Found ${idleEmployees.length} employees without assignments`,
+                details: `Viewed idle employees for ${dateRange.months.length} month(s). Found ${idleEmployeesData.length} employees without assignments`,
                 dateTime: new Date(),
                 metadata: {
                     timeFilter,
-                    year: currentMonth.year,
-                    month: currentMonth.month,
-                    totalIdleEmployees: idleEmployees.length
+                    monthsInRange: dateRange.months.length,
+                    totalIdleEmployees: idleEmployeesData.length
                 }
             });
 
@@ -801,16 +825,17 @@ router.get("/dashboard/idle-employees", auth, async (req, res) => {
 
         logToConsole("SUCCESS", "IDLE_EMPLOYEES_FETCHED", {
             adminId: req.user.adminId,
-            count: idleEmployees.length,
+            count: idleEmployeesData.length,
+            monthsInRange: dateRange.months.length,
             timeFilter
         });
 
         res.json({
             success: true,
             timeFilter: dateRange.timeFilter,
-            currentMonth,
-            count: idleEmployees.length,
-            employees: idleEmployees
+            monthsInRange: dateRange.months.length,
+            count: idleEmployeesData.length,
+            employees: idleEmployeesData
         });
 
     } catch (error) {
@@ -829,108 +854,100 @@ router.get("/dashboard/idle-employees", auth, async (req, res) => {
 });
 
 /* ===============================
-   6. GET CLIENTS WITH INCOMPLETE TASKS
+   6. GET CLIENTS WITH INCOMPLETE TASKS - FIXED FOR MULTI-MONTH
 ================================ */
 router.get("/dashboard/incomplete-tasks", auth, async (req, res) => {
     try {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
-        const currentMonth = getCurrentMonthFromRange(dateRange);
 
         logToConsole("INFO", "INCOMPLETE_TASKS_REQUEST", {
             adminId: req.user.adminId,
             timeFilter,
             customStart,
-            customEnd
+            customEnd,
+            monthsCount: dateRange.months.length
         });
 
-        const clients = await Client.aggregate([
-            { $match: { isActive: true } },
-            { $unwind: { path: "$employeeAssignments", preserveNullAndEmptyArrays: true } },
+        const clients = await Client.find(
+            { isActive: true },
             {
-                $match: {
-                    $or: [
-                        { employeeAssignments: null },
-                        {
-                            "employeeAssignments.year": currentMonth.year,
-                            "employeeAssignments.month": currentMonth.month,
-                            "employeeAssignments.isRemoved": false,
-                            "employeeAssignments.accountingDone": false
-                        }
-                    ]
-                }
-            },
-            {
-                $group: {
-                    _id: "$_id",
-                    clientId: { $first: "$clientId" },
-                    name: { $first: "$name" },
-                    email: { $first: "$email" },
-                    phone: { $first: "$phone" },
-                    incompleteAssignments: {
-                        $push: {
-                            task: "$employeeAssignments.task",
-                            accountingDone: "$employeeAssignments.accountingDone",
-                            employeeName: "$employeeAssignments.employeeName",
-                            employeeId: "$employeeAssignments.employeeId"
-                        }
-                    }
-                }
-            },
-            {
-                $project: {
-                    clientId: 1,
-                    name: 1,
-                    email: 1,
-                    phone: 1,
-                    incompleteTasks: {
-                        $filter: {
-                            input: "$incompleteAssignments",
-                            as: "assignment",
-                            cond: {
-                                $and: [
-                                    { $ne: ["$$assignment.task", null] },
-                                    { $eq: ["$$assignment.accountingDone", false] }
-                                ]
-                            }
-                        }
-                    }
-                }
-            },
-            { $match: { $expr: { $gt: [{ $size: "$incompleteTasks" }, 0] } } },
-            { $sort: { name: 1 } }
-        ]);
+                clientId: 1,
+                name: 1,
+                email: 1,
+                phone: 1,
+                employeeAssignments: 1
+            }
+        ).lean();
 
-        // Format the response
-        const formattedClients = clients.map(client => ({
-            clientId: client.clientId,
-            name: client.name,
-            email: client.email,
-            phone: client.phone || "N/A",
-            incompleteTasks: client.incompleteTasks.map(task => ({
-                task: task.task,
-                assignedTo: task.employeeName || "Not assigned",
-                status: "Pending"
-            })),
-            totalIncomplete: client.incompleteTasks.length
-        }));
+        // Build response with month-wise incomplete tasks
+        const incompleteTasksData = [];
 
-        // Add Activity Log
+        clients.forEach(client => {
+            const assignments = client.employeeAssignments || [];
+            const incompleteByMonth = [];
+
+            // Check each month in the date range
+            dateRange.months.forEach(monthRange => {
+                const monthIncompleteTasks = assignments
+                    .filter(a =>
+                        a.year === monthRange.year &&
+                        a.month === monthRange.month &&
+                        a.isRemoved === false &&
+                        a.accountingDone === false &&
+                        a.task // Ensure task exists
+                    )
+                    .map(a => ({
+                        task: a.task,
+                        assignedTo: a.employeeName || "Not assigned",
+                        employeeId: a.employeeId,
+                        status: "Pending"
+                    }));
+
+                if (monthIncompleteTasks.length > 0) {
+                    const monthName = new Date(monthRange.year, monthRange.month - 1, 1)
+                        .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+                    incompleteByMonth.push({
+                        year: monthRange.year,
+                        month: monthRange.month,
+                        monthName,
+                        incompleteTasks: monthIncompleteTasks,
+                        totalIncomplete: monthIncompleteTasks.length
+                    });
+                }
+            });
+
+            // Only include clients with incomplete tasks in at least one month
+            if (incompleteByMonth.length > 0) {
+                incompleteTasksData.push({
+                    clientId: client.clientId,
+                    name: client.name,
+                    email: client.email,
+                    phone: client.phone || "N/A",
+                    incompleteByMonth,
+                    totalIncompleteAcrossMonths: incompleteByMonth.reduce((sum, m) => sum + m.totalIncomplete, 0)
+                });
+            }
+        });
+
+        // Sort by total incomplete tasks (descending)
+        incompleteTasksData.sort((a, b) => b.totalIncompleteAcrossMonths - a.totalIncompleteAcrossMonths);
+
         try {
-            const totalIncompleteTasks = formattedClients.reduce((sum, client) => sum + client.totalIncomplete, 0);
+            const totalIncompleteTasks = incompleteTasksData.reduce((sum, client) => sum + client.totalIncompleteAcrossMonths, 0);
 
             await ActivityLog.create({
                 userName: req.user.name,
                 role: "ADMIN",
-                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                adminId: req.user.adminId,
                 action: "INCOMPLETE_TASKS_VIEWED",
-                details: `Viewed incomplete tasks for ${currentMonth.month}/${currentMonth.year}. Found ${formattedClients.length} clients with ${totalIncompleteTasks} incomplete tasks`,
+                details: `Viewed incomplete tasks for ${dateRange.months.length} month(s). Found ${incompleteTasksData.length} clients with ${totalIncompleteTasks} incomplete tasks`,
                 dateTime: new Date(),
                 metadata: {
                     timeFilter,
-                    year: currentMonth.year,
-                    month: currentMonth.month,
-                    totalClients: formattedClients.length,
+                    monthsInRange: dateRange.months.length,
+                    totalClients: incompleteTasksData.length,
                     totalIncompleteTasks: totalIncompleteTasks
                 }
             });
@@ -948,16 +965,17 @@ router.get("/dashboard/incomplete-tasks", auth, async (req, res) => {
 
         logToConsole("SUCCESS", "INCOMPLETE_TASKS_FETCHED", {
             adminId: req.user.adminId,
-            count: formattedClients.length,
+            count: incompleteTasksData.length,
+            monthsInRange: dateRange.months.length,
             timeFilter
         });
 
         res.json({
             success: true,
             timeFilter: dateRange.timeFilter,
-            currentMonth,
-            count: formattedClients.length,
-            clients: formattedClients
+            monthsInRange: dateRange.months.length,
+            count: incompleteTasksData.length,
+            clients: incompleteTasksData
         });
 
     } catch (error) {
@@ -976,13 +994,13 @@ router.get("/dashboard/incomplete-tasks", auth, async (req, res) => {
 });
 
 /* ===============================
-   7. GET RECENT NOTES GROUPED BY CLIENT
+   7. GET RECENT NOTES GROUPED BY CLIENT - NO CHANGE
 ================================ */
 router.get("/dashboard/recent-notes", auth, async (req, res) => {
     try {
         const { timeFilter = 'this_month', customStart, customEnd, limit = 10 } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
-        const currentMonth = getCurrentMonthFromRange(dateRange);
+        const currentMonth = dateRange.months[0] || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
 
         logToConsole("INFO", "RECENT_NOTES_REQUEST", {
             adminId: req.user.adminId,
@@ -992,7 +1010,6 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
             limit
         });
 
-        // Get all active clients
         const clients = await Client.find(
             { isActive: true },
             {
@@ -1005,7 +1022,6 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
 
         const notesByClient = [];
 
-        // Check each client for notes within date range
         clients.forEach(client => {
             if (!client.documents) return;
 
@@ -1018,19 +1034,16 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
                 categoryNotes: []
             };
 
-            // Check each month in the date range
             dateRange.months.forEach(monthRange => {
                 const yearKey = String(monthRange.year);
                 const monthKey = String(monthRange.month);
                 const monthData = client.documents?.[yearKey]?.[monthKey];
                 if (!monthData) return;
 
-                // Check main categories
                 ['sales', 'purchase', 'bank'].forEach(category => {
                     const categoryData = monthData[category];
                     if (!categoryData) return;
 
-                    // Category notes (added by client)
                     if (categoryData.categoryNotes && categoryData.categoryNotes.length > 0) {
                         categoryData.categoryNotes.forEach(note => {
                             clientNotes.categoryNotes.push({
@@ -1044,7 +1057,6 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
                         });
                     }
 
-                    // File notes (added by employee)
                     if (categoryData.files && Array.isArray(categoryData.files)) {
                         categoryData.files.forEach(file => {
                             if (file.notes && file.notes.length > 0) {
@@ -1064,13 +1076,11 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
                     }
                 });
 
-                // Check other categories
                 if (monthData.other && Array.isArray(monthData.other)) {
                     monthData.other.forEach(otherCategory => {
                         if (otherCategory.document) {
                             const otherDoc = otherCategory.document;
 
-                            // Category notes for other categories
                             if (otherDoc.categoryNotes && otherDoc.categoryNotes.length > 0) {
                                 otherDoc.categoryNotes.forEach(note => {
                                     clientNotes.categoryNotes.push({
@@ -1084,7 +1094,6 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
                                 });
                             }
 
-                            // File notes for other categories
                             if (otherDoc.files && Array.isArray(otherDoc.files)) {
                                 otherDoc.files.forEach(file => {
                                     if (file.notes && file.notes.length > 0) {
@@ -1107,33 +1116,27 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
                 }
             });
 
-            // Only include clients with notes
             if (clientNotes.totalNotes > 0) {
                 notesByClient.push(clientNotes);
             }
         });
 
-        // Sort by total notes (descending)
         notesByClient.sort((a, b) => b.totalNotes - a.totalNotes);
-
-        // Limit results
         const limitedNotes = notesByClient.slice(0, parseInt(limit));
 
-        // Add Activity Log
         try {
             const totalNotes = limitedNotes.reduce((sum, client) => sum + client.totalNotes, 0);
 
             await ActivityLog.create({
                 userName: req.user.name,
                 role: "ADMIN",
-                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                adminId: req.user.adminId,
                 action: "RECENT_NOTES_VIEWED",
                 details: `Viewed recent notes for ${timeFilter}. Found ${limitedNotes.length} clients with ${totalNotes} total notes`,
                 dateTime: new Date(),
                 metadata: {
                     timeFilter,
-                    year: currentMonth.year,
-                    month: currentMonth.month,
+                    monthsInRange: dateRange.months.length,
                     clientsCount: limitedNotes.length,
                     totalNotes: totalNotes,
                     limit: parseInt(limit)
@@ -1161,7 +1164,7 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
         res.json({
             success: true,
             timeFilter: dateRange.timeFilter,
-            currentMonth,
+            monthsInRange: dateRange.months.length,
             count: limitedNotes.length,
             notesByClient: limitedNotes.map(clientNotes => ({
                 clientId: clientNotes.clientId,
@@ -1191,14 +1194,14 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
 });
 
 /* ===============================
-   8. GET CLIENT NOTES DETAILS
+   8. GET CLIENT NOTES DETAILS - NO CHANGE
 ================================ */
 router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
     try {
         const { clientId } = req.params;
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
-        const currentMonth = getCurrentMonthFromRange(dateRange);
+        const currentMonth = dateRange.months[0] || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
 
         logToConsole("INFO", "CLIENT_NOTES_DETAILS_REQUEST", {
             adminId: req.user.adminId,
@@ -1232,19 +1235,16 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
 
         const allNotes = [];
 
-        // Check each month in the date range
         dateRange.months.forEach(monthRange => {
             const yearKey = String(monthRange.year);
             const monthKey = String(monthRange.month);
             const monthData = client.documents?.[yearKey]?.[monthKey];
             if (!monthData) return;
 
-            // Process main categories
             ['sales', 'purchase', 'bank'].forEach(category => {
                 const categoryData = monthData[category];
                 if (!categoryData) return;
 
-                // Category notes
                 if (categoryData.categoryNotes && categoryData.categoryNotes.length > 0) {
                     categoryData.categoryNotes.forEach(note => {
                         allNotes.push({
@@ -1254,12 +1254,13 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                             note: note.note,
                             addedBy: note.addedBy || "Client",
                             addedAt: note.addedAt,
-                            level: "Category"
+                            level: "Category",
+                            year: monthRange.year,
+                            month: monthRange.month
                         });
                     });
                 }
 
-                // File notes
                 if (categoryData.files && Array.isArray(categoryData.files)) {
                     categoryData.files.forEach(file => {
                         if (file.notes && file.notes.length > 0) {
@@ -1271,7 +1272,9 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                                     note: note.note,
                                     addedBy: note.addedBy || "Employee",
                                     addedAt: note.addedAt,
-                                    level: "File"
+                                    level: "File",
+                                    year: monthRange.year,
+                                    month: monthRange.month
                                 });
                             });
                         }
@@ -1279,13 +1282,11 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                 }
             });
 
-            // Process other categories
             if (monthData.other && Array.isArray(monthData.other)) {
                 monthData.other.forEach(otherCategory => {
                     if (otherCategory.document) {
                         const otherDoc = otherCategory.document;
 
-                        // Category notes
                         if (otherDoc.categoryNotes && otherDoc.categoryNotes.length > 0) {
                             otherDoc.categoryNotes.forEach(note => {
                                 allNotes.push({
@@ -1295,12 +1296,13 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                                     note: note.note,
                                     addedBy: note.addedBy || "Client",
                                     addedAt: note.addedAt,
-                                    level: "Category"
+                                    level: "Category",
+                                    year: monthRange.year,
+                                    month: monthRange.month
                                 });
                             });
                         }
 
-                        // File notes
                         if (otherDoc.files && Array.isArray(otherDoc.files)) {
                             otherDoc.files.forEach(file => {
                                 if (file.notes && file.notes.length > 0) {
@@ -1312,7 +1314,9 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                                             note: note.note,
                                             addedBy: note.addedBy || "Employee",
                                             addedAt: note.addedAt,
-                                            level: "File"
+                                            level: "File",
+                                            year: monthRange.year,
+                                            month: monthRange.month
                                         });
                                     });
                                 }
@@ -1323,15 +1327,13 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
             }
         });
 
-        // Sort by date (newest first)
         allNotes.sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
 
-        // Add Activity Log
         try {
             await ActivityLog.create({
                 userName: req.user.name,
                 role: "ADMIN",
-                adminId: req.user.adminId,  // ← CHANGED TO req.user.adminId
+                adminId: req.user.adminId,
                 clientId: clientId,
                 action: "CLIENT_NOTES_DETAILS_VIEWED",
                 details: `Viewed notes details for client ${client.name} (${clientId}) for ${timeFilter}. Found ${allNotes.length} notes`,
@@ -1340,8 +1342,7 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                     clientId,
                     clientName: client.name,
                     timeFilter,
-                    year: currentMonth.year,
-                    month: currentMonth.month,
+                    monthsInRange: dateRange.months.length,
                     totalNotes: allNotes.length,
                     clientNotes: allNotes.filter(n => n.type === "CLIENT_NOTE").length,
                     employeeNotes: allNotes.filter(n => n.type === "EMPLOYEE_NOTE").length
@@ -1376,7 +1377,7 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                 email: client.email
             },
             timeFilter: dateRange.timeFilter,
-            currentMonth,
+            monthsInRange: dateRange.months.length,
             totalNotes: allNotes.length,
             notes: allNotes,
             summary: {
@@ -1401,10 +1402,8 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
     }
 });
 
-
-
 /* ===============================
-   9. GET CLIENTS WITH UPLOADED DOCS BUT MONTH LOCKED (GROUPED BY MONTH)
+   9. GET CLIENTS WITH UPLOADED DOCS BUT MONTH LOCKED - NO CHANGE NEEDED (ALREADY MULTI-MONTH)
 ================================ */
 router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
     try {
@@ -1430,29 +1429,23 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
             }
         ).lean();
 
-        // Initialize monthsData array
         const monthsData = [];
 
-        // For EACH month in the date range
         for (const monthInfo of dateRange.months) {
             const yearKey = String(monthInfo.year);
             const monthKey = String(monthInfo.month);
             const monthClients = [];
 
-            // Check each client for this specific month
             allClients.forEach(client => {
                 if (!client.documents) return;
 
                 const monthData = client.documents?.[yearKey]?.[monthKey];
                 if (!monthData) return;
 
-                // Check if month is locked
                 if (!monthData.isLocked) return;
 
-                // Check if ANY file exists in ANY category
                 let hasAnyFile = false;
 
-                // Check main categories
                 ['sales', 'purchase', 'bank'].forEach(category => {
                     const categoryData = monthData[category];
                     if (categoryData?.files && categoryData.files.length > 0) {
@@ -1460,7 +1453,6 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
                     }
                 });
 
-                // Check other categories
                 if (monthData.other && Array.isArray(monthData.other)) {
                     monthData.other.forEach(otherCategory => {
                         if (otherCategory.document?.files && otherCategory.document.files.length > 0) {
@@ -1469,9 +1461,7 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
                     });
                 }
 
-                // If month is locked AND has at least one file
                 if (hasAnyFile) {
-                    // Count total files
                     let fileCount = 0;
                     ['sales', 'purchase', 'bank'].forEach(category => {
                         const categoryData = monthData[category];
@@ -1499,7 +1489,6 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
                 }
             });
 
-            // Only add month to results if there are clients
             if (monthClients.length > 0) {
                 const monthName = new Date(monthInfo.year, monthInfo.month - 1, 1)
                     .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
@@ -1514,10 +1503,8 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
             }
         }
 
-        // Calculate total clients across all months
         const totalClients = monthsData.reduce((sum, month) => sum + month.count, 0);
 
-        // Add Activity Log
         try {
             await ActivityLog.create({
                 userName: req.user.name,
@@ -1576,6 +1563,7 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
         });
     }
 });
+
 
 
 /* ===============================

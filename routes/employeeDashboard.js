@@ -10,7 +10,9 @@ const router = express.Router();
 
 // Console logging
 const logToConsole = (type, operation, data) => {
-  const timestamp = new Date().toLocaleString("en-IN");
+  const timestamp = new Date().toLocaleString("en-IN", {
+    timeZone: "Europe/Helsinki"
+  });
   console.log(`[${timestamp}] ${type}: ${operation}`, data ? JSON.stringify(data, null, 2) : '');
 };
 
@@ -526,7 +528,10 @@ const getAllNotesForEmployeeAlert = async (employeeId, limit = 5) => {
           const monthData = yearData[month];
           if (!monthData || typeof monthData !== 'object') continue;
 
-          const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
+          const monthName = new Date(year, month - 1).toLocaleString('default', {
+            month: 'long',
+            timeZone: "Europe/Helsinki"
+          });
 
           // Month notes → CLIENT
           if (monthData.monthNotes && Array.isArray(monthData.monthNotes)) {
@@ -786,7 +791,7 @@ router.post("/notes/mark-all-viewed", auth, async (req, res) => {
     // Get employee info for activity log
     const employee = await Employee.findOne({ employeeId }).lean();
 
-    // Create activity log
+    // Create activity log - REMOVED dateTime line
     await ActivityLog.create({
       userName: employee?.name || "Employee",
       role: "EMPLOYEE",
@@ -794,7 +799,6 @@ router.post("/notes/mark-all-viewed", auth, async (req, res) => {
       employeeName: employee?.name || "Employee",
       action: "EMPLOYEE_NOTES_VIEWED",
       details: `Employee "${employee?.name || "Employee"}" marked ${result.notesMarked} client notes as viewed`,
-      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         employeeId,
         employeeName: employee?.name || "Employee",
@@ -922,7 +926,7 @@ router.get("/notes/all-notes", auth, async (req, res) => {
     // Get employee info for activity log
     const employee = await Employee.findOne({ employeeId }).lean();
 
-    // Create activity log
+    // Create activity log - REMOVED dateTime line
     await ActivityLog.create({
       userName: employee?.name || "Employee",
       role: "EMPLOYEE",
@@ -930,7 +934,6 @@ router.get("/notes/all-notes", auth, async (req, res) => {
       employeeName: employee?.name || "Employee",
       action: "EMPLOYEE_ALL_NOTES_VIEWED",
       details: `Employee "${employee?.name || "Employee"}" viewed all notes (${result.totalNotes} total, ${result.unviewedCount} unviewed)`,
-      // dateTime: new Date().toLocaleString("en-IN"),
       metadata: {
         employeeId,
         employeeName: employee?.name || "Employee",
@@ -1145,7 +1148,10 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         monthData.push({
           year: month.year,
           month: month.month,
-          monthName: new Date(month.year, month.month - 1).toLocaleString('default', { month: 'long' }),
+          monthName: new Date(month.year, month.month - 1).toLocaleString('default', {
+            month: 'long',
+            timeZone: "Europe/Helsinki"
+          }),
 
           clients: clientsForMonth,
 
@@ -1195,7 +1201,8 @@ router.get("/dashboard/overview", auth, async (req, res) => {
       activeSince: new Date(employee.createdAt).toLocaleDateString('en-IN', {
         day: '2-digit',
         month: 'short',
-        year: 'numeric'
+        year: 'numeric',
+        timeZone: "Europe/Helsinki"
       })
     };
 
@@ -1208,7 +1215,6 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         employeeName: employee.name,
         action: "EMPLOYEE_DASHBOARD_VIEWED",
         details: `Employee "${employee.name}" viewed dashboard with filter: ${timeFilter}. Summary: ${allTasksSummary.totalAssigned} tasks assigned, ${allTasksSummary.pendingTasks} pending, ${unviewedNotesCount} unviewed notes`,
-        dateTime: new Date(),
         metadata: {
           timeFilter,
           customStart: customStart || null,
@@ -1247,7 +1253,10 @@ router.get("/dashboard/overview", auth, async (req, res) => {
       months: months.map(m => ({
         year: m.year,
         month: m.month,
-        display: `${new Date(m.year, m.month - 1).toLocaleString('default', { month: 'long' })} ${m.year}`
+        display: `${new Date(m.year, m.month - 1).toLocaleString('default', {
+          month: 'long',
+          timeZone: "Europe/Helsinki"
+        })} ${m.year}`
       })),
       data: monthData,
       summaries: {
@@ -1400,7 +1409,6 @@ router.get("/dashboard/month-details", auth, async (req, res) => {
         employeeName: employee.name,
         action: "EMPLOYEE_MONTH_DETAILS_VIEWED",
         details: `Employee "${employee.name}" viewed details for ${month}/${year}. Found ${detailedClients.length} clients, ${allTasks.length} tasks, ${allNotes.length} notes (${unviewedNotesCount} unviewed)`,
-        dateTime: new Date(),
         metadata: {
           year: parseInt(year),
           month: parseInt(month),
@@ -1447,7 +1455,10 @@ router.get("/dashboard/month-details", auth, async (req, res) => {
       month: {
         year: parseInt(year),
         month: parseInt(month),
-        monthName: new Date(year, month - 1).toLocaleString('default', { month: 'long' })
+        monthName: new Date(year, month - 1).toLocaleString('default', {
+          month: 'long',
+          timeZone: "Europe/Helsinki"
+        })
       },
 
       clients: detailedClients,
@@ -1544,7 +1555,6 @@ router.get("/dashboard/client-contact", auth, async (req, res) => {
         clientName: client.name,
         action: "EMPLOYEE_CLIENT_CONTACT_VIEWED",
         details: `Employee "${employee?.name || "Employee"}" viewed contact details for client "${client.name}"`,
-        dateTime: new Date(),
         metadata: {
           clientId: client.clientId,
           clientName: client.name,
@@ -1592,16 +1602,6 @@ router.get("/dashboard/client-contact", auth, async (req, res) => {
     });
   }
 });
-
-
-
-
-
-
-
-
-
-
 
 /* ===============================
    TEST ROUTE

@@ -5,7 +5,9 @@ const sendEmail = require('../utils/sendEmail');
 
 // Console logging helper
 const logToConsole = (type, operation, data) => {
-  const timestamp = new Date().toLocaleString("en-IN");
+  const timestamp = new Date().toLocaleString("en-IN", {
+    timeZone: "Europe/Helsinki"  // ← ADD THIS
+  });
   console.log(`[${timestamp}] ${type}: ${operation}`, data);
 };
 
@@ -204,8 +206,10 @@ const processScheduledPlanChanges = async () => {
 // Schedule to run daily at 2:00 AM
 const schedulePlanChangeCron = () => {
   // Run every day at 2:00 AM
-  cron.schedule('0 2 * * *', processScheduledPlanChanges);
-  
+  cron.schedule('0 2 * * *', processScheduledPlanChanges, {
+    timezone: "Europe/Helsinki"
+  });
+
   logToConsole("INFO", "CRON_PLAN_CHANGE_SCHEDULED", {
     schedule: "Daily at 2:00 AM",
     timezone: "System timezone"

@@ -62,7 +62,7 @@ const logToConsole = (type, operation, data) => {
 };
 
 /* ===============================
-   HELPER: GET MONTH DATA
+   HELPER: GET MONTH DATA - WITH ACTIVE STATUS CALCULATION
 ================================ */
 const getMonthData = (client, year, month) => {
     const y = String(year);
@@ -73,6 +73,45 @@ const getMonthData = (client, year, month) => {
     }
 
     if (!client.documents.get(y).has(m)) {
+        // ✅ CALCULATE MONTH ACTIVE STATUS BASED ON DEACTIVATION/REACTIVATION DATES
+        let monthActiveStatus = 'active';
+
+        // Create date for first day of requested month
+        const requestedMonthDate = new Date(parseInt(year), parseInt(month) - 1, 1);
+
+        // Check if client was ever deactivated
+        if (client.deactivatedAt) {
+            const deactivationDate = new Date(client.deactivatedAt);
+            // Create date for first day of deactivation month
+            const deactivationMonthStart = new Date(
+                deactivationDate.getFullYear(),
+                deactivationDate.getMonth(), // getMonth() returns 0-11
+                1
+            );
+
+            // If requested month is ON or AFTER deactivation month
+            if (requestedMonthDate >= deactivationMonthStart) {
+                monthActiveStatus = 'inactive';
+            }
+        }
+
+        // Check if client was reactivated (this overrides deactivation)
+        if (client.reactivatedAt && monthActiveStatus === 'inactive') {
+            const reactivationDate = new Date(client.reactivatedAt);
+            // Create date for first day of reactivation month
+            const reactivationMonthStart = new Date(
+                reactivationDate.getFullYear(),
+                reactivationDate.getMonth(), // getMonth() returns 0-11
+                1
+            );
+
+            // If requested month is ON or AFTER reactivation month
+            if (requestedMonthDate >= reactivationMonthStart) {
+                monthActiveStatus = 'active';
+            }
+        }
+
+        // Create new month data with calculated active status
         client.documents.get(y).set(m, {
             sales: {
                 files: [],
@@ -95,7 +134,12 @@ const getMonthData = (client, year, month) => {
             other: [],
             isLocked: false,
             wasLockedOnce: false,
-            monthNotes: []
+            monthNotes: [],
+            accountingDone: false,
+            // ✅ CORRECT ACTIVE STATUS BASED ON DATES
+            monthActiveStatus: monthActiveStatus,
+            lockedAt: null,
+            lockedBy: null
         });
     }
 
@@ -332,8 +376,11 @@ const sendNotificationEmails = async ({
     }
 };
 
+
+
+
 /* ===============================
-   UPLOAD / UPDATE FILES (MULTIPLE) - UPDATED WITH EMAIL NOTIFICATIONS
+   UPLOAD / UPDATE FILES (MULTIPLE) - UPDATED WITH ACTIVE MONTH CHECK
 ================================ */
 router.post("/upload", auth, upload.array("files"),
     async (req, res) => {
@@ -361,6 +408,13 @@ router.post("/upload", auth, upload.array("files"),
             }
 
             const monthData = getMonthData(client, year, month);
+
+            // ✅ NEW: CHECK IF MONTH IS ACTIVE FOR THIS CLIENT
+            if (monthData.monthActiveStatus === 'inactive') {
+                return res.status(403).json({
+                    message: `Cannot upload files for ${month}/${year} - Client was inactive during this period`
+                });
+            }
 
             // MONTH LOCK CHECK
             if (monthData.isLocked) {
@@ -640,7 +694,7 @@ router.post("/upload", auth, upload.array("files"),
 );
 
 /* ===============================
-   GET MONTH DATA
+   GET MONTH DATA - UPDATED TO INCLUDE ACTIVE STATUS
 ================================ */
 router.get("/month-data", auth, async (req, res) => {
     try {
@@ -782,8 +836,11 @@ router.get("/deleted-files", auth, async (req, res) => {
     }
 });
 
+
+
+
 /* ===============================
-   DELETE SINGLE FILE - UPDATED WITH EMAIL NOTIFICATIONS
+   DELETE SINGLE FILE - UPDATED WITH ACTIVE MONTH CHECK
 ================================ */
 router.delete("/delete-file", auth, async (req, res) => {
     try {
@@ -805,6 +862,13 @@ router.delete("/delete-file", auth, async (req, res) => {
         }
 
         const monthData = getMonthData(client, year, month);
+
+        // ✅ NEW: CHECK IF MONTH IS ACTIVE FOR THIS CLIENT
+        if (monthData.monthActiveStatus === 'inactive') {
+            return res.status(403).json({
+                message: `Cannot delete files for ${month}/${year} - Client was inactive during this period`
+            });
+        }
 
         // Check if category is locked
         const category = type === "other"
@@ -875,14 +939,6 @@ router.delete("/delete-file", auth, async (req, res) => {
                 addedAt: new Date()
             });
         }
-
-
-        // monthData.monthNotes = monthData.monthNotes || [];
-        // monthData.monthNotes.push({
-        //     note: `File deleted from ${type}${categoryName ? ` (${categoryName})` : ''}: ${fileName}`,
-        //     addedBy: client.clientId,
-        //     addedAt: new Date()
-        // });
 
         await client.save();
 
@@ -964,8 +1020,10 @@ router.delete("/delete-file", auth, async (req, res) => {
     }
 });
 
+
+
 /* ===============================
-   SAVE & LOCK MONTH
+   SAVE & LOCK MONTH - UPDATED WITH ACTIVE MONTH CHECK
 ================================ */
 router.post("/save-lock", auth, async (req, res) => {
     try {
@@ -980,6 +1038,13 @@ router.post("/save-lock", auth, async (req, res) => {
         }
 
         const monthData = getMonthData(client, year, month);
+
+        // ✅ NEW: CHECK IF MONTH IS ACTIVE FOR THIS CLIENT
+        if (monthData.monthActiveStatus === 'inactive') {
+            return res.status(403).json({
+                message: `Cannot lock month ${month}/${year} - Client was inactive during this period`
+            });
+        }
 
         // LOG LOCK REQUEST
         logToConsole("INFO", "CLIENT_MONTH_LOCK_REQUEST", {
@@ -1195,8 +1260,11 @@ router.get("/test-simple", (req, res) => {
     });
 });
 
+
+
+
 /* ===============================
-   UPLOAD & LOCK CATEGORY - UPDATED WITH EMAIL NOTIFICATIONS
+   UPLOAD & LOCK CATEGORY - UPDATED WITH ACTIVE MONTH CHECK
 ================================ */
 router.post("/upload-and-lock", auth, upload.array("files"),
     async (req, res) => {
@@ -1222,6 +1290,13 @@ router.post("/upload-and-lock", auth, upload.array("files"),
             }
 
             const monthData = getMonthData(client, year, month);
+
+            // ✅ NEW: CHECK IF MONTH IS ACTIVE FOR THIS CLIENT
+            if (monthData.monthActiveStatus === 'inactive') {
+                return res.status(403).json({
+                    message: `Cannot upload files for ${month}/${year} - Client was inactive during this period`
+                });
+            }
 
             // Check if category is already locked
             if (type === "other") {
@@ -1321,13 +1396,6 @@ router.post("/upload-and-lock", auth, upload.array("files"),
                     addedBy: client.clientId,
                     addedAt: new Date()
                 });
-
-                // monthData.monthNotes = monthData.monthNotes || [];
-                // monthData.monthNotes.push({
-                //     note,
-                //     addedBy: client.clientId,
-                //     addedAt: new Date()
-                // });
             }
 
             // LOCK THE CATEGORY
@@ -1447,5 +1515,4 @@ router.post("/upload-and-lock", auth, upload.array("files"),
         }
     }
 );
-
 module.exports = router;

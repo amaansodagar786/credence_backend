@@ -2,13 +2,14 @@ const paymentReminderTemplate = (client) => {
   const currentDate = new Date().toLocaleDateString("en-GB", {
     day: "numeric",
     month: "long",
-    year: "numeric"
+    year: "numeric",
+    timeZone: "Europe/Helsinki"  // Finland timezone
   });
   
   const currentTime = new Date().toLocaleTimeString("en-IN", {
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "Asia/Kolkata"
+    timeZone: "Europe/Helsinki"  // Finland timezone
   });
   
   return {
@@ -52,7 +53,7 @@ const paymentReminderTemplate = (client) => {
             <h3 style="margin-top: 0; color: #ff9800;">💰 MONTHLY PAYMENT REMINDER</h3>
             <p>This is a friendly reminder regarding your monthly accounting service payment.</p>
             <p class="important-note">Please ensure timely payment for uninterrupted services.</p>
-            <p><strong>Reminder Sent:</strong> ${currentDate} at ${currentTime} IST</p>
+            <p><strong>Reminder Sent:</strong> ${currentDate} at ${currentTime} EET/EEST</p>
           </div>
           
           <div class="client-info">
@@ -96,7 +97,7 @@ const paymentReminderTemplate = (client) => {
             <p><strong>Billing Department:</strong> ${process.env.EMAIL_USER || "billing@credence-accounting.com"}</p>
             <p><strong>Support Email:</strong> support@credence-accounting.com</p>
             <p><strong>Phone Support:</strong> +91 12345 67890</p>
-            <p><strong>Business Hours:</strong> Monday - Friday, 9:00 AM - 6:00 PM (IST)</p>
+            <p><strong>Business Hours:</strong> Monday - Friday, 9:00 AM - 6:00 PM (EET/EEST)</p>
           </div>
           
           <p style="margin-top: 25px; font-size: 14px; color: #666;">

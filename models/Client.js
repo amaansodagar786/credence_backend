@@ -21,14 +21,10 @@ const noteSchema = new mongoose.Schema(
     addedBy: { type: String },
     addedAt: { type: Date, default: Date.now },
     employeeId: { type: String },
-
-    // NEW: Track who has viewed this note
     viewedBy: {
       type: [noteViewSchema],
       default: []
     },
-
-    // NEW: Quick-check fields for filtering
     isViewedByClient: { type: Boolean, default: false },
     isViewedByEmployee: { type: Boolean, default: false },
     isViewedByAdmin: { type: Boolean, default: false }
@@ -95,7 +91,17 @@ const monthDataSchema = new mongoose.Schema(
     monthNotes: [noteSchema],
     accountingDone: { type: Boolean, default: false },
     accountingDoneAt: Date,
-    accountingDoneBy: String
+    accountingDoneBy: String,
+
+    // ✅ NEW: Track if this month was active/inactive for the client
+    monthActiveStatus: {
+      type: String,
+      enum: ['active', 'inactive'],
+      default: 'active'
+    },
+    monthStatusChangedAt: Date,
+    monthStatusChangedBy: String,
+    monthStatusReason: String
   },
   { _id: false }
 );
@@ -134,18 +140,18 @@ const employeeAssignmentSchema = new mongoose.Schema(
 );
 
 /* ===============================
-   UPDATED CLIENT SCHEMA WITH CORRECT PLAN MANAGEMENT
+   UPDATED CLIENT SCHEMA WITH MONTHLY ACTIVE STATUS TRACKING
 ================================ */
 const clientSchema = new mongoose.Schema(
   {
-    // EXISTING FIELDS (DO NOT CHANGE)
+    // EXISTING FIELDS
     clientId: { type: String, unique: true, required: true },
     name: String,
     email: String,
     phone: String,
     address: String,
     password: String,
-    isActive: { type: Boolean, default: true },
+    isActive: { type: Boolean, default: true }, // Overall client status
 
     // ADDITIONAL FIELDS FROM ENROLLMENT
     firstName: String,
@@ -160,10 +166,10 @@ const clientSchema = new mongoose.Schema(
     businessNature: String,
     registerTrade: String,
 
-    // ✅ CORRECT PLAN FIELDS:
-    planSelected: { type: String, default: '' }, // MAIN PLAN - shows in admin panel
-    currentPlan: { type: String, default: '' },  // CURRENT BILLING PLAN
-    nextMonthPlan: { type: String, default: '' }, // PLAN FOR NEXT MONTH
+    // PLAN FIELDS
+    planSelected: { type: String, default: '' },
+    currentPlan: { type: String, default: '' },
+    nextMonthPlan: { type: String, default: '' },
 
     // Plan change tracking
     planChangeRequestedAt: Date,
@@ -182,6 +188,30 @@ const clientSchema = new mongoose.Schema(
     // STATUS & TRACKING
     enrollmentId: String,
     enrollmentDate: Date,
+
+    // ✅ NEW: Track overall client status history
+    globalStatusHistory: [
+      {
+        status: { type: String, enum: ['active', 'inactive'], required: true },
+        changedAt: { type: Date, default: Date.now },
+        changedBy: { type: String, required: true }, // adminId
+        adminName: String,
+        reason: String,
+        metadata: {
+          deactivatedMonths: [String], // Which months were affected (YYYY-M)
+          reactivatedMonths: [String]
+        }
+      }
+    ],
+
+    // ✅ NEW: Track when client was deactivated/reactivated
+    deactivatedAt: Date,
+    deactivatedBy: String,
+    deactivationReason: String,
+
+    reactivatedAt: Date,
+    reactivatedBy: String,
+    reactivationReason: String,
 
     // EXISTING DOCUMENT STRUCTURE
     documents: {

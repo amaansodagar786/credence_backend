@@ -1,3 +1,6 @@
+process.env.TZ = 'Europe/Helsinki';
+console.log(new Date()); 
+
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");

@@ -11,7 +11,9 @@ const router = express.Router();
    LOGGING UTILITY
 ================================ */
 const logToConsole = (type, operation, data) => {
-    const timestamp = new Date().toLocaleString("en-IN");
+    const timestamp = new Date().toLocaleString("en-IN", {
+        timeZone: "Europe/Helsinki"
+    });
     const logEntry = {
         timestamp,
         type,
@@ -31,7 +33,8 @@ const notifyAdminAboutFailedUploadReminders = async (failedClients, errorReason)
         const currentDate = new Date().toLocaleDateString("en-GB", {
             day: "numeric",
             month: "long",
-            year: "numeric"
+            year: "numeric",
+            timeZone: "Europe/Helsinki"
         });
 
         // Get previous month for context
@@ -39,7 +42,8 @@ const notifyAdminAboutFailedUploadReminders = async (failedClients, errorReason)
         const previousMonth = new Date(currentDateObj.getFullYear(), currentDateObj.getMonth() - 1, 1);
         const previousMonthYear = previousMonth.toLocaleDateString("en-GB", {
             month: "long",
-            year: "numeric"
+            year: "numeric",
+            timeZone: "Europe/Helsinki"
         });
 
         const failedList = failedClients.map(client =>
@@ -109,13 +113,16 @@ const sendDocumentUploadReminders = async () => {
     const previousMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
     const previousMonthYear = previousMonth.toLocaleDateString("en-GB", {
         month: "long",
-        year: "numeric"
+        year: "numeric",
+        timeZone: "Europe/Helsinki"
     });
 
     logToConsole("INFO", "DOCUMENT_UPLOAD_REMINDER_STARTED", {
         operationId,
         documentMonth: previousMonthYear,
-        startTime: new Date(startTime).toLocaleString("en-IN")
+        startTime: new Date(startTime).toLocaleString("en-IN", {
+            timeZone: "Europe/Helsinki"
+        })
     });
 
     try {
@@ -193,13 +200,12 @@ const sendDocumentUploadReminders = async () => {
             }
         }
 
-        // 3. LOG ACTIVITY
+        // 3. LOG ACTIVITY - REMOVED dateTime line
         await ActivityLog.create({
             userName: "SYSTEM",
             role: "SYSTEM",
             action: "DOCUMENT_UPLOAD_REMINDER_SENT",
-            details: `Document upload reminders sent for ${previousMonthYear} to ${results.sent.length} active clients. ${results.failed.length} failed.`,
-            // dateTime: new Date().toLocaleString("en-IN")
+            details: `Document upload reminders sent for ${previousMonthYear} to ${results.sent.length} active clients. ${results.failed.length} failed.`
         });
 
         // 4. NOTIFY ADMIN IF ANY FAILURES
@@ -253,16 +259,15 @@ const sendDocumentUploadReminders = async () => {
 };
 
 /* ===============================
-   SCHEDULED JOBS
+   SCHEDULED JOBS - UPDATED TO FINLAND TIME
 ================================ */
-// Schedule for 15th of each month at 12:00 PM IST
-// cron.schedule('0 12 15 * *', async () => { 
+// Schedule for 15th of each month at 12:00 PM Finland time
 cron.schedule('10 12 3 * *', async () => {
     console.log("⏰ Running document upload reminder (15th of month)...");
     await sendDocumentUploadReminders();
 }, {
     scheduled: true,
-    timezone: "Asia/Kolkata"
+    timezone: "Europe/Helsinki"  // Changed from Asia/Kolkata
 });
 
 /* ===============================
@@ -296,7 +301,8 @@ router.get("/test", async (req, res) => {
         const previousMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
         const previousMonthYear = previousMonth.toLocaleDateString("en-GB", {
             month: "long",
-            year: "numeric"
+            year: "numeric",
+            timeZone: "Europe/Helsinki"
         });
 
         res.json({
@@ -305,10 +311,12 @@ router.get("/test", async (req, res) => {
             status: "Active",
             activeClients: activeClients.length,
             currentDocumentMonth: previousMonthYear,
-            nextReminderDate: "15th of each month at 12:00 PM IST",
+            nextReminderDate: "15th of each month at 12:00 PM EET/EEST",  // Changed from IST
             adminEmail: adminEmail || "NOT CONFIGURED",
             emailService: adminEmail ? "Configured" : "Not Configured",
-            currentTime: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+            currentTime: new Date().toLocaleString("en-IN", { 
+                timeZone: "Europe/Helsinki"  // Changed from Asia/Kolkata
+            })
         });
 
     } catch (error) {
@@ -328,19 +336,20 @@ router.get("/status", (req, res) => {
     const previousMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
     const previousMonthYear = previousMonth.toLocaleDateString("en-GB", {
         month: "long",
-        year: "numeric"
+        year: "numeric",
+        timeZone: "Europe/Helsinki"
     });
 
     res.json({
         success: true,
         message: "Document Upload Reminder System is active",
         schedule: {
-            date: "15th of each month at 12:00 PM IST",
+            date: "15th of each month at 12:00 PM EET/EEST",  // Changed from IST
             description: "Monthly document upload reminder"
         },
         currentDocumentPeriod: previousMonthYear,
         currentTime: new Date().toLocaleString("en-IN", {
-            timeZone: "Asia/Kolkata"
+            timeZone: "Europe/Helsinki"  // Changed from Asia/Kolkata
         }),
         adminEmail: process.env.EMAIL_USER || "Not configured"
     });

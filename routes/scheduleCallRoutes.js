@@ -111,7 +111,7 @@ router.post("/submit", async (req, res) => {
             <p><strong>Name:</strong> ${fullName}</p>
             <p><strong>Phone:</strong> ${phone}</p>
             <p><strong>Email:</strong> ${email}</p>
-            <p><strong>Submitted:</strong> ${new Date().toLocaleString('en-IN')}</p>
+            <p><strong>Submitted:</strong> ${new Date().toLocaleString('en-IN', { timeZone: "Europe/Helsinki" })}</p>
           </div>
           
           <p>Please contact the client within 24-48 hours.</p>
@@ -129,12 +129,12 @@ router.post("/submit", async (req, res) => {
             console.error("❌ ADMIN EMAIL FAILED:", emailError.message);
         }
 
-        // Activity log
+        // Activity log - REMOVED dateTime line
         await ActivityLog.create({
             userName: fullName,
             action: "CALL_REQUEST_SUBMITTED",
-            details: `Call request submitted by ${fullName} (${phone})`,
-            // dateTime: new Date().toLocaleString("en-IN")
+            details: `Call request submitted by ${fullName} (${phone})`
+            // dateTime line removed
         });
 
         // Success response
@@ -334,7 +334,7 @@ router.post("/connect-us/submit", async (req, res) => {
             <p><strong>Email:</strong> ${email}</p>
             <p><strong>Company:</strong> ${companyName || 'Not provided'}</p>
             <p><strong>Service Interested:</strong> ${selectedService}</p>
-            <p><strong>Submitted:</strong> ${new Date().toLocaleString('en-IN')}</p>
+            <p><strong>Submitted:</strong> ${new Date().toLocaleString('en-IN', { timeZone: "Europe/Helsinki" })}</p>
           </div>
           
           <div style="background: #fff5f5; padding: 15px; border-radius: 6px;">
@@ -356,12 +356,12 @@ router.post("/connect-us/submit", async (req, res) => {
             console.error("❌ ADMIN EMAIL FAILED:", emailError.message);
         }
 
-        // Activity log
+        // Activity log - REMOVED dateTime line
         await ActivityLog.create({
             userName: name,
             action: "CONNECT_REQUEST_SUBMITTED",
-            details: `Connect request for ${selectedService} by ${name} (${mobile})`,
-            // dateTime: new Date().toLocaleString("en-IN")
+            details: `Connect request for ${selectedService} by ${name} (${mobile})`
+            // dateTime line removed
         });
 
         // Success response

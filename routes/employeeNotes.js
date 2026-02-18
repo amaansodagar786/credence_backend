@@ -6,7 +6,9 @@ const Employee = require("../models/Employee");
 
 // Console logging utility (same as admin)
 const logToConsole = (type, operation, data) => {
-  const timestamp = new Date().toLocaleString("en-IN");
+  const timestamp = new Date().toLocaleString("en-IN", {
+    timeZone: "Europe/Helsinki"  // Finland timezone
+  });
   const colors = {
     INFO: '\x1b[36m',
     SUCCESS: '\x1b[32m',
@@ -530,7 +532,10 @@ router.get("/assigned-clients", async (req, res) => {
           return {
             year: parseInt(year),
             month: parseInt(month),
-            monthName: new Date(year, month - 1).toLocaleString('default', { month: 'long' })
+            monthName: new Date(year, month - 1).toLocaleString('default', {
+              month: 'long',
+              timeZone: "Europe/Helsheimong"  // Finland timezone
+            })
           };
         })
         .sort((a, b) => {
@@ -739,7 +744,10 @@ router.get("/client/:clientId/notes", async (req, res) => {
         notesByMonth[monthKey] = {
           year: note.year,
           month: note.month,
-          monthName: new Date(note.year, note.month - 1).toLocaleString('default', { month: 'long' }),
+          monthName: new Date(note.year, note.month - 1).toLocaleString('default', {
+            month: 'long',
+            timeZone: "Europe/Helsinki"  // Finland timezone
+          }),
           notes: [],
           unreadCount: 0,
           readCount: 0
@@ -766,7 +774,10 @@ router.get("/client/:clientId/notes", async (req, res) => {
         return {
           year: parseInt(year),
           month: parseInt(month),
-          monthName: new Date(year, month - 1).toLocaleString('default', { month: 'long' })
+          monthName: new Date(year, month - 1).toLocaleString('default', {
+            month: 'long',
+            timeZone: "Europe/Helsinki"  // Finland timezone
+          })
         };
       })
       .sort((a, b) => {
