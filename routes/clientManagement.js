@@ -384,7 +384,7 @@ router.patch("/update-client/:clientId", auth, async (req, res) => {
           </head>
           <body>
             <div class="header">
-              <h1>Credence Accounting Services</h1>
+              <h1>Credence Enterprise Accounting Services</h1>
               <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
             </div>
             
@@ -394,7 +394,7 @@ router.patch("/update-client/:clientId", auth, async (req, res) => {
               <div class="update-box">
                 <h3 style="margin-top: 0; color: #4caf50;">✅ PROFILE UPDATED SUCCESSFULLY</h3>
                 <p>Your client profile has been updated by our admin team. Below are the details of changes made:</p>
-                <p><strong>Updated On:</strong> ${currentDate} at ${currentTime} IST</p>
+                <p><strong>Updated On:</strong> ${currentDate} at ${currentTime} EET/EEST</p>
                 <p><strong>Updated By:</strong> ${req.user.name} (Admin)</p>
               </div>
               
@@ -448,10 +448,9 @@ router.patch("/update-client/:clientId", auth, async (req, res) => {
               
               <div class="contact-info">
                 <h3 class="section-title">📞 Need Assistance?</h3>
-                <p><strong>Support Email:</strong> support@jladgroup.fi</p>
-                <p><strong>Admin Email:</strong> support@jladgroup.fi</p>
-                <p><strong>Phone Support:</strong> +91 12345 67890</p>
-                <p><strong>Business Hours:</strong> Monday - Friday, 9:00 AM - 6:00 PM (IST)</p>
+                <p><strong>Email:</strong> support@jladgroup.fi</p>
+                <p><strong>Phone Support:</strong> +358 45 8591505</p>
+                <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
               </div>
               
               <p style="margin-top: 25px; font-size: 14px; color: #666;">
@@ -460,10 +459,10 @@ router.patch("/update-client/:clientId", auth, async (req, res) => {
             </div>
             
             <div class="footer">
-              <p><strong>Credence Accounting Services</strong></p>
+              <p><strong>Credence Enterprise Accounting Services</strong></p>
               <p>Professional Accounting | VAT Compliance | Business Advisory</p>
               <div class="dev-info">
-                Designed & Developed by <a href="https://techorses.com" target="_blank" class="dev-link">Techorses</a>
+                Developed by Vapautus Media Private Limited
               </div>
               <p style="font-size: 12px; margin-top: 10px;">
                 This is an automated notification email sent to inform you about profile changes.<br>

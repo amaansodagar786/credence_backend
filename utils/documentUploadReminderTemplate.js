@@ -61,7 +61,7 @@ const documentUploadReminderTemplate = (client) => {
       </head>
       <body>
         <div class="header">
-          <h1>Credence Accounting Services</h1>
+          <h1>Credence Enterprise Accounting Services</h1>
           <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
         </div>
         
@@ -80,11 +80,6 @@ const documentUploadReminderTemplate = (client) => {
             <p>If the data is not received by this date, we will assume that there is no data for the month and will proceed with filing a Nil return.</p>
           </div>
           
-          <div class="important-note">
-            <p><strong>📝 Important Information:</strong></p>
-            <p>Kindly be informed that any revision of an already filed Nil return will attract an additional charge equivalent to your one-month plan amount.</p>
-            <p>We request you to please share the required data within the timeline to avoid extra charges and delays.</p>
-          </div>
           
           <div class="client-info">
             <h3 class="section-title">📋 Your Account Information</h3>
@@ -120,10 +115,9 @@ const documentUploadReminderTemplate = (client) => {
           
           <div class="contact-info">
             <h3 class="section-title">📞 Our Contact Information</h3>
-            <p><strong>Support Email:</strong> support@credence-accounting.com</p>
-            <p><strong>Upload Assistance:</strong> uploads@credence-accounting.com</p>
-            <p><strong>Phone Support:</strong> +91 12345 67890</p>
-            <p><strong>Business Hours:</strong> Monday - Friday, 9:00 AM - 6:00 PM (EET/EEST)</p>  <!-- Changed from IST -->
+            <p><strong>Email:</strong> support@jladgroup.fi</p>
+            <p><strong>Phone Support:</strong> +358 45 8591505</p>
+            <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
           </div>
           
           <p style="margin-top: 25px; font-size: 14px; color: #666;">
@@ -132,14 +126,14 @@ const documentUploadReminderTemplate = (client) => {
         </div>
         
         <div class="footer">
-          <p><strong>Credence Accounting Services</strong></p>
+          <p><strong>Credence Enterprise Accounting Services</strong></p>
           <p>Professional Accounting | VAT Compliance | Business Advisory</p>
           <div class="dev-info">
-            Designed & Developed by <a href="https://techorses.com" target="_blank" class="dev-link">Techorses</a>
+            Developed by Vapautus Media Private Limited
           </div>
           <p style="font-size: 12px; margin-top: 10px;">
             This is an automated document upload reminder email.<br>
-            Please do not reply to this email. For queries, contact support@credence-accounting.com<br>
+            Please do not reply to this email. For queries, contact support@jladgroup.fi<br>
             Email sent to: ${client.email}
           </p>
         </div>

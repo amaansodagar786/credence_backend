@@ -128,7 +128,7 @@ router.post("/enroll", async (req, res) => {
     });
 
     // ===========================================
-    // SEND NOTIFICATION EMAIL TO ADMIN
+    // SEND NOTIFICATION EMAIL TO ADMIN (UPDATED)
     // ===========================================
     try {
       const adminEmail = "support@jladgroup.fi";
@@ -176,7 +176,7 @@ router.post("/enroll", async (req, res) => {
           </head>
           <body>
             <div class="header">
-              <h1>Credence Accounting Services</h1>
+              <h1>Credence Enterprise Accounting Services</h1>
               <p style="margin-top: 5px; opacity: 0.9; font-size: 14px;">Admin Notification - New Enrollment</p>
             </div>
             
@@ -184,7 +184,7 @@ router.post("/enroll", async (req, res) => {
               <div class="alert-box">
                 <h2 style="margin-top: 0; color: #2196f3;">📋 New Client Enrollment Received!</h2>
                 <p>A new client has submitted an enrollment form and is awaiting your review.</p>
-                <p><strong>Submission Time:</strong> ${currentDateTime} IST</p>
+                <p><strong>Submission Time:</strong> ${currentDateTime} EET/EEST</p>
               </div>
               
               <div class="info-box">
@@ -264,13 +264,13 @@ router.post("/enroll", async (req, res) => {
             </div>
             
             <div class="footer">
-              <p style="font-size: 16px; margin-bottom: 10px;"><strong>Credence Accounting Services - Admin Panel</strong></p>
+              <p style="font-size: 16px; margin-bottom: 10px;"><strong>Credence Enterprise Accounting Services - Admin Panel</strong></p>
               <p style="margin-bottom: 10px; opacity: 0.9; font-size: 14px;">Professional Client Management System</p>
               <div class="dev-info">
-                System Notification | Designed & Developed by <a href="https://techorses.com" target="_blank" class="dev-link">Techorses</a>
+                System Notification | Developed by Vapautus Media Private Limited
               </div>
               <p style="font-size: 12px; margin-top: 15px; opacity: 0.7;">
-                © ${new Date().getFullYear()} Credence Accounting Services. All rights reserved.<br>
+                © ${new Date().getFullYear()} Credence Enterprise Accounting Services. All rights reserved.<br>
                 This is an automated notification email from the enrollment system.
               </p>
             </div>
@@ -297,12 +297,12 @@ router.post("/enroll", async (req, res) => {
     }
 
     // ===========================================
-    // SEND CONFIRMATION EMAIL TO CLIENT
+    // SEND CONFIRMATION EMAIL TO CLIENT (UPDATED)
     // ===========================================
     try {
       await sendEmail(
         enrollment.email,
-        "Enrollment Submitted Successfully - Credence Accounting Services",
+        "Enrollment Submitted Successfully - Credence Enterprise Accounting Services",
         `
           <!DOCTYPE html>
           <html>
@@ -324,7 +324,7 @@ router.post("/enroll", async (req, res) => {
           </head>
           <body>
             <div class="header">
-              <h1>Credence Accounting Services</h1>
+              <h1>Credence Enterprise Accounting Services</h1>
               <p style="margin-top: 5px; opacity: 0.9;">Enrollment Confirmation</p>
             </div>
             
@@ -332,7 +332,7 @@ router.post("/enroll", async (req, res) => {
               <div class="confirmation-box">
                 <h2 style="margin-top: 0; color: #4caf50;">✅ Enrollment Submitted Successfully!</h2>
                 <p>Dear ${enrollment.firstName} ${enrollment.lastName},</p>
-                <p>Thank you for choosing Credence Accounting Services. Your enrollment has been received and is currently under review.</p>
+                <p>Thank you for choosing Credence Enterprise Accounting Services. Your enrollment has been received and is currently under review.</p>
               </div>
               
               <div class="info-box">
@@ -356,10 +356,10 @@ router.post("/enroll", async (req, res) => {
             </div>
             
             <div class="footer">
-              <p><strong>Credence Accounting Services</strong></p>
+              <p><strong>Credence Enterprise Accounting Services</strong></p>
               <p>Professional Accounting | VAT Compliance | Business Advisory</p>
               <div class="dev-info">
-                Designed & Developed by <a href="https://techorses.com" target="_blank" class="dev-link">Techorses</a>
+                Developed by Vapautus Media Private Limited
               </div>
               <p style="font-size: 12px; margin-top: 10px;">
                 This email confirms your enrollment submission.<br>
@@ -437,8 +437,6 @@ router.post("/enroll", async (req, res) => {
     });
   }
 });
-
-
 
 /* ===============================
    ADMIN VIEW ALL ENROLLMENTS
@@ -609,7 +607,7 @@ router.post("/action", auth, async (req, res) => {
     const currentTime = new Date().toLocaleTimeString("en-IN", {
       hour: "2-digit",
       minute: "2-digit",
-      timeZone: "Asia/Kolkata"
+      timeZone: "Europe/Helsinki"
     });
 
     // 2. REJECT ENROLLMENT
@@ -626,11 +624,11 @@ router.post("/action", auth, async (req, res) => {
         adminId: req.user.adminId
       });
 
-      // Send professional rejection email
+      // Send professional rejection email (UPDATED)
       try {
         await sendEmail(
           enrollment.email,
-          `Application Status Update - ${enrollment.businessName || "Your Business"} | Credence Accounting Services`,
+          `Application Status Update - ${enrollment.businessName || "Your Business"} | Credence Enterprise Accounting Services`,
           `
             <!DOCTYPE html>
             <html>
@@ -654,20 +652,20 @@ router.post("/action", auth, async (req, res) => {
             </head>
             <body>
               <div class="header">
-                <h1>Credence Accounting Services</h1>
+                <h1>Credence Enterprise Accounting Services</h1>
                 <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
               </div>
               
               <div class="content">
                 <h2 style="color: #2c3e50; margin-top: 0;">Dear ${enrollment.firstName} ${enrollment.lastName},</h2>
                 
-                <p>Thank you for your interest in Credence Accounting Services. We have reviewed your application submitted on ${new Date(enrollment.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}.</p>
+                <p>Thank you for your interest in Credence Enterprise Accounting Services. We have reviewed your application submitted on ${new Date(enrollment.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}.</p>
                 
                 <div class="status-box">
                   <h3 style="color: #ff6b6b; margin-top: 0;">Application Status: <strong>Rejected</strong></h3>
                   <p><strong>Application ID:</strong> ${enrollment.enrollId}</p>
                   <p><strong>Review Date:</strong> ${currentDate}</p>
-                  <p><strong>Review Time:</strong> ${currentTime} IST</p>
+                  <p><strong>Review Time:</strong> ${currentTime} EET/EEST</p>
                   <p><strong>Review By:</strong> ${req.user.name || "Administrator"}</p>
                 </div>
                 
@@ -688,18 +686,18 @@ router.post("/action", auth, async (req, res) => {
                 
                 <div class="contact-info">
                   <h4 class="section-title">📞 Our Contact Information</h4>
-                  <p><strong>Email:</strong> support@credence-accounting.com</p>
-                  <p><strong>Phone:</strong> +91 12345 67890</p>
-                  <p><strong>Business Hours:</strong> Mon-Fri, 9:00 AM - 6:00 PM IST</p>
+                  <p><strong>Email:</strong> support@jladgroup.fi</p>
+                  <p><strong>Phone Support:</strong> +358 45 8591505</p>
+                  <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
                 </div>
               </div>
               
               <div class="footer">
-                <p><strong>Credence Accounting Services</strong></p>
+                <p><strong>Credence Enterprise Accounting Services</strong></p>
                 <p>Professional Accounting | VAT Compliance | Business Advisory</p>
-                <p>© ${new Date().getFullYear()} Credence Accounting Services. All rights reserved.</p>
+                <p>© ${new Date().getFullYear()} Credence Enterprise Accounting Services. All rights reserved.</p>
                 <div class="dev-info">
-                  Designed & Developed by <a href="https://techorses.com" target="_blank" class="dev-link">Techorses</a>
+                  Developed by Vapautus Media Private Limited
                 </div>
                 <p style="font-size: 12px; margin-top: 10px;">
                   This email was sent to ${enrollment.email} regarding your application.<br>
@@ -827,7 +825,7 @@ router.post("/action", auth, async (req, res) => {
         adminId: req.user.adminId
       });
 
-      // Send professional welcome email to client
+      // Send professional welcome email to client (UPDATED)
       try {
         logToConsole("DEBUG", "SENDING_WELCOME_EMAIL", {
           to: enrollment.email,
@@ -839,7 +837,7 @@ router.post("/action", auth, async (req, res) => {
 
         await sendEmail(
           enrollment.email,
-          `Welcome to Credence Accounting Services - Account Approved & Activated`,
+          `Welcome to Credence Enterprise Accounting Services - Account Approved & Activated`,
           `
             <!DOCTYPE html>
             <html>
@@ -889,7 +887,7 @@ router.post("/action", auth, async (req, res) => {
             </head>
             <body>
               <div class="header">
-                <h1>Credence Accounting Services</h1>
+                <h1>Credence Enterprise Accounting Services</h1>
                 <p style="margin-top: 5px; opacity: 0.9; font-size: 16px;">Professional Accounting | VAT Compliance | Business Advisory</p>
               </div>
               
@@ -928,7 +926,7 @@ router.post("/action", auth, async (req, res) => {
                   <table>
                     <tr>
                       <th>Application Approved On</th>
-                      <td>${currentDate} at ${currentTime} IST</td>
+                      <td>${currentDate} at ${currentTime} EET/EEST</td>
                     </tr>
                     <tr>
                       <th>Approved By</th>
@@ -953,7 +951,7 @@ router.post("/action", auth, async (req, res) => {
                   </table>
                 </div>
 
-                <!-- ADDED: PACKAGE PLANS TABLE (STATIC) -->
+                <!-- PACKAGE PLANS TABLE (STATIC) -->
                 <div class="client-info">
                   <h3 class="section-title">📊 Our Package Plans Overview</h3>
                   <p>Here's a complete overview of all our available packages:</p>
@@ -1004,11 +1002,11 @@ router.post("/action", auth, async (req, res) => {
                       </tr>
                       <tr>
                         <td><strong>Support Availability</strong></td>
-                        <td class="lite-bg">Mon-Fri (9am-4pm)</td>
-                        <td class="taxi-bg">Mon-Fri (9am-4pm)</td>
-                        <td class="premium-bg">Mon-Fri (9am-4pm)</td>
-                        <td class="pro-bg">Mon-Fri (9am-4pm)</td>
-                        <td class="restaurant-bg">Mon-Fri (9am-4pm)</td>
+                        <td class="lite-bg">Mon-Fri (9am-3pm)</td>
+                        <td class="taxi-bg">Mon-Fri (9am-3pm)</td>
+                        <td class="premium-bg">Mon-Fri (9am-3pm)</td>
+                        <td class="pro-bg">Mon-Fri (9am-3pm)</td>
+                        <td class="restaurant-bg">Mon-Fri (9am-3pm)</td>
                       </tr>
                       <tr>
                         <td><strong>Invoice Generation via Email</strong></td>
@@ -1025,7 +1023,7 @@ router.post("/action", auth, async (req, res) => {
                   </p>
                 </div>
 
-                <!-- ADDED: ADDITIONAL SERVICES TABLE (STATIC) -->
+                <!-- ADDITIONAL SERVICES TABLE (STATIC) -->
                 <div class="client-info">
                   <h3 class="section-title">💰 Additional Services & Charges</h3>
                   <p>Applicable only when required | Prices exclude VAT</p>
@@ -1073,7 +1071,7 @@ router.post("/action", auth, async (req, res) => {
                   <h3 class="section-title">✅ Acceptance Confirmation</h3>
                   <p>By using our services and accessing the client portal, you acknowledge and agree to our <strong>Terms & Conditions and Privacy Policy</strong> as mentioned below:</p>
                   <p style="margin-top: 15px;">
-                    <strong>Approval Time:</strong> ${currentDate} at ${currentTime} IST<br>
+                    <strong>Approval Time:</strong> ${currentDate} at ${currentTime} EET/EEST<br>
                     <strong>Service Start Date:</strong> ${currentDate}
                   </p>
                 </div>
@@ -1162,24 +1160,23 @@ router.post("/action", auth, async (req, res) => {
                 
                 <div class="contact-info">
                   <h3 class="section-title">📞 Our Contact Information</h3>
-                  <p><strong>Support Email:</strong> support@credence-accounting.com</p>
-                  <p><strong>Phone Support:</strong> +91 12345 67890</p>
-                  <p><strong>Business Hours:</strong> Monday - Friday, 9:00 AM - 6:00 PM (IST)</p>
-                  <p><strong>Address:</strong> Credence Accounting Services, Business District, City, Country</p>
+                  <p><strong>Email:</strong> support@jladgroup.fi</p>
+                  <p><strong>Phone Support:</strong> +358 45 8591505</p>
+                  <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
                 </div>
               </div>
               
               <div class="footer">
-                <p style="font-size: 18px; margin-bottom: 10px;"><strong>Credence Accounting Services</strong></p>
+                <p style="font-size: 18px; margin-bottom: 10px;"><strong>Credence Enterprise Accounting Services</strong></p>
                 <p style="margin-bottom: 15px; opacity: 0.9;">Professional Accounting Solutions for Growing Businesses</p>
                 <p style="font-size: 14px; opacity: 0.8; margin-bottom: 5px;">
                   VAT Compliance | Financial Reporting | Business Advisory | Tax Planning
                 </p>
                 <div class="dev-info">
-                  Designed & Developed by <a href="https://techorses.com" target="_blank" class="dev-link">Techorses</a>
+                  Developed by Vapautus Media Private Limited
                 </div>
                 <p style="font-size: 12px; margin-top: 20px; opacity: 0.7;">
-                  © ${new Date().getFullYear()} Credence Accounting Services. All rights reserved.<br>
+                  © ${new Date().getFullYear()} Credence Enterprise Accounting Services. All rights reserved.<br>
                   This is an automated email. Please do not reply directly to this message.<br>
                   Email sent to: ${enrollment.email}
                 </p>

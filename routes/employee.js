@@ -1204,7 +1204,7 @@ router.post("/add-file-note", async (req, res) => {
                 <p>Please log in to your account to view the complete details and respond if needed.</p>
                 
                 <div class="footer">
-                  <p>This is an automated notification from Accounting Portal.</p>
+                  <p>This is an automated notification from Credence Enterprise Accounting Services.</p>
                   <p>Client ID: ${clientId}</p>
                 </div>
               </div>
@@ -1274,7 +1274,7 @@ router.post("/add-file-note", async (req, res) => {
                 <p><strong>User Agent:</strong> ${req.get('User-Agent')?.substring(0, 100)}...</p>
                 
                 <div class="footer">
-                  <p>This is an automated notification from Accounting Portal System.</p>
+                  <p>This is an automated notification from Credence Enterprise Accounting Services.</p>
                   <p>Note ID: ${newNote._id || 'Generated'}</p>
                 </div>
               </div>

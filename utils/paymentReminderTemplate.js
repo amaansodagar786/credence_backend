@@ -42,7 +42,7 @@ const paymentReminderTemplate = (client) => {
       </head>
       <body>
         <div class="header">
-          <h1>Credence Accounting Services</h1>
+          <h1>Credence Enterprise Accounting Services</h1>
           <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
         </div>
         
@@ -94,10 +94,9 @@ const paymentReminderTemplate = (client) => {
           
           <div class="contact-info">
             <h3 class="section-title">📞 Our Contact Information</h3>
-            <p><strong>Billing Department:</strong> ${process.env.EMAIL_USER || "billing@credence-accounting.com"}</p>
-            <p><strong>Support Email:</strong> support@credence-accounting.com</p>
-            <p><strong>Phone Support:</strong> +91 12345 67890</p>
-            <p><strong>Business Hours:</strong> Monday - Friday, 9:00 AM - 6:00 PM (EET/EEST)</p>
+            <p><strong>Email:</strong> support@jladgroup.fi</p>
+            <p><strong>Phone Support:</strong> +358 45 8591505</p>
+            <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
           </div>
           
           <p style="margin-top: 25px; font-size: 14px; color: #666;">
@@ -106,14 +105,14 @@ const paymentReminderTemplate = (client) => {
         </div>
         
         <div class="footer">
-          <p><strong>Credence Accounting Services</strong></p>
+          <p><strong>Credence Enterprise Accounting Services</strong></p>
           <p>Professional Accounting | VAT Compliance | Business Advisory</p>
           <div class="dev-info">
-            Designed & Developed by <a href="https://techorses.com" target="_blank" class="dev-link">Techorses</a>
+            Developed by Vapautus Media Private Limited
           </div>
           <p style="font-size: 12px; margin-top: 10px;">
             This is an automated payment reminder email.<br>
-            Please do not reply to this email. For queries, contact billing@credence-accounting.com<br>
+            Please do not reply to this email. For queries, contact support@jladgroup.fi<br>
             Email sent to: ${client.email}
           </p>
         </div>

@@ -122,10 +122,10 @@ const sendEmailToClient = async (client, actionType, additionalInfo = {}) => {
       }
             </p>
             
-            <p>Thank you for using our accounting services.</p>
+            <p>Thank you for using our Credence Enterprise Accounting Services.</p>
             
             <div class="footer">
-              <p>This is an automated notification from Accounting Portal.</p>
+              <p>This is an automated notification from Credence Enterprise Accounting Services.</p>
             </div>
           </div>
         </div>

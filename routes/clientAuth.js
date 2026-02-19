@@ -291,7 +291,7 @@ router.post("/forgot-password", async (req, res) => {
         <p>This OTP is valid for <strong>10 minutes</strong>.</p>
         <p>If you did not request this, please ignore this email.</p>
         <hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
-        <p style="color:#666;font-size:12px;">This is an automated message from Credence.</p>
+        <p style="color:#666;font-size:12px;">This is an automated message from Credence Enterprise Accounting Services.</p>
       </div>
       `
     );
@@ -505,7 +505,7 @@ router.post("/reset-password", async (req, res) => {
           </a>
         </p>
         <hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
-        <p style="color:#666;font-size:12px;">This is an automated message from Credence.</p>
+        <p style="color:#666;font-size:12px;">This is an automated message from Credence Enterprise Accounting Services.</p>
       </div>
       `
     );
@@ -645,7 +645,7 @@ router.post("/change-password", async (req, res) => {
         </div>
         <p>Thank you for keeping your account secure.</p>
         <hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
-        <p style="color:#666;font-size:12px;">This is an automated message from Credence.</p>
+        <p style="color:#666;font-size:12px;">This is an automated message from Credence Enterprise Accounting Services.</p>
       </div>
       `
     );

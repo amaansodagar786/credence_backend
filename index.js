@@ -1,5 +1,5 @@
 process.env.TZ = 'Europe/Helsinki';
-console.log(new Date()); 
+console.log(new Date());
 
 const express = require("express");
 const cors = require("cors");
@@ -118,14 +118,14 @@ app.get("/", (req, res) => {
 // PAYMENT REMINDER INITIALIZATION
 // ===============================
 console.log("⏰ Payment Reminder System: Checking schedule...");
-console.log("📅 First Reminder: 20th of each month at 12:00 PM IST");
-console.log("📅 Final Reminder: 25th of each month at 12:00 PM IST");
+console.log("📅 First Reminder: 20th of each month at 12:00 PM Finland time (EET/EEST)");
+console.log("📅 Final Reminder: 25th of each month at 12:00 PM Finland time (EET/EEST)");
 
 // ===============================
 // DOCUMENT UPLOAD REMINDER INITIALIZATION
 // ===============================
 console.log("⏰ Document Upload Reminder System: Checking schedule...");
-console.log("📅 Document Upload Reminder: 15th of each month at 12:00 PM IST");
+console.log("📅 Document Upload Reminder: 15th of each month at 12:00 PM Finland time (EET/EEST)");
 
 // Display current and next month info
 const currentDate = new Date();
@@ -147,7 +147,7 @@ console.log(`   - Will remind for: ${previousMonthYear}`);
 console.log(`   - Due on: 15th ${nextMonthYear}`);
 console.log(`   - Deadline: 25th ${nextMonthYear}`);
 
-console.log(`⏰ Current Server Time: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`);
+console.log(`⏰ Current Server Time (Finland): ${new Date().toLocaleString("en-IN", { timeZone: "Europe/Helsinki" })}`);
 
 // ===============================
 // SERVER

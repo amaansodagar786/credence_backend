@@ -280,7 +280,7 @@ const sendNotificationEmails = async ({
                 <p><strong>Action Required:</strong> Please log in to review the changes and take necessary action if required.</p>
                 
                 <div class="footer">
-                  <p>This is an automated notification from Accounting Portal.</p>
+                  <p>This is an automated notification from Credence Enterprise Accounting Services.</p>
                   <p>Client ID: ${client.clientId} | Employee ID: ${employee.employeeId}</p>
                 </div>
               </div>
@@ -355,7 +355,7 @@ const sendNotificationEmails = async ({
               ` : ''}
               
               <div class="footer">
-                <p>This is an automated notification from Accounting Portal System.</p>
+                <p>This is an automated notification from Credence Enterprise Accounting Services.</p>
                 <p>Total employees notified: ${assignedEmployees.length}</p>
               </div>
             </div>

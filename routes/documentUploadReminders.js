@@ -200,7 +200,7 @@ const sendDocumentUploadReminders = async () => {
             }
         }
 
-        // 3. LOG ACTIVITY - REMOVED dateTime line
+        // 3. LOG ACTIVITY
         await ActivityLog.create({
             userName: "SYSTEM",
             role: "SYSTEM",
@@ -261,13 +261,22 @@ const sendDocumentUploadReminders = async () => {
 /* ===============================
    SCHEDULED JOBS - UPDATED TO FINLAND TIME
 ================================ */
-// Schedule for 15th of each month at 12:00 PM Finland time
-cron.schedule('10 12 3 * *', async () => {
+// Schedule for 1st of each month at 12:00 PM Finland time (NEW)
+cron.schedule('0 12 1 * *', async () => {
+    console.log("⏰ Running document upload reminder (1st of month)...");
+    await sendDocumentUploadReminders();
+}, {
+    scheduled: true,
+    timezone: "Europe/Helsinki"
+});
+
+// Schedule for 15th of each month at 12:00 PM Finland time (existing)
+cron.schedule('0 12 15 * *', async () => {
     console.log("⏰ Running document upload reminder (15th of month)...");
     await sendDocumentUploadReminders();
 }, {
     scheduled: true,
-    timezone: "Europe/Helsinki"  // Changed from Asia/Kolkata
+    timezone: "Europe/Helsinki"
 });
 
 /* ===============================
@@ -311,11 +320,14 @@ router.get("/test", async (req, res) => {
             status: "Active",
             activeClients: activeClients.length,
             currentDocumentMonth: previousMonthYear,
-            nextReminderDate: "15th of each month at 12:00 PM EET/EEST",  // Changed from IST
+            nextReminderDates: [
+                "1st of each month at 12:00 PM EET/EEST",
+                "15th of each month at 12:00 PM EET/EEST"
+            ],
             adminEmail: adminEmail || "NOT CONFIGURED",
             emailService: adminEmail ? "Configured" : "Not Configured",
-            currentTime: new Date().toLocaleString("en-IN", { 
-                timeZone: "Europe/Helsinki"  // Changed from Asia/Kolkata
+            currentTime: new Date().toLocaleString("en-IN", {
+                timeZone: "Europe/Helsinki"
             })
         });
 
@@ -343,13 +355,19 @@ router.get("/status", (req, res) => {
     res.json({
         success: true,
         message: "Document Upload Reminder System is active",
-        schedule: {
-            date: "15th of each month at 12:00 PM EET/EEST",  // Changed from IST
-            description: "Monthly document upload reminder"
-        },
+        schedules: [
+            {
+                date: "1st of each month at 12:00 PM EET/EEST",
+                description: "Monthly document upload reminder (early)"
+            },
+            {
+                date: "15th of each month at 12:00 PM EET/EEST",
+                description: "Monthly document upload reminder (final)"
+            }
+        ],
         currentDocumentPeriod: previousMonthYear,
         currentTime: new Date().toLocaleString("en-IN", {
-            timeZone: "Europe/Helsinki"  // Changed from Asia/Kolkata
+            timeZone: "Europe/Helsinki"
         }),
         adminEmail: process.env.EMAIL_USER || "Not configured"
     });

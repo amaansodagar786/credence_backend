@@ -100,6 +100,7 @@ const processScheduledPlanChanges = async () => {
                 .success-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
                 .plan-details { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
                 .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; }
+                .dev-info { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8; }
                 table { width: 100%; border-collapse: collapse; margin: 15px 0; }
                 th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
                 th { background: #f8f9fa; font-weight: 600; width: 40%; }
@@ -107,7 +108,7 @@ const processScheduledPlanChanges = async () => {
             </head>
             <body>
               <div class="header">
-                <h1>Credence Accounting Services</h1>
+                <h1>Credence Enterprise Accounting Services</h1>
                 <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
               </div>
               
@@ -142,14 +143,19 @@ const processScheduledPlanChanges = async () => {
                   </table>
                 </div>
                 
+                <p>If you have any questions regarding your plan change, please contact our support team.</p>
+                
                 <p style="margin-top: 25px; font-size: 14px; color: #666;">
                   Your account has been updated with the new plan. All future billing will be based on the ${newPlan} plan.
                 </p>
               </div>
               
               <div class="footer">
-                <p><strong>Credence Accounting Services</strong></p>
+                <p><strong>Credence Enterprise Accounting Services</strong></p>
                 <p>Professional Accounting | VAT Compliance | Business Advisory</p>
+                <div class="dev-info">
+                  Developed by Vapautus Media Private Limited
+                </div>
                 <p style="font-size: 12px; margin-top: 10px;">
                   This is an automated notification email.<br>
                   Please do not reply to this email. For queries, contact support@jladgroup.fi<br>
