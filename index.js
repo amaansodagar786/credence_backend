@@ -69,6 +69,7 @@ const activityLogsRoutes = require("./routes/activityLogs");
 const adminNotesRoutes = require("./routes/adminNotes");
 const employeeNotesRoutes = require('./routes/employeeNotes');
 const financialStatementRoutes = require('./routes/financialStatementRoutes');
+const googleDriveRoutes = require("./routes/googledrive");
 
 
 
@@ -101,6 +102,7 @@ app.use("/employee", employeeNotesRoutes);
 app.use("/admin/notes", adminNotesRoutes);
 app.use('/employee/notes', employeeNotesRoutes);
 app.use('/client/financial-statement', financialStatementRoutes);
+app.use("/api", googleDriveRoutes); // Google Drive proxy - streams files directly
 
 
 
