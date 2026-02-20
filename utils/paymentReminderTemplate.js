@@ -5,13 +5,13 @@ const paymentReminderTemplate = (client) => {
     year: "numeric",
     timeZone: "Europe/Helsinki"  // Finland timezone
   });
-  
+
   const currentTime = new Date().toLocaleTimeString("en-IN", {
     hour: "2-digit",
     minute: "2-digit",
     timeZone: "Europe/Helsinki"  // Finland timezone
   });
-  
+
   return {
     subject: `💰 Monthly Payment Reminder - ${client.businessName || "Your Business"}`,
     html: `
@@ -95,8 +95,7 @@ const paymentReminderTemplate = (client) => {
           <div class="contact-info">
             <h3 class="section-title">📞 Our Contact Information</h3>
             <p><strong>Email:</strong> support@jladgroup.fi</p>
-            <p><strong>Phone Support:</strong> +358 45 8591505</p>
-            <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
+            <p><strong>Phone Support:</strong> +358413250081</p>            <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
           </div>
           
           <p style="margin-top: 25px; font-size: 14px; color: #666;">

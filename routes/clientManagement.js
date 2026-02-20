@@ -449,7 +449,7 @@ router.patch("/update-client/:clientId", auth, async (req, res) => {
               <div class="contact-info">
                 <h3 class="section-title">📞 Need Assistance?</h3>
                 <p><strong>Email:</strong> support@jladgroup.fi</p>
-                <p><strong>Phone Support:</strong> +358 45 8591505</p>
+               <p><strong>Phone Support:</strong> +358413250081</p>
                 <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
               </div>
               
