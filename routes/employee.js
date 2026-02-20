@@ -409,6 +409,7 @@ router.post("/logout", async (req, res) => {
   }
 });
 
+
 /* ===============================
    EMPLOYEE GET ASSIGNED CLIENTS (UPDATED FOR MULTIPLE FILES)
 ================================ */
@@ -483,11 +484,68 @@ router.get("/assigned-clients", async (req, res) => {
     const currentYear = currentDate.getFullYear();
     const currentMonth = currentDate.getMonth() + 1; // 1-12
 
+    // ===== NEW: Group assignments by unique key to get latest version =====
+    const latestAssignmentsMap = new Map();
+
+    // First pass: Group all assignments by clientId-year-month-task and keep the latest
     for (const assign of employee.assignedClients || []) {
+      const key = `${assign.clientId}-${assign.year}-${assign.month}-${assign.task}`;
+
+      // If we haven't seen this key before, or this assignment is newer
+      if (!latestAssignmentsMap.has(key) ||
+        new Date(assign.assignedAt) > new Date(latestAssignmentsMap.get(key).assignedAt)) {
+        latestAssignmentsMap.set(key, assign);
+      }
+    }
+
+    // Convert map to array of latest assignments
+    const latestAssignments = Array.from(latestAssignmentsMap.values());
+
+    console.log('ALL JAN 2026 ASSIGNMENTS BEFORE GROUPING:',
+      employee.assignedClients.filter(a =>
+        a.clientId === 'e66b4542-6941-4d2c-91c0-3644ed095199' &&
+        a.year === 2026 &&
+        a.month === 1 &&
+        !a.isRemoved
+      ).map(a => ({
+        task: a.task,
+        assignedAt: a.assignedAt,
+        isRemoved: a.isRemoved
+      }))
+    );
+
+
+    console.log('📋 AFTER GROUPING - JAN 2026:',
+      latestAssignments.filter(a =>
+        a.clientId === 'e66b4542-6941-4d2c-91c0-3644ed095199' &&
+        a.year === 2026 &&
+        a.month === 1
+      ).map(a => ({
+        task: a.task,
+        assignedAt: a.assignedAt
+      }))
+    );
+
+    logToConsole("DEBUG", "LATEST_ASSIGNMENTS_GROUPED", {
+      originalCount: employee.assignedClients?.length || 0,
+      latestCount: latestAssignments.length,
+      employeeId: employee.employeeId
+    });
+
+    // Process ONLY the latest assignments
+    for (const assign of latestAssignments) {
       try {
-        // ===== CRITICAL FIX: FILTER OUT REMOVED ASSIGNMENTS =====
+
+
+        console.log('🔍 PROCESSING ASSIGNMENT:', {
+          task: assign.task,
+          clientId: assign.clientId,
+          willBeIncluded: true // We'll see if it actually gets included
+        });
+
+        // ===== UPDATED: Skip only if the LATEST version is removed =====
         if (assign.isRemoved) {
-          logToConsole("DEBUG", "SKIPPING_REMOVED_ASSIGNMENT", {
+          logToConsole("DEBUG", "SKIPPING_LATEST_REMOVED_ASSIGNMENT", {
             employeeId: employee.employeeId,
             clientId: assign.clientId,
             year: assign.year,
@@ -527,26 +585,9 @@ router.get("/assigned-clients", async (req, res) => {
           continue;
         }
 
-        // ===== ALSO CHECK IF THIS ASSIGNMENT IS REMOVED IN CLIENT RECORD =====
-        // Find the corresponding assignment in client's employeeAssignments
-        const clientAssignment = client.employeeAssignments?.find(a =>
-          a.employeeId === employee.employeeId &&
-          a.year === assign.year &&
-          a.month === assign.month &&
-          a.task === assign.task
-        );
-
-        // If assignment is removed in client record, skip it
-        if (clientAssignment && clientAssignment.isRemoved) {
-          logToConsole("DEBUG", "SKIPPING_ASSIGNMENT_REMOVED_IN_CLIENT_RECORD", {
-            employeeId: employee.employeeId,
-            clientId: assign.clientId,
-            year: assign.year,
-            month: assign.month,
-            task: assign.task
-          });
-          continue;
-        }
+        // ===== REMOVED: Client record check that was causing the issue =====
+        // No longer checking client.employeeAssignments for isRemoved status
+        // The employee's isRemoved field is the source of truth
 
         const yearKey = String(assign.year);
         const monthKey = String(assign.month);
