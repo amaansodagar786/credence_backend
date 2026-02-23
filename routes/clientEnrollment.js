@@ -766,7 +766,7 @@ router.post("/action", auth, async (req, res) => {
 
       // Generate client ID and password
       const clientId = uuidv4();
-      const plainPassword = `${enrollment.firstName}@1234`;
+      const plainPassword = `${enrollment.firstName.trim()}@1234`;
       const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
       // Prepare client data
