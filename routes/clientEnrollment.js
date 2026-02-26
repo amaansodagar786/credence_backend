@@ -687,7 +687,8 @@ router.post("/action", auth, async (req, res) => {
                 <div class="contact-info">
                   <h4 class="section-title">📞 Our Contact Information</h4>
                   <p><strong>Email:</strong> support@jladgroup.fi</p>
-<p><strong>Phone Support:</strong> +358413250081</p>                  <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
+                  <p><strong>Phone Support:</strong> +358413250081</p>                  
+                  <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
                 </div>
               </div>
               
@@ -882,6 +883,10 @@ router.post("/action", auth, async (req, res) => {
                 .services-table th { background: #2c3e50; color: #fff; padding: 12px; text-align: left; }
                 .services-table td { padding: 12px; text-align: left; border: 1px solid #dee2e6; }
                 .services-table tr:nth-child(even) { background: #f8f9fa; }
+                .terms-content { padding: 15px 0; }
+                .terms-content p { margin: 15px 0; }
+                .terms-content .section { margin-bottom: 30px; }
+                .terms-content .section h4 { color: #2c3e50; font-size: 16px; margin-bottom: 10px; border-left: 4px solid #7cd64b; padding-left: 10px; }
               </style>
             </head>
             <body>
@@ -1078,79 +1083,116 @@ router.post("/action", auth, async (req, res) => {
                 <div class="terms-box">
                   <h3 class="section-title">📜 Important Guidelines & Terms of Service</h3>
                   
-                  <div class="sub-heading">Important Guidelines for All Clients:</div>
-                  <ul class="terms-list">
-                    <li>Please do not share your any details on any number other than mentioned in the form.</li>
-                    <li>Please do not share photographs of RP card or social security number or any EU IDs.</li>
-                    <li>Make sure you have at least 75 euros balance in your bank account.</li>
-                    <li>Every Entrepreneur must take Pension Insurance if their income exceeds 9010 Euros in the respective financial Year.</li>
-                    <li>While applying application, you need to be online for strong identification and answering queries while processing.</li>
-                    <li>Please note that even if you have no transitions in your company, we will charge Minimum Plan fees for that particular Month.</li>
-                  </ul>
-                  
-                  <div class="sub-heading">Bookkeeping Charges:</div>
-                  <ul class="terms-list">
-                    <li>Bookkeeping charges are billed on the 1st of every month.</li>
-                    <li>If your enrolment is after the 1st of the month, you will get an invoice from our company in a week.</li>
-                    <li>VAT on the monthly bookkeeping fees is deductible.</li>
-                  </ul>
-                  
-                  <div class="sub-heading">The Responsibility of the Service Provider:</div>
-                  <ul class="terms-list">
-                    <li>Under the Lite Plan, the service provider maintains the client's accounts using single-entry accounting, limited to the preparation of the income statement and balance sheet. Under all other plans, the service provider maintains the client's accounts using double-entry accounting.</li>
-                    <li>The service provider will give the right information to the client as per the required ethical principles of accounting, but in case any wrong information is provided by the client, they shall be responsible for all legal or financial repercussions, if any.</li>
-                    <li>Annual personal return will be charged separately, which will be equal to your monthly accounting fees.</li>
-                    <li>A separate folder with the client's name will be provided by the service provider in Google Drive, and all required documents must be uploaded by the client. The service provider shall not be held responsible for any information provided by the client.</li>
-                    <li>The service provider will provide the financial statements whenever needed, subject to the Fees agreed on the Initial offer.</li>
-                    <li>The service provider may keep the record for a maximum of one year after the termination of this contract. This may be done without any prior notification to the client.</li>
-                  </ul>
-                  
-                  <div class="sub-heading">The Responsibilities of the Client:</div>
-                  <ul class="terms-list">
-                    <li>The client must provide all relevant information required to manage the accounts of the company. In case of any wrong information provided by the client, the service provider shall not be held responsible for any discrepancies.</li>
-                    <li>Accounting policies will be designed by the client, and guidance can be provided by the service provider, but the ultimate responsibility will always lie on the client.</li>
-                    <li>The client will provide all relevant information for a month on a daily basis, so that the records can be maintained by the service provider in due time.</li>
-                    <li>If documents are delayed and not submitted even after reminders, then service provider will not be responsible for submitting the reports to the authorities.</li>
-                    <li>The client must pay the service fee in advance by the 15th of every month at the latest. If the fee is not paid on time by the client, then the service provider has the right to not submit any report for the month in question.</li>
-                    <li>Annual personal return will be charged separately, which will be equal to your monthly accounting fees.</li>
-                    <li class="warning">Important Note: If your business involves courier or taxi services, it is mandatory to maintain a driving logbook. Please note that personal fuel expenses are not deductible under any circumstances. Claiming personal expenses as business-related will result in the disallowance of all previously claimed VAT, and you will be solely responsible for the consequences.</li>
-                  </ul>
-                  
-                  <div class="sub-heading">Additional Terms & Communication:</div>
-                  <ul class="terms-list">
-                    <li>The service provider may share the client details (Company Name and/or Business ID) for the purpose of marketing, if needed. No other information will be shared by the service provider without prior consent from the client.</li>
-                    <li>Important note: you must check your email every day and see if there is any query from PRH. If you fail to inform us about the query, you will lose your 70-euro trademark fees (trade register).</li>
-                    <li>You will get a follow-up from our back office for data upload and for VAT reporting.</li>
-                    <li>Also, they may contact you for any other information or queries during the course of monthly VAT compliance.</li>
-                  </ul>
-                  
-                  <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-top: 25px;">
-                    <h4 style="color: #2c3e50; margin-top: 0;">📋 Summary of Key Points:</h4>
-                    <div class="guideline-item">
-                      <span class="guideline-number">1.</span> Do not share personal IDs or contact details outside our official channels.
+                  <div class="terms-content">
+                    <!-- SECTION 1: SCOPE OF SERVICES -->
+                    <div class="section">
+                      <h4>1. Scope of Services</h4>
+                      <p>The Service Provider shall provide bookkeeping, accounting, VAT compliance, financial reporting, and related advisory services according to the selected plan. All Osakeyhtiö plans include double-entry bookkeeping only.</p>
                     </div>
-                    <div class="guideline-item">
-                      <span class="guideline-number">2.</span> Maintain minimum 75€ in your business bank account.
+
+                    <!-- SECTION 2: PRICE SCHEDULE - TOIMIMINI FEES STRUCTURE -->
+                    <div class="section">
+                      <h4>2. Price Schedule - Toimimini Fees Structure</h4>
+                      <p>All prices are monthly and exclusive of VAT. Support hours are Monday-Friday, 09:00-15:00 (EET/EEST).</p>
+                      <table style="width:100%; border-collapse:collapse; margin:10px 0;">
+                        <thead>
+                          <tr style="background:#7cd64b; color:#000;">
+                            <th style="padding:8px; border:1px solid #dee2e6;">Plan</th>
+                            <th style="padding:8px; border:1px solid #dee2e6;">Monthly Fee (€)</th>
+                            <th style="padding:8px; border:1px solid #dee2e6;">Income Sources</th>
+                            <th style="padding:8px; border:1px solid #dee2e6;">Outgoing Invoices</th>
+                            <th style="padding:8px; border:1px solid #dee2e6;">Expense Receipts</th>
+                            <th style="padding:8px; border:1px solid #dee2e6;">Accounting Method</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr><td>Lite</td><td>40</td><td>1</td><td>Up to 2</td><td>Up to 10</td><td>Single-entry</td></tr>
+                          <tr><td>Taxi</td><td>45</td><td>1</td><td>Up to 4</td><td>Up to 40</td><td>Double-entry</td></tr>
+                          <tr><td>Premium</td><td>50</td><td>2</td><td>Up to 4</td><td>Up to 40</td><td>Double-entry</td></tr>
+                          <tr><td>Pro</td><td>60</td><td>3</td><td>Up to 8</td><td>Up to 50</td><td>Double-entry</td></tr>
+                          <tr><td>Restaurant</td><td>80</td><td>1</td><td>Up to 10</td><td>Up to 50</td><td>Double-entry</td></tr>
+                        </tbody>
+                      </table>
                     </div>
-                    <div class="guideline-item">
-                      <span class="guideline-number">3.</span> Pension insurance required if income exceeds 9,010€ annually.
+
+                    <!-- SECTION 3: PRICE SCHEDULE - OSAKEYHTIÖ FEES STRUCTURE -->
+                    <div class="section">
+                      <h4>3. Price Schedule - Osakeyhtiö Fees Structure</h4>
+                      <p>All Osakeyhtiö plans are billed monthly, exclude VAT, and include double-entry bookkeeping only.</p>
+                      <table style="width:100%; border-collapse:collapse; margin:10px 0;">
+                        <thead>
+                          <tr style="background:#7cd64b; color:#000;">
+                            <th style="padding:8px; border:1px solid #dee2e6;">Plan</th>
+                            <th style="padding:8px; border:1px solid #dee2e6;">Monthly Fee (€)</th>
+                            <th style="padding:8px; border:1px solid #dee2e6;">Income Sources</th>
+                            <th style="padding:8px; border:1px solid #dee2e6;">Receipts + Payments</th>
+                            <th style="padding:8px; border:1px solid #dee2e6;">Accounting Method</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr><td>Lite Oy</td><td>120</td><td>1</td><td>Up to 30</td><td>Double-entry</td></tr>
+                          <tr><td>Premium Oy</td><td>160</td><td>2</td><td>Up to 60</td><td>Double-entry</td></tr>
+                          <tr><td>Pro Oy</td><td>200</td><td>3</td><td>Up to 90</td><td>Double-entry</td></tr>
+                        </tbody>
+                      </table>
                     </div>
-                    <div class="guideline-item">
-                      <span class="guideline-number">4.</span> Be available online during application processing for verification.
+
+                    <!-- SECTION 4: BILLING & PAYMENT TERMS -->
+                    <div class="section">
+                      <h4>4. Billing & Payment Terms</h4>
+                      <p>Monthly fees are invoiced on the 1st day of each month and must be paid in advance no later than the 15th. Minimum monthly fees apply even if there are no transactions. VAT on bookkeeping fees is deductible as per Finnish tax law.</p>
                     </div>
-                    <div class="guideline-item">
-                      <span class="guideline-number">5.</span> Minimum fees apply even with zero transactions.
+
+                    <!-- SECTION 5: ADDITIONAL SERVICES & CHARGES -->
+                    <div class="section">
+                      <h4>5. Additional Services & Charges</h4>
+                      <p>Additional services are charged separately when required: tax card amendments (€25), salary processing (€20 per salary), financial statements (Toimimini: one month fee, Oy: €150), annual tax return (one month fee), and other advisory services (€50 per hour).</p>
                     </div>
-                    <div class="guideline-item">
-                      <span class="guideline-number">6.</span> Monthly invoices issued on 1st of each month.
+
+                    <!-- SECTION 6: DOCUMENT HANDLING & PORTAL ACCESS -->
+                    <div class="section">
+                      <h4>6. Document Handling & Portal Access</h4>
+                      <p>A separate Google Drive folder will be provided for document upload. The Service Provider may also provide a client portal with lock dates. Data cannot be modified after the lock date and nil returns may be filed. Changes after filing may attract additional charges depending on data volume.</p>
                     </div>
-                    <div class="guideline-item">
-                      <span class="guideline-number">7.</span> Payment due by 15th of each month for uninterrupted service.
+
+                    <!-- SECTION 7: CLIENT RESPONSIBILITIES -->
+                    <div class="section">
+                      <h4>7. Client Responsibilities</h4>
+                      <p>The Client must provide accurate and timely data, check emails daily, maintain required records, and ensure compliance with tax, VAT, and pension obligations.</p>
                     </div>
-                    <div class="guideline-item">
-                      <span class="guideline-number">8.</span> Daily check of emails for PRH queries is mandatory.
+
+                    <!-- SECTION 8: YEL PENSION INSURANCE -->
+                    <div class="section">
+                      <h4>8. YEL Pension Insurance</h4>
+                      <p>YEL pension insurance is mandatory for entrepreneurs under Finnish law. The client is responsible for ensuring compliance with YEL contribution requirements.</p>
+                    </div>
+
+                    <!-- SECTION 9: NON-PAYMENT & SERVICE SUSPENSION -->
+                    <div class="section">
+                      <h4>9. Non-Payment & Service Suspension</h4>
+                      <p>Failure to pay fees by the due date may result in suspension of bookkeeping and filings. The Service Provider bears no liability for penalties arising from non-payment.</p>
+                    </div>
+
+                    <!-- SECTION 10: TERMINATION -->
+                    <div class="section">
+                      <h4>10. Termination</h4>
+                      <p>Either party may terminate this Agreement. The Client must provide at least 30 days' prior written notice before termination. Outstanding fees remain payable.</p>
+                    </div>
+
+                    <!-- SECTION 11: GOVERNING LAW & DISPUTES -->
+                    <div class="section">
+                      <h4>11. Governing Law & Disputes</h4>
+                      <p>This Agreement shall be governed by and interpreted in accordance with the laws of Finland. Any disputes shall be handled under Finnish jurisdiction.</p>
+                    </div>
+
+                    <!-- SECTION 12: ACCEPTANCE & LEGAL BINDING -->
+                    <div class="section">
+                      <h4>12. Acceptance & Legal Binding</h4>
+                      <p>Use of services or portal access constitutes acceptance of this Agreement. These terms are legally binding.</p>
                     </div>
                   </div>
+
+                 
                 </div>
                 
                 <p style="background: #e7f4ff; padding: 15px; border-radius: 8px; border-left: 4px solid #007bff;">
@@ -1160,7 +1202,7 @@ router.post("/action", auth, async (req, res) => {
                 <div class="contact-info">
                   <h3 class="section-title">📞 Our Contact Information</h3>
                   <p><strong>Email:</strong> support@jladgroup.fi</p>
-                  <<p><strong>Phone Support:</strong> +358413250081</p>
+                  <p><strong>Phone Support:</strong> +358413250081</p>
                   <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
                 </div>
               </div>
