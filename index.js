@@ -36,17 +36,28 @@ app.use(
 
 app.use(cookieParser());
 
+// ===============================
+// CRON JOBS
+// ===============================
 
-// CRON JOB  
-
-
+// Import existing cron jobs
 const { schedulePlanChangeCron } = require('./utils/planChangeCron');
 
+// Import the new month lock cron job
+const { scheduleLockJob } = require('./utils/lockPreviousMonth');
+
+// Schedule all cron jobs
+console.log("⏰ Initializing all CRON jobs...");
+
+// Schedule plan change cron
 schedulePlanChangeCron();
+
+// Schedule month lock cron (runs on 26th of each month)
+scheduleLockJob();
+
 // ===============================
 // ROUTES
 // ===============================
-
 
 const adminRoutes = require("./routes/admin");
 const ClientEnrollment = require("./routes/clientEnrollment");
@@ -58,56 +69,38 @@ const clientUpload = require("./routes/clientUpload");
 const Employee_task_info = require("./routes/employee-task");
 const scheduleCallRoutes = require("./routes/scheduleCallRoutes");
 const paymentReminderRoutes = require("./routes/paymentReminders");
-const documentUploadReminderRoutes = require("./routes/documentUploadReminders"); // NEW LINE
+const documentUploadReminderRoutes = require("./routes/documentUploadReminders");
 const clientManagementRoutes = require("./routes/clientManagement");
 const adminDashboardRoutes = require('./routes/adminDashboard');
 const clientDashboardRoutes = require('./routes/clientDashboardRoutes');
 const employeeDashboard = require('./routes/employeeDashboard');
 const activityLogsRoutes = require("./routes/activityLogs");
-
-// Add this with other route imports
 const adminNotesRoutes = require("./routes/adminNotes");
 const employeeNotesRoutes = require('./routes/employeeNotes');
 const financialStatementRoutes = require('./routes/financialStatementRoutes');
 const googleDriveRoutes = require("./routes/googledrive");
 
-
-
-
-
 app.use("/client-enrollment", ClientEnrollment);
 app.use("/client", ClientAuth);
 app.use("/clientupload", clientUpload);
-
 app.use("/admin", adminRoutes);
 app.use("/admin-employee", AdminEmployee);
-
 app.use("/employee", EmployeeRoutes);
 app.use("/employee-task", EmployeeTasks);
-
 app.use("/admin", Employee_task_info);
-
 app.use("/schedule-call", scheduleCallRoutes);
 app.use("/payment-reminders", paymentReminderRoutes);
-app.use("/document-upload-reminders", documentUploadReminderRoutes); // NEW LINE
+app.use("/document-upload-reminders", documentUploadReminderRoutes);
 app.use("/client-management", clientManagementRoutes);
-
 app.use('/admin', adminDashboardRoutes);
 app.use('/client', clientDashboardRoutes);
 app.use('/employee', employeeDashboard);
 app.use("/activity-logs", activityLogsRoutes);
-
 app.use("/employee", employeeNotesRoutes);
-
 app.use("/admin/notes", adminNotesRoutes);
 app.use('/employee/notes', employeeNotesRoutes);
 app.use('/client/financial-statement', financialStatementRoutes);
-app.use("/api", googleDriveRoutes); // Google Drive proxy - streams files directly
-
-
-
-
-
+app.use("/api", googleDriveRoutes);
 
 // ===============================
 // BASIC ROUTE
@@ -117,15 +110,12 @@ app.get("/", (req, res) => {
 });
 
 // ===============================
-// PAYMENT REMINDER INITIALIZATION
+// REMINDER SYSTEM LOGS
 // ===============================
 console.log("⏰ Payment Reminder System: Checking schedule...");
 console.log("📅 First Reminder: 20th of each month at 12:00 PM Finland time (EET/EEST)");
 console.log("📅 Final Reminder: 25th of each month at 12:00 PM Finland time (EET/EEST)");
 
-// ===============================
-// DOCUMENT UPLOAD REMINDER INITIALIZATION
-// ===============================
 console.log("⏰ Document Upload Reminder System: Checking schedule...");
 console.log("📅 Document Upload Reminder: 15th of each month at 12:00 PM Finland time (EET/EEST)");
 
@@ -160,4 +150,5 @@ app.listen(PORT, () => {
     console.log(`🚀 Server running at http://localhost:${PORT}`);
     console.log(`💰 Payment Reminder System: ACTIVE`);
     console.log(`📄 Document Upload Reminder System: ACTIVE`);
+    console.log(`🔒 Month Auto-Lock System: ACTIVE (Runs on 26th of each month at 12:00 AM Finland time)`);
 });
