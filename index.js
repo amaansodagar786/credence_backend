@@ -106,7 +106,7 @@ app.use("/api", googleDriveRoutes);
 // BASIC ROUTE
 // ===============================
 app.get("/", (req, res) => {
-    res.send("Accounting Portal Backend is running new updated credence");
+    res.send("Accounting Portal Backend is running new updated credence NEW");
 });
 
 // ===============================
