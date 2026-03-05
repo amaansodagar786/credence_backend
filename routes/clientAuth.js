@@ -1074,11 +1074,553 @@ router.patch("/update-profile", async (req, res) => {
 
 
 /* ===============================
-   CLIENT CHANGE PLAN REQUEST - CORRECT LOGIC
-   planSelected = MAIN PLAN (shows in admin panel)
-   currentPlan = CURRENT BILLING PLAN
-   nextMonthPlan = PLAN FOR NEXT MONTH
+   CLIENT CHANGE PLAN REQUEST - CORRECT LOGIC  PLAN UPDATE LATER LOGIC
 ================================ */
+// router.patch("/change-plan", async (req, res) => {
+//   try {
+//     // Get client from token (client logged in)
+//     const token = req.cookies?.clientToken;
+//     if (!token) {
+//       logToConsole("WARN", "CLIENT_CHANGE_PLAN_NO_TOKEN", {
+//         ip: req.ip
+//       });
+//       return res.status(401).json({
+//         success: false,
+//         message: "Unauthorized. Please login first."
+//       });
+//     }
+
+//     // Verify token
+//     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+//     const clientId = decoded.clientId;
+
+//     // Get new plan from request body
+//     const { newPlan } = req.body;
+
+//     if (!newPlan) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Please select a plan."
+//       });
+//     }
+
+//     // ✅ UPDATED: Validate all 8 plan options (5 Toiminimi + 3 Osakeyhtiö)
+//     const validPlans = [
+//       // Toiminimi plans
+//       'Lite',
+//       'Taxi',
+//       'Premium',
+//       'Pro',
+//       'Restaurant',
+//       // Osakeyhtiö plans
+//       'Lite Oy',
+//       'Premium Oy',
+//       'Pro Oy'
+//     ];
+
+//     if (!validPlans.includes(newPlan)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid plan selected."
+//       });
+//     }
+
+//     // Find client
+//     const client = await Client.findOne({ clientId });
+//     if (!client) {
+//       logToConsole("WARN", "CLIENT_CHANGE_PLAN_NOT_FOUND", {
+//         clientId
+//       });
+//       return res.status(404).json({
+//         success: false,
+//         message: "Client not found."
+//       });
+//     }
+
+//     // Get current active plan (use planSelected as main)
+//     const currentActivePlan = client.planSelected;
+
+//     // Check if client is trying to change to same plan
+//     if (currentActivePlan === newPlan) {
+//       return res.status(400).json({
+//         success: false,
+//         message: `You are already on the ${newPlan} plan.`
+//       });
+//     }
+
+//     const today = new Date();
+//     const currentDate = today.getDate();
+//     const isFirstOfMonth = currentDate === 1;
+
+//     let effectiveDate;
+//     let actionType;
+//     let emailSubject;
+//     let clientMessage;
+//     let adminMessage;
+
+//     // Helper function to get first of next month
+//     const getFirstOfNextMonth = () => {
+//       const now = new Date();
+//       return new Date(now.getFullYear(), now.getMonth() + 1, 1);
+//     };
+
+//     // Format date for display
+//     const formatDate = (date) => {
+//       return date.toLocaleDateString('en-IN', {
+//         day: 'numeric',
+//         month: 'long',
+//         year: 'numeric'
+//       });
+//     };
+
+//     if (isFirstOfMonth) {
+//       // ✅ TODAY IS 1ST - CHANGE IMMEDIATELY
+//       effectiveDate = today;
+//       actionType = 'IMMEDIATE_CHANGE';
+//       clientMessage = `Your plan has been changed from ${currentActivePlan} to ${newPlan} effective immediately (${formatDate(today)}).`;
+//       adminMessage = `Client ${client.name} (${clientId}) changed plan from ${currentActivePlan} to ${newPlan} effective immediately (1st of month).`;
+//       emailSubject = `✅ Plan Changed Successfully - ${client.businessName || client.name}`;
+
+//       // ✅ UPDATE ALL PLAN FIELDS IMMEDIATELY
+//       client.planSelected = newPlan;      // ✅ MAIN PLAN - Updated immediately
+//       client.currentPlan = newPlan;       // ✅ CURRENT BILLING - Updated immediately
+//       client.nextMonthPlan = '';          // ✅ FUTURE - Cleared
+//       client.planChangeRequestedAt = today;
+//       client.planEffectiveFrom = today;
+
+//     } else {
+//       // ✅ TODAY IS 2ND OR LATER - SCHEDULE FOR NEXT MONTH
+//       effectiveDate = getFirstOfNextMonth();
+//       actionType = 'NEXT_MONTH_CHANGE';
+//       clientMessage = `Your plan change request from ${currentActivePlan} to ${newPlan} has been received. It will be effective from ${formatDate(effectiveDate)} (1st of next month).`;
+//       adminMessage = `Client ${client.name} (${clientId}) requested plan change from ${currentActivePlan} to ${newPlan} effective from ${formatDate(effectiveDate)}.`;
+//       emailSubject = `🔄 Plan Change Request Received - ${client.businessName || client.name}`;
+
+//       // ✅ ONLY UPDATE NEXT MONTH PLAN
+//       client.nextMonthPlan = newPlan;     // ✅ FUTURE - Set for next month
+//       // planSelected STAYS SAME (currentActivePlan) - Admin sees old plan
+//       // currentPlan STAYS SAME (currentActivePlan) - Billing stays old
+
+//       client.planChangeRequestedAt = today;
+//       client.planEffectiveFrom = effectiveDate;
+//     }
+
+//     // Add to plan change history
+//     client.planChangeHistory.push({
+//       fromPlan: currentActivePlan,
+//       toPlan: newPlan,
+//       changeDate: today,
+//       effectiveFrom: effectiveDate,
+//       requestedBy: 'client',
+//       notes: actionType === 'IMMEDIATE_CHANGE' ? 'Changed immediately (1st of month)' : 'Scheduled for next month'
+//     });
+
+//     // Save client
+//     await client.save();
+
+//     // ✅ UPDATED: Plan prices for email (including new plans)
+//     const planPrices = {
+//       // Toiminimi plans
+//       'Lite': '40 Euros + VAT',
+//       'Taxi': '45 Euros + VAT',
+//       'Premium': '50 Euros + VAT',
+//       'Pro': '60 Euros + VAT',
+//       'Restaurant': '80 Euros + VAT',
+//       // Osakeyhtiö plans
+//       'Lite Oy': '120 Euros + VAT',
+//       'Premium Oy': '160 Euros + VAT',
+//       'Pro Oy': '200 Euros + VAT'
+//     };
+
+//     // Send email to client
+//     try {
+//       const currentDateStr = today.toLocaleDateString('en-IN');
+//       const currentTimeStr = today.toLocaleTimeString('en-IN', {
+//         hour: '2-digit',
+//         minute: '2-digit',
+//         hour12: true
+//       });
+
+//       let emailHtml;
+
+//       if (isFirstOfMonth) {
+//         // Immediate change email
+//         emailHtml = `
+//           <!DOCTYPE html>
+//           <html>
+//           <head>
+//             <meta charset="UTF-8">
+//             <meta name="viewport" content="width=device-width, initial-scale=1.0">
+//             <title>Plan Changed</title>
+//             <style>
+//               body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
+//               .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
+//               .header h1 { margin: 0; font-size: 24px; color: #7cd64b; }
+//               .content { padding: 30px; background: #ffffff; }
+//               .success-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
+//               .plan-details { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
+//               .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; }
+//               .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 20px; }
+//               table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+//               th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
+//               th { background: #f8f9fa; font-weight: 600; width: 40%; }
+//               .note-box { background: #e3f2fd; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #2196f3; }
+//             </style>
+//           </head>
+//           <body>
+//             <div class="header">
+//               <h1>Credence Accounting Services</h1>
+//               <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
+//             </div>
+
+//             <div class="content">
+//               <h2 style="color: #2c3e50; margin-top: 0;">Dear ${client.firstName} ${client.lastName},</h2>
+
+//               <div class="success-box">
+//                 <h3 style="margin-top: 0; color: #4caf50;">✅ PLAN CHANGED IMMEDIATELY</h3>
+//                 <p>Your accounting plan has been updated immediately (1st of month).</p>
+//                 <p><strong>Changed On:</strong> ${currentDateStr} at ${currentTimeStr} IST</p>
+//               </div>
+
+//               <div class="plan-details">
+//                 <h3 class="section-title">📋 Plan Change Details</h3>
+//                 <table>
+//                   <tr>
+//                     <th>Previous Plan</th>
+//                     <td>${currentActivePlan} (${planPrices[currentActivePlan] || 'N/A'})</td>
+//                   </tr>
+//                   <tr>
+//                     <th>New Plan</th>
+//                     <td><strong>${newPlan}</strong> (${planPrices[newPlan]})</td>
+//                   </tr>
+//                   <tr>
+//                     <th>Effective From</th>
+//                     <td><strong>${formatDate(today)}</strong> (Immediate - 1st of month)</td>
+//                   </tr>
+//                   <tr>
+//                     <th>Billing Amount</th>
+//                     <td><strong>${planPrices[newPlan]}</strong> starting this month</td>
+//                   </tr>
+//                   <tr>
+//                     <th>Admin Panel Display</th>
+//                     <td>Will show as <strong>${newPlan}</strong> immediately</td>
+//                   </tr>
+//                 </table>
+//               </div>
+
+//               <div class="note-box">
+//                 <p><strong>📝 Important:</strong> Since today is 1st of the month, your plan change is effective immediately. Your billing for ${today.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })} will be based on the new ${newPlan} plan.</p>
+//               </div>
+//             </div>
+
+//             <div class="footer">
+//               <p><strong>Credence Accounting Services</strong></p>
+//               <p>Professional Accounting | VAT Compliance | Business Advisory</p>
+//               <p style="font-size: 12px; margin-top: 10px;">
+//                 This is an automated notification email.<br>
+//                 Please do not reply to this email. For queries, contact support@jladgroup.fi<br>
+//                 Email sent to: ${client.email}
+//               </p>
+//             </div>
+//           </body>
+//           </html>
+//         `;
+//       } else {
+//         // Next month change email
+//         emailHtml = `
+//           <!DOCTYPE html>
+//           <html>
+//           <head>
+//             <meta charset="UTF-8">
+//             <meta name="viewport" content="width=device-width, initial-scale=1.0">
+//             <title>Plan Change Request</title>
+//             <style>
+//               body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
+//               .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
+//               .header h1 { margin: 0; font-size: 24px; color: #7cd64b; }
+//               .content { padding: 30px; background: #ffffff; }
+//               .pending-box { background: #fff8e1; border-left: 4px solid #ffc107; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
+//               .plan-details { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
+//               .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; }
+//               .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 20px; }
+//               table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+//               th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
+//               th { background: #f8f9fa; font-weight: 600; width: 40%; }
+//               .note-box { background: #e3f2fd; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #2196f3; }
+//             </style>
+//           </head>
+//           <body>
+//             <div class="header">
+//               <h1>Credence Accounting Services</h1>
+//               <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
+//             </div>
+
+//             <div class="content">
+//               <h2 style="color: #2c3e50; margin-top: 0;">Dear ${client.firstName} ${client.lastName},</h2>
+
+//               <div class="pending-box">
+//                 <h3 style="margin-top: 0; color: #ff9800;">🔄 PLAN CHANGE SCHEDULED</h3>
+//                 <p>Your plan change request has been scheduled for next month.</p>
+//                 <p><strong>Requested On:</strong> ${currentDateStr} at ${currentTimeStr} IST</p>
+//                 <p><strong>Since today is not 1st of month, change will be effective from 1st of next month.</strong></p>
+//               </div>
+
+//               <div class="plan-details">
+//                 <h3 class="section-title">📋 Plan Change Details</h3>
+//                 <table>
+//                   <tr>
+//                     <th>Current Active Plan</th>
+//                     <td><strong>${currentActivePlan}</strong> (${planPrices[currentActivePlan] || 'N/A'})</td>
+//                   </tr>
+//                   <tr>
+//                     <th>Scheduled New Plan</th>
+//                     <td><strong>${newPlan}</strong> (${planPrices[newPlan]})</td>
+//                   </tr>
+//                   <tr>
+//                     <th>Effective From</th>
+//                     <td><strong>${formatDate(effectiveDate)}</strong> (1st of next month)</td>
+//                   </tr>
+//                   <tr>
+//                     <th>Current Month Billing</th>
+//                     <td><strong>${planPrices[currentActivePlan] || 'N/A'}</strong> (${today.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })})</td>
+//                   </tr>
+//                   <tr>
+//                     <th>Next Month Billing</th>
+//                     <td><strong>${planPrices[newPlan]}</strong> (${effectiveDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })})</td>
+//                   </tr>
+//                   <tr>
+//                     <th>Admin Panel Display</th>
+//                     <td>Will show as <strong>${currentActivePlan}</strong> until ${formatDate(effectiveDate)}</td>
+//                   </tr>
+//                 </table>
+//               </div>
+
+//               <div class="note-box">
+//                 <p><strong>📝 Important:</strong> You will continue with your current <strong>${currentActivePlan}</strong> plan for billing this month. The change to <strong>${newPlan}</strong> will take effect automatically on ${formatDate(effectiveDate)}.</p>
+//                 <p><strong>Admin panel will continue to show ${currentActivePlan} until the change takes effect.</strong></p>
+//                 <p>If you wish to modify or cancel this change before it takes effect, please contact our billing department.</p>
+//               </div>
+//             </div>
+
+//             <div class="footer">
+//               <p><strong>Credence Accounting Services</strong></p>
+//               <p>Professional Accounting | VAT Compliance | Business Advisory</p>
+//               <p style="font-size: 12px; margin-top: 10px;">
+//                 This is an automated notification email.<br>
+//                 Please do not reply to this email. For queries, contact support@jladgroup.fi<br>
+//                 Email sent to: ${client.email}
+//               </p>
+//             </div>
+//           </body>
+//           </html>
+//         `;
+//       }
+
+//       // Send email to client
+//       await sendEmail(client.email, emailSubject, emailHtml);
+//       logToConsole("INFO", "PLAN_CHANGE_EMAIL_SENT_TO_CLIENT", {
+//         clientId,
+//         clientEmail: client.email,
+//         actionType,
+//         fromPlan: currentActivePlan,
+//         toPlan: newPlan
+//       });
+
+//     } catch (emailError) {
+//       logToConsole("ERROR", "CLIENT_PLAN_CHANGE_EMAIL_FAILED", {
+//         error: emailError.message,
+//         clientId,
+//         clientEmail: client.email
+//       });
+//     }
+
+//     // Send email to admin
+//     try {
+//       const adminEmail = process.env.EMAIL_USER;
+//       const adminSubject = `📋 Plan Change ${isFirstOfMonth ? 'Completed' : 'Scheduled'} - ${client.name} (${clientId})`;
+
+//       const adminEmailHtml = `
+//         <!DOCTYPE html>
+//         <html>
+//         <head>
+//           <meta charset="UTF-8">
+//           <meta name="viewport" content="width=device-width, initial-scale=1.0">
+//           <title>Plan Change Alert</title>
+//           <style>
+//             body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
+//             .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
+//             .header h1 { margin: 0; font-size: 24px; color: #7cd64b; }
+//             .content { padding: 30px; background: #ffffff; }
+//             .alert-box { background: #${isFirstOfMonth ? 'e8f5e9' : 'fff8e1'}; border-left: 4px solid #${isFirstOfMonth ? '4caf50' : 'ffc107'}; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
+//             .client-details { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
+//             .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; }
+//             .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 20px; }
+//             table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+//             th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
+//             th { background: #f8f9fa; font-weight: 600; width: 40%; }
+//           </style>
+//         </head>
+//         <body>
+//           <div class="header">
+//             <h1>Credence Accounting Services</h1>
+//             <p style="margin-top: 5px; opacity: 0.9;">Admin Notification - Plan Change</p>
+//           </div>
+
+//           <div class="content">
+//             <div class="alert-box">
+//               <h3 style="margin-top: 0; color: #${isFirstOfMonth ? '4caf50' : 'ff9800'};">${isFirstOfMonth ? '✅ IMMEDIATE PLAN CHANGE' : '🔄 SCHEDULED PLAN CHANGE'}</h3>
+//               <p><strong>Client:</strong> ${client.name} (${clientId})</p>
+//               <p><strong>Date:</strong> ${today.toLocaleDateString('en-IN')} at ${today.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST</p>
+//               <p><strong>Status:</strong> ${isFirstOfMonth ? 'Changed immediately (1st of month)' : 'Scheduled for 1st of next month'}</p>
+//             </div>
+
+//             <div class="client-details">
+//               <h3 class="section-title">📋 Plan Details</h3>
+//               <table>
+//                 <tr>
+//                   <th>Client Name</th>
+//                   <td>${client.firstName} ${client.lastName}</td>
+//                 </tr>
+//                 <tr>
+//                   <th>Client ID</th>
+//                   <td>${clientId}</td>
+//                 </tr>
+//                 <tr>
+//                   <th>Current Plan (planSelected)</th>
+//                   <td><strong>${client.planSelected}</strong></td>
+//                 </tr>
+//                 <tr>
+//                   <th>New Plan</th>
+//                   <td><strong>${newPlan}</strong></td>
+//                 </tr>
+//                 <tr>
+//                   <th>Effective Date</th>
+//                   <td>${formatDate(effectiveDate)}</td>
+//                 </tr>
+//                 ${!isFirstOfMonth ? `
+//                 <tr>
+//                   <th>Next Month Plan</th>
+//                   <td><strong>${client.nextMonthPlan}</strong> (scheduled)</td>
+//                 </tr>
+//                 <tr>
+//                   <th>Admin Panel Shows</th>
+//                   <td><strong>${client.planSelected}</strong> until ${formatDate(effectiveDate)}</td>
+//                 </tr>
+//                 ` : ''}
+//               </table>
+//             </div>
+
+//             <p style="margin-top: 25px; font-size: 14px; color: #666;">
+//               <strong>Note:</strong> ${isFirstOfMonth ?
+//           'All plan fields updated immediately in database.' :
+//           'planSelected remains as ' + client.planSelected + ' until ' + formatDate(effectiveDate) + '. nextMonthPlan set to ' + newPlan + '.'}
+//             </p>
+//           </div>
+
+//           <div class="footer">
+//             <p><strong>Credence Accounting Services - Admin Portal</strong></p>
+//             <p style="font-size: 12px; margin-top: 10px;">
+//               This is an automated notification email.<br>
+//               ${isFirstOfMonth ? 'No action required - change already applied.' : 'Change will auto-apply on ' + formatDate(effectiveDate)}<br>
+//               Email sent to: ${adminEmail}
+//             </p>
+//           </div>
+//         </body>
+//         </html>
+//       `;
+
+//       await sendEmail(adminEmail, adminSubject, adminEmailHtml);
+//       logToConsole("INFO", "PLAN_CHANGE_EMAIL_SENT_TO_ADMIN", {
+//         adminEmail,
+//         clientId,
+//         actionType
+//       });
+
+//     } catch (adminEmailError) {
+//       logToConsole("ERROR", "ADMIN_PLAN_CHANGE_EMAIL_FAILED", {
+//         error: adminEmailError.message,
+//         adminEmail: process.env.EMAIL_USER,
+//         clientId
+//       });
+//     }
+
+//     // Create activity log
+//     try {
+//       await ActivityLog.create({
+//         userName: client.name,
+//         role: "CLIENT",
+//         clientId: clientId,
+//         action: "PLAN_CHANGE_REQUESTED",
+//         details: `Plan change requested: ${currentActivePlan} → ${newPlan}. ${isFirstOfMonth ? 'Applied immediately (1st of month)' : 'Scheduled for ' + formatDate(effectiveDate)}`,
+//         // dateTime: new Date(),
+//         metadata: {
+//           clientId,
+//           clientName: client.name,
+//           fromPlan: currentActivePlan,
+//           toPlan: newPlan,
+//           planSelected: client.planSelected,
+//           currentPlan: client.currentPlan,
+//           nextMonthPlan: client.nextMonthPlan,
+//           effectiveFrom: effectiveDate,
+//           changeType: isFirstOfMonth ? 'immediate' : 'scheduled',
+//           requestedBy: 'client'
+//         }
+//       });
+//     } catch (logError) {
+//       logToConsole("ERROR", "PLAN_CHANGE_ACTIVITY_LOG_FAILED", {
+//         error: logError.message,
+//         clientId
+//       });
+//     }
+
+//     // Return success response
+//     res.json({
+//       success: true,
+//       message: clientMessage,
+//       planDetails: {
+//         planSelected: client.planSelected,        // ✅ MAIN PLAN (may be old if not 1st)
+//         currentPlan: client.currentPlan,          // ✅ CURRENT BILLING
+//         nextMonthPlan: client.nextMonthPlan,      // ✅ FUTURE
+//         effectiveFrom: effectiveDate,
+//         changeType: isFirstOfMonth ? 'immediate' : 'scheduled',
+//         note: isFirstOfMonth ?
+//           'All plan fields updated immediately.' :
+//           'planSelected will update on ' + formatDate(effectiveDate) + '.'
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error("Error processing plan change:", error);
+
+//     if (error.name === 'JsonWebTokenError') {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Session expired. Please login again."
+//       });
+//     }
+
+//     if (error.name === 'TokenExpiredError') {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Your session has expired. Please login again."
+//       });
+//     }
+
+//     logToConsole("ERROR", "PLAN_CHANGE_FAILED", {
+//       error: error.message,
+//       stack: error.stack,
+//       clientId: req.cookies?.clientToken ? jwt.decode(req.cookies.clientToken)?.clientId : 'unknown'
+//     });
+
+//     res.status(500).json({
+//       success: false,
+//       message: "Failed to process plan change. Please try again.",
+//       error: process.env.NODE_ENV === 'development' ? error.message : undefined
+//     });
+//   }
+// });
+
+
 router.patch("/change-plan", async (req, res) => {
   try {
     // Get client from token (client logged in)
@@ -1107,7 +1649,7 @@ router.patch("/change-plan", async (req, res) => {
       });
     }
 
-    // ✅ UPDATED: Validate all 8 plan options (5 Toiminimi + 3 Osakeyhtiö)
+    // ✅ Validate all 8 plan options (5 Toiminimi + 3 Osakeyhtiö)
     const validPlans = [
       // Toiminimi plans
       'Lite',
@@ -1140,7 +1682,7 @@ router.patch("/change-plan", async (req, res) => {
       });
     }
 
-    // Get current active plan (use planSelected as main)
+    // Get current active plan
     const currentActivePlan = client.planSelected;
 
     // Check if client is trying to change to same plan
@@ -1152,76 +1694,29 @@ router.patch("/change-plan", async (req, res) => {
     }
 
     const today = new Date();
-    const currentDate = today.getDate();
-    const isFirstOfMonth = currentDate === 1;
 
-    let effectiveDate;
-    let actionType;
-    let emailSubject;
-    let clientMessage;
-    let adminMessage;
-
-    // Helper function to get first of next month
-    const getFirstOfNextMonth = () => {
-      const now = new Date();
-      return new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    };
-
-    // Format date for display
-    const formatDate = (date) => {
-      return date.toLocaleDateString('en-IN', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-      });
-    };
-
-    if (isFirstOfMonth) {
-      // ✅ TODAY IS 1ST - CHANGE IMMEDIATELY
-      effectiveDate = today;
-      actionType = 'IMMEDIATE_CHANGE';
-      clientMessage = `Your plan has been changed from ${currentActivePlan} to ${newPlan} effective immediately (${formatDate(today)}).`;
-      adminMessage = `Client ${client.name} (${clientId}) changed plan from ${currentActivePlan} to ${newPlan} effective immediately (1st of month).`;
-      emailSubject = `✅ Plan Changed Successfully - ${client.businessName || client.name}`;
-
-      // ✅ UPDATE ALL PLAN FIELDS IMMEDIATELY
-      client.planSelected = newPlan;      // ✅ MAIN PLAN - Updated immediately
-      client.currentPlan = newPlan;       // ✅ CURRENT BILLING - Updated immediately
-      client.nextMonthPlan = '';          // ✅ FUTURE - Cleared
-      client.planChangeRequestedAt = today;
-      client.planEffectiveFrom = today;
-
-    } else {
-      // ✅ TODAY IS 2ND OR LATER - SCHEDULE FOR NEXT MONTH
-      effectiveDate = getFirstOfNextMonth();
-      actionType = 'NEXT_MONTH_CHANGE';
-      clientMessage = `Your plan change request from ${currentActivePlan} to ${newPlan} has been received. It will be effective from ${formatDate(effectiveDate)} (1st of next month).`;
-      adminMessage = `Client ${client.name} (${clientId}) requested plan change from ${currentActivePlan} to ${newPlan} effective from ${formatDate(effectiveDate)}.`;
-      emailSubject = `🔄 Plan Change Request Received - ${client.businessName || client.name}`;
-
-      // ✅ ONLY UPDATE NEXT MONTH PLAN
-      client.nextMonthPlan = newPlan;     // ✅ FUTURE - Set for next month
-      // planSelected STAYS SAME (currentActivePlan) - Admin sees old plan
-      // currentPlan STAYS SAME (currentActivePlan) - Billing stays old
-
-      client.planChangeRequestedAt = today;
-      client.planEffectiveFrom = effectiveDate;
-    }
+    // ✅ ALWAYS UPDATE IMMEDIATELY - NO DATE CHECKING
+    // ✅ UPDATE ALL PLAN FIELDS IMMEDIATELY
+    client.planSelected = newPlan;      // ✅ MAIN PLAN - Updated immediately
+    client.currentPlan = newPlan;       // ✅ CURRENT BILLING - Updated immediately
+    client.nextMonthPlan = '';          // ✅ FUTURE - Cleared
+    client.planChangeRequestedAt = today;
+    client.planEffectiveFrom = today;
 
     // Add to plan change history
     client.planChangeHistory.push({
       fromPlan: currentActivePlan,
       toPlan: newPlan,
       changeDate: today,
-      effectiveFrom: effectiveDate,
+      effectiveFrom: today,
       requestedBy: 'client',
-      notes: actionType === 'IMMEDIATE_CHANGE' ? 'Changed immediately (1st of month)' : 'Scheduled for next month'
+      notes: 'Changed immediately by client'
     });
 
     // Save client
     await client.save();
 
-    // ✅ UPDATED: Plan prices for email (including new plans)
+    // ✅ Plan prices for email (including new plans)
     const planPrices = {
       // Toiminimi plans
       'Lite': '40 Euros + VAT',
@@ -1235,196 +1730,157 @@ router.patch("/change-plan", async (req, res) => {
       'Pro Oy': '200 Euros + VAT'
     };
 
-    // Send email to client
+    // Format date for display with Finland timezone
+    const formatDate = (date) => {
+      return date.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "Europe/Helsinki"
+      });
+    };
+
+    // Send email to client - UPDATED WITH NEW THEME
     try {
-      const currentDateStr = today.toLocaleDateString('en-IN');
-      const currentTimeStr = today.toLocaleTimeString('en-IN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
+      const currentDateStr = today.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "Europe/Helsinki"
       });
 
-      let emailHtml;
+      const currentTimeStr = today.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Europe/Helsinki"
+      });
 
-      if (isFirstOfMonth) {
-        // Immediate change email
-        emailHtml = `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Plan Changed</title>
-            <style>
-              body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
-              .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
-              .header h1 { margin: 0; font-size: 24px; color: #7cd64b; }
-              .content { padding: 30px; background: #ffffff; }
-              .success-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
-              .plan-details { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
-              .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; }
-              .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 20px; }
-              table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-              th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
-              th { background: #f8f9fa; font-weight: 600; width: 40%; }
-              .note-box { background: #e3f2fd; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #2196f3; }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h1>Credence Accounting Services</h1>
-              <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
+      const emailSubject = `✅ Plan Changed Successfully - ${client.businessName || client.name}`;
+
+      const emailHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Plan Changed</title>
+          <style>
+            body { font-family: 'Arial', 'Helvetica Neue', Helvetica, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
+            .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
+            .header h1 { margin: 0; font-size: 24px; color: #7cd64b; }
+            .content { padding: 30px; background: #ffffff; }
+            .success-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
+            .client-info { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
+            .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; }
+            .contact-info { margin-top: 20px; padding-top: 20px; border-top: 1px solid #dee2e6; }
+            .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 20px; }
+            .dev-info { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8; }
+            .dev-link { color: #7cd64b !important; text-decoration: none; }
+            table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
+            th { background: #f8f9fa; font-weight: 600; width: 40%; }
+            .note-box { background: #e3f2fd; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #2196f3; }
+            .important-note { color: #ff9800; font-weight: 600; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>Credence Enterprise Accounting Services</h1>
+            <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
+          </div>
+          
+          <div class="content">
+            <h2 style="color: #2c3e50; margin-top: 0;">Dear ${client.firstName} ${client.lastName},</h2>
+            
+            <div class="success-box">
+              <h3 style="margin-top: 0; color: #4caf50;">✅ PLAN CHANGED SUCCESSFULLY</h3>
+              <p>Your accounting plan has been updated immediately as requested.</p>
+              <p><strong>Changed On:</strong> ${currentDateStr} at ${currentTimeStr} EET/EEST</p>
             </div>
             
-            <div class="content">
-              <h2 style="color: #2c3e50; margin-top: 0;">Dear ${client.firstName} ${client.lastName},</h2>
-              
-              <div class="success-box">
-                <h3 style="margin-top: 0; color: #4caf50;">✅ PLAN CHANGED IMMEDIATELY</h3>
-                <p>Your accounting plan has been updated immediately (1st of month).</p>
-                <p><strong>Changed On:</strong> ${currentDateStr} at ${currentTimeStr} IST</p>
-              </div>
-              
-              <div class="plan-details">
-                <h3 class="section-title">📋 Plan Change Details</h3>
-                <table>
-                  <tr>
-                    <th>Previous Plan</th>
-                    <td>${currentActivePlan} (${planPrices[currentActivePlan] || 'N/A'})</td>
-                  </tr>
-                  <tr>
-                    <th>New Plan</th>
-                    <td><strong>${newPlan}</strong> (${planPrices[newPlan]})</td>
-                  </tr>
-                  <tr>
-                    <th>Effective From</th>
-                    <td><strong>${formatDate(today)}</strong> (Immediate - 1st of month)</td>
-                  </tr>
-                  <tr>
-                    <th>Billing Amount</th>
-                    <td><strong>${planPrices[newPlan]}</strong> starting this month</td>
-                  </tr>
-                  <tr>
-                    <th>Admin Panel Display</th>
-                    <td>Will show as <strong>${newPlan}</strong> immediately</td>
-                  </tr>
-                </table>
-              </div>
-              
-              <div class="note-box">
-                <p><strong>📝 Important:</strong> Since today is 1st of the month, your plan change is effective immediately. Your billing for ${today.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })} will be based on the new ${newPlan} plan.</p>
-              </div>
+            <div class="client-info">
+              <h3 class="section-title">📋 Plan Change Details</h3>
+              <table>
+                <tr>
+                  <th>Previous Plan</th>
+                  <td>${currentActivePlan} (${planPrices[currentActivePlan] || 'N/A'})</td>
+                </tr>
+                <tr>
+                  <th>New Plan</th>
+                  <td><strong>${newPlan}</strong> (${planPrices[newPlan]})</td>
+                </tr>
+                <tr>
+                  <th>Effective From</th>
+                  <td><strong>${formatDate(today)}</strong> (Immediate)</td>
+                </tr>
+                <tr>
+                  <th>Billing Amount</th>
+                  <td><strong>${planPrices[newPlan]}</strong> starting immediately</td>
+                </tr>
+              </table>
             </div>
             
-            <div class="footer">
-              <p><strong>Credence Accounting Services</strong></p>
-              <p>Professional Accounting | VAT Compliance | Business Advisory</p>
-              <p style="font-size: 12px; margin-top: 10px;">
-                This is an automated notification email.<br>
-                Please do not reply to this email. For queries, contact support@jladgroup.fi<br>
-                Email sent to: ${client.email}
-              </p>
-            </div>
-          </body>
-          </html>
-        `;
-      } else {
-        // Next month change email
-        emailHtml = `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Plan Change Request</title>
-            <style>
-              body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
-              .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
-              .header h1 { margin: 0; font-size: 24px; color: #7cd64b; }
-              .content { padding: 30px; background: #ffffff; }
-              .pending-box { background: #fff8e1; border-left: 4px solid #ffc107; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
-              .plan-details { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
-              .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; }
-              .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 20px; }
-              table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-              th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
-              th { background: #f8f9fa; font-weight: 600; width: 40%; }
-              .note-box { background: #e3f2fd; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #2196f3; }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h1>Credence Accounting Services</h1>
-              <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
+            <div class="client-info">
+              <h3 class="section-title">👤 Your Account Information</h3>
+              <table>
+                <tr>
+                  <th>Client ID</th>
+                  <td>${client.clientId}</td>
+                </tr>
+                <tr>
+                  <th>Business Name</th>
+                  <td>${client.businessName || "Not specified"}</td>
+                </tr>
+                <tr>
+                  <th>Contact Email</th>
+                  <td>${client.email}</td>
+                </tr>
+                <tr>
+                  <th>Contact Phone</th>
+                  <td>${client.phone || "Not provided"}</td>
+                </tr>
+                <tr>
+                  <th>VAT Period</th>
+                  <td>${client.vatPeriod === "monthly" ? "Monthly" : "Quarterly"}</td>
+                </tr>
+              </table>
             </div>
             
-            <div class="content">
-              <h2 style="color: #2c3e50; margin-top: 0;">Dear ${client.firstName} ${client.lastName},</h2>
-              
-              <div class="pending-box">
-                <h3 style="margin-top: 0; color: #ff9800;">🔄 PLAN CHANGE SCHEDULED</h3>
-                <p>Your plan change request has been scheduled for next month.</p>
-                <p><strong>Requested On:</strong> ${currentDateStr} at ${currentTimeStr} IST</p>
-                <p><strong>Since today is not 1st of month, change will be effective from 1st of next month.</strong></p>
-              </div>
-              
-              <div class="plan-details">
-                <h3 class="section-title">📋 Plan Change Details</h3>
-                <table>
-                  <tr>
-                    <th>Current Active Plan</th>
-                    <td><strong>${currentActivePlan}</strong> (${planPrices[currentActivePlan] || 'N/A'})</td>
-                  </tr>
-                  <tr>
-                    <th>Scheduled New Plan</th>
-                    <td><strong>${newPlan}</strong> (${planPrices[newPlan]})</td>
-                  </tr>
-                  <tr>
-                    <th>Effective From</th>
-                    <td><strong>${formatDate(effectiveDate)}</strong> (1st of next month)</td>
-                  </tr>
-                  <tr>
-                    <th>Current Month Billing</th>
-                    <td><strong>${planPrices[currentActivePlan] || 'N/A'}</strong> (${today.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })})</td>
-                  </tr>
-                  <tr>
-                    <th>Next Month Billing</th>
-                    <td><strong>${planPrices[newPlan]}</strong> (${effectiveDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })})</td>
-                  </tr>
-                  <tr>
-                    <th>Admin Panel Display</th>
-                    <td>Will show as <strong>${currentActivePlan}</strong> until ${formatDate(effectiveDate)}</td>
-                  </tr>
-                </table>
-              </div>
-              
-              <div class="note-box">
-                <p><strong>📝 Important:</strong> You will continue with your current <strong>${currentActivePlan}</strong> plan for billing this month. The change to <strong>${newPlan}</strong> will take effect automatically on ${formatDate(effectiveDate)}.</p>
-                <p><strong>Admin panel will continue to show ${currentActivePlan} until the change takes effect.</strong></p>
-                <p>If you wish to modify or cancel this change before it takes effect, please contact our billing department.</p>
-              </div>
+            <div class="note-box">
+              <p><strong>📝 Important:</strong> Your plan change has been processed immediately. Your billing will be updated to reflect the new ${newPlan} plan from today.</p>
+              <p>All future services will be provided according to your new plan selection.</p>
             </div>
             
-            <div class="footer">
-              <p><strong>Credence Accounting Services</strong></p>
-              <p>Professional Accounting | VAT Compliance | Business Advisory</p>
-              <p style="font-size: 12px; margin-top: 10px;">
-                This is an automated notification email.<br>
-                Please do not reply to this email. For queries, contact support@jladgroup.fi<br>
-                Email sent to: ${client.email}
-              </p>
+            <div class="contact-info">
+              <h3 class="section-title">📞 Need Assistance?</h3>
+              <p><strong>Email:</strong> support@jladgroup.fi</p>
+              <p><strong>Phone Support:</strong> +358413250081</p>
+              <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
             </div>
-          </body>
-          </html>
-        `;
-      }
+          </div>
+          
+          <div class="footer">
+            <p><strong>Credence Enterprise Accounting Services</strong></p>
+            <p>Professional Accounting | VAT Compliance | Business Advisory</p>
+            <div class="dev-info">
+              Developed by Vapautus Media Private Limited
+            </div>
+            <p style="font-size: 12px; margin-top: 10px;">
+              This is an automated notification email.<br>
+              Please do not reply to this email. For queries, contact support@jladgroup.fi<br>
+              Email sent to: ${client.email}
+            </p>
+          </div>
+        </body>
+        </html>
+      `;
 
       // Send email to client
       await sendEmail(client.email, emailSubject, emailHtml);
       logToConsole("INFO", "PLAN_CHANGE_EMAIL_SENT_TO_CLIENT", {
         clientId,
         clientEmail: client.email,
-        actionType,
+        actionType: 'IMMEDIATE_CHANGE',
         fromPlan: currentActivePlan,
         toPlan: newPlan
       });
@@ -1437,10 +1893,23 @@ router.patch("/change-plan", async (req, res) => {
       });
     }
 
-    // Send email to admin
+    // Send email to admin - UPDATED WITH NEW THEME
     try {
       const adminEmail = process.env.EMAIL_USER;
-      const adminSubject = `📋 Plan Change ${isFirstOfMonth ? 'Completed' : 'Scheduled'} - ${client.name} (${clientId})`;
+      const adminSubject = `📋 Plan Change Completed - ${client.name} (${clientId})`;
+
+      const currentDateStr = today.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "Europe/Helsinki"
+      });
+
+      const currentTimeStr = today.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Europe/Helsinki"
+      });
 
       const adminEmailHtml = `
         <!DOCTYPE html>
@@ -1450,14 +1919,17 @@ router.patch("/change-plan", async (req, res) => {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Plan Change Alert</title>
           <style>
-            body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
+            body { font-family: 'Arial', 'Helvetica Neue', Helvetica, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
             .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
             .header h1 { margin: 0; font-size: 24px; color: #7cd64b; }
             .content { padding: 30px; background: #ffffff; }
-            .alert-box { background: #${isFirstOfMonth ? 'e8f5e9' : 'fff8e1'}; border-left: 4px solid #${isFirstOfMonth ? '4caf50' : 'ffc107'}; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
+            .alert-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
             .client-details { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
             .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; }
+            .contact-info { margin-top: 20px; padding-top: 20px; border-top: 1px solid #dee2e6; }
             .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 20px; }
+            .dev-info { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8; }
+            .dev-link { color: #7cd64b !important; text-decoration: none; }
             table { width: 100%; border-collapse: collapse; margin: 15px 0; }
             th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
             th { background: #f8f9fa; font-weight: 600; width: 40%; }
@@ -1465,20 +1937,20 @@ router.patch("/change-plan", async (req, res) => {
         </head>
         <body>
           <div class="header">
-            <h1>Credence Accounting Services</h1>
+            <h1>Credence Enterprise Accounting Services</h1>
             <p style="margin-top: 5px; opacity: 0.9;">Admin Notification - Plan Change</p>
           </div>
           
           <div class="content">
             <div class="alert-box">
-              <h3 style="margin-top: 0; color: #${isFirstOfMonth ? '4caf50' : 'ff9800'};">${isFirstOfMonth ? '✅ IMMEDIATE PLAN CHANGE' : '🔄 SCHEDULED PLAN CHANGE'}</h3>
+              <h3 style="margin-top: 0; color: #4caf50;">✅ IMMEDIATE PLAN CHANGE</h3>
               <p><strong>Client:</strong> ${client.name} (${clientId})</p>
-              <p><strong>Date:</strong> ${today.toLocaleDateString('en-IN')} at ${today.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST</p>
-              <p><strong>Status:</strong> ${isFirstOfMonth ? 'Changed immediately (1st of month)' : 'Scheduled for 1st of next month'}</p>
+              <p><strong>Date:</strong> ${currentDateStr} at ${currentTimeStr} EET/EEST</p>
+              <p><strong>Status:</strong> Changed immediately by client</p>
             </div>
             
             <div class="client-details">
-              <h3 class="section-title">📋 Plan Details</h3>
+              <h3 class="section-title">📋 Client & Plan Details</h3>
               <table>
                 <tr>
                   <th>Client Name</th>
@@ -1489,8 +1961,20 @@ router.patch("/change-plan", async (req, res) => {
                   <td>${clientId}</td>
                 </tr>
                 <tr>
-                  <th>Current Plan (planSelected)</th>
-                  <td><strong>${client.planSelected}</strong></td>
+                  <th>Business Name</th>
+                  <td>${client.businessName || "Not specified"}</td>
+                </tr>
+                <tr>
+                  <th>Email</th>
+                  <td>${client.email}</td>
+                </tr>
+                <tr>
+                  <th>Phone</th>
+                  <td>${client.phone || "Not provided"}</td>
+                </tr>
+                <tr>
+                  <th>Previous Plan</th>
+                  <td><strong>${currentActivePlan}</strong></td>
                 </tr>
                 <tr>
                   <th>New Plan</th>
@@ -1498,33 +1982,32 @@ router.patch("/change-plan", async (req, res) => {
                 </tr>
                 <tr>
                   <th>Effective Date</th>
-                  <td>${formatDate(effectiveDate)}</td>
-                </tr>
-                ${!isFirstOfMonth ? `
-                <tr>
-                  <th>Next Month Plan</th>
-                  <td><strong>${client.nextMonthPlan}</strong> (scheduled)</td>
+                  <td><strong>${formatDate(today)}</strong> (Immediate)</td>
                 </tr>
                 <tr>
-                  <th>Admin Panel Shows</th>
-                  <td><strong>${client.planSelected}</strong> until ${formatDate(effectiveDate)}</td>
+                  <th>Current Plan (planSelected)</th>
+                  <td><strong>${client.planSelected}</strong></td>
                 </tr>
-                ` : ''}
+            
               </table>
             </div>
             
-            <p style="margin-top: 25px; font-size: 14px; color: #666;">
-              <strong>Note:</strong> ${isFirstOfMonth ?
-          'All plan fields updated immediately in database.' :
-          'planSelected remains as ' + client.planSelected + ' until ' + formatDate(effectiveDate) + '. nextMonthPlan set to ' + newPlan + '.'}
-            </p>
+            <div class="contact-info">
+              <h3 class="section-title">📞 Admin Actions</h3>
+              <p><strong>Note:</strong> All plan fields updated immediately in database. No scheduling involved.</p>
+              <p><strong>Action Required:</strong> No action required - change already applied immediately.</p>
+            </div>
           </div>
           
           <div class="footer">
-            <p><strong>Credence Accounting Services - Admin Portal</strong></p>
+            <p><strong>Credence Enterprise Accounting Services - Admin Portal</strong></p>
+            <p>Professional Accounting | VAT Compliance | Business Advisory</p>
+            <div class="dev-info">
+              Developed by Vapautus Media Private Limited
+            </div>
             <p style="font-size: 12px; margin-top: 10px;">
               This is an automated notification email.<br>
-              ${isFirstOfMonth ? 'No action required - change already applied.' : 'Change will auto-apply on ' + formatDate(effectiveDate)}<br>
+              No action required - change already applied immediately.<br>
               Email sent to: ${adminEmail}
             </p>
           </div>
@@ -1536,7 +2019,7 @@ router.patch("/change-plan", async (req, res) => {
       logToConsole("INFO", "PLAN_CHANGE_EMAIL_SENT_TO_ADMIN", {
         adminEmail,
         clientId,
-        actionType
+        actionType: 'IMMEDIATE_CHANGE'
       });
 
     } catch (adminEmailError) {
@@ -1553,9 +2036,8 @@ router.patch("/change-plan", async (req, res) => {
         userName: client.name,
         role: "CLIENT",
         clientId: clientId,
-        action: "PLAN_CHANGE_REQUESTED",
-        details: `Plan change requested: ${currentActivePlan} → ${newPlan}. ${isFirstOfMonth ? 'Applied immediately (1st of month)' : 'Scheduled for ' + formatDate(effectiveDate)}`,
-        // dateTime: new Date(),
+        action: "PLAN_CHANGE_COMPLETED",
+        details: `Plan changed immediately: ${currentActivePlan} → ${newPlan}. Applied immediately on ${formatDate(today)}.`,
         metadata: {
           clientId,
           clientName: client.name,
@@ -1564,8 +2046,8 @@ router.patch("/change-plan", async (req, res) => {
           planSelected: client.planSelected,
           currentPlan: client.currentPlan,
           nextMonthPlan: client.nextMonthPlan,
-          effectiveFrom: effectiveDate,
-          changeType: isFirstOfMonth ? 'immediate' : 'scheduled',
+          effectiveFrom: today,
+          changeType: 'immediate',
           requestedBy: 'client'
         }
       });
@@ -1579,16 +2061,14 @@ router.patch("/change-plan", async (req, res) => {
     // Return success response
     res.json({
       success: true,
-      message: clientMessage,
+      message: `Your plan has been changed from ${currentActivePlan} to ${newPlan} effective immediately.`,
       planDetails: {
-        planSelected: client.planSelected,        // ✅ MAIN PLAN (may be old if not 1st)
-        currentPlan: client.currentPlan,          // ✅ CURRENT BILLING
-        nextMonthPlan: client.nextMonthPlan,      // ✅ FUTURE
-        effectiveFrom: effectiveDate,
-        changeType: isFirstOfMonth ? 'immediate' : 'scheduled',
-        note: isFirstOfMonth ?
-          'All plan fields updated immediately.' :
-          'planSelected will update on ' + formatDate(effectiveDate) + '.'
+        planSelected: client.planSelected,        // ✅ MAIN PLAN - Updated immediately
+        currentPlan: client.currentPlan,          // ✅ CURRENT BILLING - Updated immediately
+        nextMonthPlan: client.nextMonthPlan,      // ✅ FUTURE - Cleared
+        effectiveFrom: today,
+        changeType: 'immediate',
+        note: 'Plan changed immediately - all fields updated.'
       }
     });
 
@@ -1622,6 +2102,417 @@ router.patch("/change-plan", async (req, res) => {
     });
   }
 });
+router.patch("/change-plan", async (req, res) => {
+  try {
+    // Get client from token (client logged in)
+    const token = req.cookies?.clientToken;
+    if (!token) {
+      logToConsole("WARN", "CLIENT_CHANGE_PLAN_NO_TOKEN", {
+        ip: req.ip
+      });
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. Please login first."
+      });
+    }
+
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const clientId = decoded.clientId;
+
+    // Get new plan from request body
+    const { newPlan } = req.body;
+
+    if (!newPlan) {
+      return res.status(400).json({
+        success: false,
+        message: "Please select a plan."
+      });
+    }
+
+    // ✅ Validate all 8 plan options (5 Toiminimi + 3 Osakeyhtiö)
+    const validPlans = [
+      // Toiminimi plans
+      'Lite',
+      'Taxi',
+      'Premium',
+      'Pro',
+      'Restaurant',
+      // Osakeyhtiö plans
+      'Lite Oy',
+      'Premium Oy',
+      'Pro Oy'
+    ];
+
+    if (!validPlans.includes(newPlan)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid plan selected."
+      });
+    }
+
+    // Find client
+    const client = await Client.findOne({ clientId });
+    if (!client) {
+      logToConsole("WARN", "CLIENT_CHANGE_PLAN_NOT_FOUND", {
+        clientId
+      });
+      return res.status(404).json({
+        success: false,
+        message: "Client not found."
+      });
+    }
+
+    // Get current active plan
+    const currentActivePlan = client.planSelected;
+
+    // Check if client is trying to change to same plan
+    if (currentActivePlan === newPlan) {
+      return res.status(400).json({
+        success: false,
+        message: `You are already on the ${newPlan} plan.`
+      });
+    }
+
+    const today = new Date();
+
+    // ✅ ALWAYS UPDATE IMMEDIATELY - NO DATE CHECKING
+    // ✅ UPDATE ALL PLAN FIELDS IMMEDIATELY
+    client.planSelected = newPlan;      // ✅ MAIN PLAN - Updated immediately
+    client.currentPlan = newPlan;       // ✅ CURRENT BILLING - Updated immediately
+    client.nextMonthPlan = '';          // ✅ FUTURE - Cleared
+    client.planChangeRequestedAt = today;
+    client.planEffectiveFrom = today;
+
+    // Add to plan change history
+    client.planChangeHistory.push({
+      fromPlan: currentActivePlan,
+      toPlan: newPlan,
+      changeDate: today,
+      effectiveFrom: today,
+      requestedBy: 'client',
+      notes: 'Changed immediately by client'
+    });
+
+    // Save client
+    await client.save();
+
+    // ✅ Plan prices for email (including new plans)
+    const planPrices = {
+      // Toiminimi plans
+      'Lite': '40 Euros + VAT',
+      'Taxi': '45 Euros + VAT',
+      'Premium': '50 Euros + VAT',
+      'Pro': '60 Euros + VAT',
+      'Restaurant': '80 Euros + VAT',
+      // Osakeyhtiö plans
+      'Lite Oy': '120 Euros + VAT',
+      'Premium Oy': '160 Euros + VAT',
+      'Pro Oy': '200 Euros + VAT'
+    };
+
+    // Format date for display
+    const formatDate = (date) => {
+      return date.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+    };
+
+    // Send email to client
+    try {
+      const currentDateStr = today.toLocaleDateString('en-IN');
+      const currentTimeStr = today.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+
+      const emailSubject = `✅ Plan Changed Successfully - ${client.businessName || client.name}`;
+
+      const emailHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Plan Changed</title>
+          <style>
+            body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
+            .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
+            .header h1 { margin: 0; font-size: 24px; color: #7cd64b; }
+            .content { padding: 30px; background: #ffffff; }
+            .success-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
+            .plan-details { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
+            .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; }
+            .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
+            th { background: #f8f9fa; font-weight: 600; width: 40%; }
+            .note-box { background: #e3f2fd; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #2196f3; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>Credence Accounting Services</h1>
+            <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
+          </div>
+          
+          <div class="content">
+            <h2 style="color: #2c3e50; margin-top: 0;">Dear ${client.firstName} ${client.lastName},</h2>
+            
+            <div class="success-box">
+              <h3 style="margin-top: 0; color: #4caf50;">✅ PLAN CHANGED SUCCESSFULLY</h3>
+              <p>Your accounting plan has been updated immediately as requested.</p>
+              <p><strong>Changed On:</strong> ${currentDateStr} at ${currentTimeStr} IST</p>
+            </div>
+            
+            <div class="plan-details">
+              <h3 class="section-title">📋 Plan Change Details</h3>
+              <table>
+                <tr>
+                  <th>Previous Plan</th>
+                  <td>${currentActivePlan} (${planPrices[currentActivePlan] || 'N/A'})</td>
+                </tr>
+                <tr>
+                  <th>New Plan</th>
+                  <td><strong>${newPlan}</strong> (${planPrices[newPlan]})</td>
+                </tr>
+                <tr>
+                  <th>Effective From</th>
+                  <td><strong>${formatDate(today)}</strong> (Immediate)</td>
+                </tr>
+                <tr>
+                  <th>Billing Amount</th>
+                  <td><strong>${planPrices[newPlan]}</strong> starting immediately</td>
+                </tr>
+                <tr>
+                  <th>Admin Panel Display</th>
+                  <td>Now showing as <strong>${newPlan}</strong></td>
+                </tr>
+              </table>
+            </div>
+            
+            <div class="note-box">
+              <p><strong>📝 Important:</strong> Your plan change has been processed immediately. Your billing will be updated to reflect the new ${newPlan} plan from today.</p>
+              <p>All future services will be provided according to your new plan selection.</p>
+            </div>
+          </div>
+          
+          <div class="footer">
+            <p><strong>Credence Accounting Services</strong></p>
+            <p>Professional Accounting | VAT Compliance | Business Advisory</p>
+            <p style="font-size: 12px; margin-top: 10px;">
+              This is an automated notification email.<br>
+              Please do not reply to this email. For queries, contact support@jladgroup.fi<br>
+              Email sent to: ${client.email}
+            </p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      // Send email to client
+      await sendEmail(client.email, emailSubject, emailHtml);
+      logToConsole("INFO", "PLAN_CHANGE_EMAIL_SENT_TO_CLIENT", {
+        clientId,
+        clientEmail: client.email,
+        actionType: 'IMMEDIATE_CHANGE',
+        fromPlan: currentActivePlan,
+        toPlan: newPlan
+      });
+
+    } catch (emailError) {
+      logToConsole("ERROR", "CLIENT_PLAN_CHANGE_EMAIL_FAILED", {
+        error: emailError.message,
+        clientId,
+        clientEmail: client.email
+      });
+    }
+
+    // Send email to admin
+    try {
+      const adminEmail = process.env.EMAIL_USER;
+      const adminSubject = `📋 Plan Change Completed - ${client.name} (${clientId})`;
+
+      const adminEmailHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Plan Change Alert</title>
+          <style>
+            body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
+            .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
+            .header h1 { margin: 0; font-size: 24px; color: #7cd64b; }
+            .content { padding: 30px; background: #ffffff; }
+            .alert-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
+            .client-details { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
+            .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; }
+            .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
+            th { background: #f8f9fa; font-weight: 600; width: 40%; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>Credence Accounting Services</h1>
+            <p style="margin-top: 5px; opacity: 0.9;">Admin Notification - Plan Change</p>
+          </div>
+          
+          <div class="content">
+            <div class="alert-box">
+              <h3 style="margin-top: 0; color: #4caf50;">✅ IMMEDIATE PLAN CHANGE</h3>
+              <p><strong>Client:</strong> ${client.name} (${clientId})</p>
+              <p><strong>Date:</strong> ${today.toLocaleDateString('en-IN')} at ${today.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST</p>
+              <p><strong>Status:</strong> Changed immediately by client</p>
+            </div>
+            
+            <div class="client-details">
+              <h3 class="section-title">📋 Plan Details</h3>
+              <table>
+                <tr>
+                  <th>Client Name</th>
+                  <td>${client.firstName} ${client.lastName}</td>
+                </tr>
+                <tr>
+                  <th>Client ID</th>
+                  <td>${clientId}</td>
+                </tr>
+                <tr>
+                  <th>Previous Plan</th>
+                  <td><strong>${currentActivePlan}</strong></td>
+                </tr>
+                <tr>
+                  <th>New Plan</th>
+                  <td><strong>${newPlan}</strong></td>
+                </tr>
+                <tr>
+                  <th>Effective Date</th>
+                  <td><strong>${formatDate(today)}</strong> (Immediate)</td>
+                </tr>
+                <tr>
+                  <th>Current Plan (planSelected)</th>
+                  <td><strong>${client.planSelected}</strong></td>
+                </tr>
+                
+                <tr>
+                  <th>Admin Panel Shows</th>
+                  <td><strong>${client.planSelected}</strong> immediately</td>
+                </tr>
+              </table>
+            </div>
+            
+            <p style="margin-top: 25px; font-size: 14px; color: #666;">
+              <strong>Note:</strong> All plan fields updated immediately in database. No scheduling involved.
+            </p>
+          </div>
+          
+          <div class="footer">
+            <p><strong>Credence Accounting Services - Admin Portal</strong></p>
+            <p style="font-size: 12px; margin-top: 10px;">
+              This is an automated notification email.<br>
+              No action required - change already applied immediately.<br>
+              Email sent to: ${adminEmail}
+            </p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      await sendEmail(adminEmail, adminSubject, adminEmailHtml);
+      logToConsole("INFO", "PLAN_CHANGE_EMAIL_SENT_TO_ADMIN", {
+        adminEmail,
+        clientId,
+        actionType: 'IMMEDIATE_CHANGE'
+      });
+
+    } catch (adminEmailError) {
+      logToConsole("ERROR", "ADMIN_PLAN_CHANGE_EMAIL_FAILED", {
+        error: adminEmailError.message,
+        adminEmail: process.env.EMAIL_USER,
+        clientId
+      });
+    }
+
+    // Create activity log
+    try {
+      await ActivityLog.create({
+        userName: client.name,
+        role: "CLIENT",
+        clientId: clientId,
+        action: "PLAN_CHANGE_COMPLETED",
+        details: `Plan changed immediately: ${currentActivePlan} → ${newPlan}. Applied immediately on ${formatDate(today)}.`,
+        metadata: {
+          clientId,
+          clientName: client.name,
+          fromPlan: currentActivePlan,
+          toPlan: newPlan,
+          planSelected: client.planSelected,
+          currentPlan: client.currentPlan,
+          nextMonthPlan: client.nextMonthPlan,
+          effectiveFrom: today,
+          changeType: 'immediate',
+          requestedBy: 'client'
+        }
+      });
+    } catch (logError) {
+      logToConsole("ERROR", "PLAN_CHANGE_ACTIVITY_LOG_FAILED", {
+        error: logError.message,
+        clientId
+      });
+    }
+
+    // Return success response
+    res.json({
+      success: true,
+      message: `Your plan has been changed from ${currentActivePlan} to ${newPlan} effective immediately.`,
+      planDetails: {
+        planSelected: client.planSelected,        // ✅ MAIN PLAN - Updated immediately
+        currentPlan: client.currentPlan,          // ✅ CURRENT BILLING - Updated immediately
+        nextMonthPlan: client.nextMonthPlan,      // ✅ FUTURE - Cleared
+        effectiveFrom: today,
+        changeType: 'immediate',
+        note: 'Plan changed immediately - all fields updated.'
+      }
+    });
+
+  } catch (error) {
+    console.error("Error processing plan change:", error);
+
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        success: false,
+        message: "Session expired. Please login again."
+      });
+    }
+
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        message: "Your session has expired. Please login again."
+      });
+    }
+
+    logToConsole("ERROR", "PLAN_CHANGE_FAILED", {
+      error: error.message,
+      stack: error.stack,
+      clientId: req.cookies?.clientToken ? jwt.decode(req.cookies.clientToken)?.clientId : 'unknown'
+    });
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to process plan change. Please try again.",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+
+
 
 
 
