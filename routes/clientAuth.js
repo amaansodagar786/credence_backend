@@ -1107,8 +1107,20 @@ router.patch("/change-plan", async (req, res) => {
       });
     }
 
-    // Validate plan options
-    const validPlans = ['Lite', 'Taxi', 'Premium', 'Pro', 'Restaurant'];
+    // ✅ UPDATED: Validate all 8 plan options (5 Toiminimi + 3 Osakeyhtiö)
+    const validPlans = [
+      // Toiminimi plans
+      'Lite',
+      'Taxi',
+      'Premium',
+      'Pro',
+      'Restaurant',
+      // Osakeyhtiö plans
+      'Lite Oy',
+      'Premium Oy',
+      'Pro Oy'
+    ];
+
     if (!validPlans.includes(newPlan)) {
       return res.status(400).json({
         success: false,
@@ -1209,13 +1221,18 @@ router.patch("/change-plan", async (req, res) => {
     // Save client
     await client.save();
 
-    // Plan prices for email
+    // ✅ UPDATED: Plan prices for email (including new plans)
     const planPrices = {
+      // Toiminimi plans
       'Lite': '40 Euros + VAT',
       'Taxi': '45 Euros + VAT',
       'Premium': '50 Euros + VAT',
       'Pro': '60 Euros + VAT',
-      'Restaurant': '80 Euros + VAT'
+      'Restaurant': '80 Euros + VAT',
+      // Osakeyhtiö plans
+      'Lite Oy': '120 Euros + VAT',
+      'Premium Oy': '160 Euros + VAT',
+      'Pro Oy': '200 Euros + VAT'
     };
 
     // Send email to client
