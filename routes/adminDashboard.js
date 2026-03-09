@@ -140,9 +140,6 @@ const ALL_TASKS = [
     'Audit'
 ];
 
-/* ===============================
-   1. GET DASHBOARD OVERVIEW METRICS - FIXED FOR MULTI-MONTH FILTERS
-================================ */
 router.get("/dashboard/overview", auth, async (req, res) => {
     try {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
@@ -346,6 +343,40 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             });
         }
 
+        // 8. COMPLETED TASKS COUNT - ADD THIS NEW SECTION
+        let completedTasksCount = 0;
+
+        // Get all active clients with their assignments
+        const allClientsForCompleted = await Client.find(
+            { isActive: true },
+            {
+                clientId: 1,
+                employeeAssignments: 1
+            }
+        ).lean();
+
+        // Count completed tasks (accountingDone = true) within date range
+        allClientsForCompleted.forEach(client => {
+            const assignments = client.employeeAssignments || [];
+
+            dateRange.months.forEach(monthRange => {
+                const completedInMonth = assignments.filter(a =>
+                    a.year === monthRange.year &&
+                    a.month === monthRange.month &&
+                    a.isRemoved === false &&
+                    a.accountingDone === true &&
+                    a.task // Ensure task exists
+                );
+
+                completedTasksCount += completedInMonth.length;
+            });
+        });
+
+        logToConsole("INFO", "COMPLETED_TASKS_COUNT", {
+            count: completedTasksCount,
+            monthsInRange: dateRange.months.length
+        });
+
         // Add Activity Log
         try {
             await ActivityLog.create({
@@ -353,7 +384,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                 role: "ADMIN",
                 adminId: req.user.adminId,
                 action: "DASHBOARD_OVERVIEW_VIEWED",
-                details: `Viewed dashboard overview with filter: ${timeFilter}. Metrics: ${activeClientsCount} active clients, ${activeEmployeesCount} active employees, ${pendingFinancialRequestsCount} pending finance requests`,
+                details: `Viewed dashboard overview with filter: ${timeFilter}. Metrics: ${activeClientsCount} active clients, ${activeEmployeesCount} active employees, ${pendingFinancialRequestsCount} pending finance requests, ${completedTasksCount} completed tasks`,
                 dateTime: new Date(),
                 metadata: {
                     timeFilter,
@@ -366,6 +397,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                     incompleteTasksCount,
                     recentNotesCount,
                     pendingFinancialRequestsCount,
+                    completedTasksCount,
                     monthsInRange: dateRange.months.length
                 }
             });
@@ -388,7 +420,9 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             unassignedClientsCount,
             idleEmployeesCount,
             incompleteTasksCount,
+            recentNotesCount,
             pendingFinancialRequestsCount,
+            completedTasksCount,
             monthsInRange: dateRange.months.length,
             timeFilter
         });
@@ -402,7 +436,8 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                 idleEmployees: idleEmployeesCount,
                 incompleteTasks: incompleteTasksCount,
                 recentNotes: recentNotesCount,
-                pendingFinancialRequests: pendingFinancialRequestsCount
+                pendingFinancialRequests: pendingFinancialRequestsCount,
+                completedTasks: completedTasksCount // ADDED THIS LINE
             },
             timeFilter: dateRange.timeFilter,
             currentMonth: dateRange.months[0] || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 },
@@ -2368,6 +2403,209 @@ router.post("/dashboard/notes/mark-all-read", auth, async (req, res) => {
     }
 });
 
+
+
+/* ===============================
+   15. GET COMPLETED TASKS (GROUPED BY MONTH) - NEW
+================================ */
+router.get("/dashboard/completed-tasks", auth, async (req, res) => {
+    try {
+        const { timeFilter = 'this_month', customStart, customEnd } = req.query;
+        const dateRange = getDateRange(timeFilter, customStart, customEnd);
+
+        logToConsole("INFO", "COMPLETED_TASKS_REQUEST", {
+            adminId: req.user.adminId,
+            timeFilter,
+            monthsCount: dateRange.months.length
+        });
+
+        // Get all active clients with their assignments
+        const clients = await Client.find(
+            { isActive: true },
+            {
+                clientId: 1,
+                name: 1,
+                email: 1,
+                employeeAssignments: 1
+            }
+        ).lean();
+
+        // Get all active employees for reference
+        const employees = await Employee.find(
+            { isActive: true },
+            {
+                employeeId: 1,
+                name: 1
+            }
+        ).lean();
+
+        // Create employee map for quick lookup
+        const employeeMap = {};
+        employees.forEach(emp => {
+            employeeMap[emp.employeeId] = emp.name;
+        });
+
+        // Structure to hold month-wise completed tasks
+        const monthsData = [];
+        let totalCompletedTasks = 0;
+        const uniqueEmployeesSet = new Set();
+
+        // Process each month in the date range (from oldest to newest first for processing)
+        const sortedMonths = [...dateRange.months].sort((a, b) => {
+            if (a.year !== b.year) return a.year - b.year;
+            return a.month - b.month;
+        });
+
+        sortedMonths.forEach(monthRange => {
+            const monthTasks = [];
+            let monthCompletedCount = 0;
+
+            // Check each client for completed tasks in this month
+            clients.forEach(client => {
+                const assignments = client.employeeAssignments || [];
+
+                // Find completed tasks for this specific month
+                const completedInMonth = assignments.filter(a =>
+                    a.year === monthRange.year &&
+                    a.month === monthRange.month &&
+                    a.isRemoved === false &&
+                    a.accountingDone === true &&
+                    a.task // Ensure task exists
+                );
+
+                if (completedInMonth.length > 0) {
+                    completedInMonth.forEach(assignment => {
+                        monthTasks.push({
+                            clientId: client.clientId,
+                            clientName: client.name,
+                            employeeId: assignment.employeeId,
+                            employeeName: assignment.employeeName || employeeMap[assignment.employeeId] || "Unknown",
+                            task: assignment.task,
+                            completedAt: assignment.accountingDoneAt,
+                            completedBy: assignment.accountingDoneBy || "employee"
+                        });
+
+                        // Add employee to unique set for dropdown
+                        if (assignment.employeeId) {
+                            uniqueEmployeesSet.add(assignment.employeeId);
+                        }
+                    });
+
+                    monthCompletedCount += completedInMonth.length;
+                }
+            });
+
+            // Only add month if there are completed tasks
+            if (monthTasks.length > 0) {
+                const monthName = new Date(monthRange.year, monthRange.month - 1, 1)
+                    .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+                monthsData.push({
+                    year: monthRange.year,
+                    month: monthRange.month,
+                    monthName: monthName,
+                    totalCompleted: monthCompletedCount,
+                    tasks: monthTasks.sort((a, b) =>
+                        new Date(b.completedAt) - new Date(a.completedAt)
+                    ) // Sort tasks within month by completion date (newest first)
+                });
+
+                totalCompletedTasks += monthCompletedCount;
+            }
+        });
+
+        // Sort months in DESCENDING order (newest first) for display
+        monthsData.sort((a, b) => {
+            if (a.year !== b.year) return b.year - a.year;
+            return b.month - a.month;
+        });
+
+        // Prepare employees list for dropdown
+        const employeesList = [];
+        uniqueEmployeesSet.forEach(empId => {
+            const empName = employeeMap[empId];
+            if (empName) {
+                employeesList.push({
+                    value: empId,
+                    label: empName
+                });
+            }
+        });
+
+        // Sort employees alphabetically by name
+        employeesList.sort((a, b) => a.label.localeCompare(b.label));
+
+        // Add "All Employees" option at the beginning
+        employeesList.unshift({
+            value: "all",
+            label: "All Employees"
+        });
+
+        // Add Activity Log
+        try {
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,
+                action: "COMPLETED_TASKS_VIEWED",
+                details: `Viewed completed tasks for ${timeFilter}. Found ${totalCompletedTasks} completed tasks across ${monthsData.length} months`,
+                dateTime: new Date(),
+                metadata: {
+                    timeFilter,
+                    monthsInRange: dateRange.months.length,
+                    monthsWithData: monthsData.length,
+                    totalCompletedTasks,
+                    uniqueEmployees: employeesList.length - 1 // Subtract 1 for "All Employees"
+                }
+            });
+
+            logToConsole("INFO", "COMPLETED_TASKS_ACTIVITY_LOG_CREATED", {
+                adminId: req.user.adminId,
+                action: "COMPLETED_TASKS_VIEWED"
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "COMPLETED_TASKS_ACTIVITY_LOG_FAILED", {
+                error: logError.message,
+                adminId: req.user.adminId
+            });
+        }
+
+        logToConsole("SUCCESS", "COMPLETED_TASKS_FETCHED", {
+            adminId: req.user.adminId,
+            totalCompletedTasks,
+            monthsWithData: monthsData.length,
+            uniqueEmployees: employeesList.length - 1,
+            timeFilter
+        });
+
+        res.json({
+            success: true,
+            timeFilter: dateRange.timeFilter,
+            monthsInRange: dateRange.months.length,
+            totalCompletedTasks,
+            monthsData,
+            employees: employeesList,
+            summary: {
+                totalCompletedTasks,
+                monthsWithData: monthsData.length,
+                uniqueEmployees: employeesList.length - 1
+            }
+        });
+
+    } catch (error) {
+        logToConsole("ERROR", "COMPLETED_TASKS_ERROR", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId,
+            timeFilter: req.query.timeFilter
+        });
+
+        res.status(500).json({
+            success: false,
+            message: "Error fetching completed tasks"
+        });
+    }
+});
 
 
 module.exports = router;

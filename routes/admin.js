@@ -1583,6 +1583,299 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
 
 
 
+/* ===============================
+   GET PAYMENT STATUS FOR A MONTH
+================================ */
+router.get("/clients/:clientId/payment-status", auth, async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { year, month } = req.query;
+
+    // Validate required fields
+    if (!year || !month) {
+      return res.status(400).json({
+        success: false,
+        message: "Year and month are required"
+      });
+    }
+
+    logToConsole("INFO", "GET_PAYMENT_STATUS_REQUEST", {
+      adminId: req.user.adminId,
+      clientId,
+      year,
+      month
+    });
+
+    const client = await Client.findOne({ clientId });
+
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: "Client not found"
+      });
+    }
+
+    const yearKey = String(year);
+    const monthKey = String(month);
+
+    // Check if month exists
+    if (!client.documents.has(yearKey) || !client.documents.get(yearKey).has(monthKey)) {
+      return res.status(404).json({
+        success: false,
+        message: "Month data not found for this client",
+        paymentStatus: false // Default
+      });
+    }
+
+    const monthData = client.documents.get(yearKey).get(monthKey);
+
+    logToConsole("SUCCESS", "GET_PAYMENT_STATUS_SUCCESS", {
+      clientId,
+      year,
+      month,
+      paymentStatus: monthData.paymentStatus || false
+    });
+
+    res.json({
+      success: true,
+      paymentStatus: monthData.paymentStatus || false,
+      paymentUpdatedAt: monthData.paymentUpdatedAt,
+      paymentUpdatedBy: monthData.paymentUpdatedBy,
+      paymentUpdatedByName: monthData.paymentUpdatedByName,
+      paymentNotes: monthData.paymentNotes,
+      paymentHistory: monthData.paymentHistory || []
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "GET_PAYMENT_STATUS_ERROR", {
+      error: error.message,
+      clientId: req.params.clientId
+    });
+
+    res.status(500).json({
+      success: false,
+      message: "Error fetching payment status",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/* ===============================
+   UPDATE PAYMENT STATUS FOR A MONTH (TOGGLE)
+================================ */
+router.post("/clients/:clientId/payment-status", auth, async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { year, month, status, notes } = req.body;
+
+    // Validate required fields
+    if (!year || !month || typeof status !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: "Year, month, and status (boolean) are required"
+      });
+    }
+
+    logToConsole("INFO", "UPDATE_PAYMENT_STATUS_REQUEST", {
+      adminId: req.user.adminId,
+      adminName: req.user.name,
+      clientId,
+      year,
+      month,
+      newStatus: status,
+      notes: notes || 'No notes'
+    });
+
+    const client = await Client.findOne({ clientId });
+
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: "Client not found"
+      });
+    }
+
+    const yearKey = String(year);
+    const monthKey = String(month);
+
+    // Initialize year and month if they don't exist
+    if (!client.documents.has(yearKey)) {
+      client.documents.set(yearKey, new Map());
+      logToConsole("DEBUG", "CREATED_NEW_YEAR_ENTRY", { year: yearKey });
+    }
+
+    if (!client.documents.get(yearKey).has(monthKey)) {
+      // Create new month data with default values
+      const newMonthData = {
+        paymentStatus: false,
+        paymentHistory: []
+      };
+      client.documents.get(yearKey).set(monthKey, newMonthData);
+      logToConsole("DEBUG", "CREATED_NEW_MONTH_ENTRY", { year: yearKey, month: monthKey });
+    }
+
+    const monthData = client.documents.get(yearKey).get(monthKey);
+
+    // Get previous status
+    const previousStatus = monthData.paymentStatus || false;
+
+    // Don't update if same status
+    if (previousStatus === status) {
+      return res.json({
+        success: true,
+        message: `Payment status already ${status ? 'PAID' : 'PENDING'}`,
+        paymentStatus: status,
+        unchanged: true
+      });
+    }
+
+    // Initialize paymentHistory if it doesn't exist
+    if (!monthData.paymentHistory) {
+      monthData.paymentHistory = [];
+    }
+
+    // Update payment status fields
+    monthData.paymentStatus = status;
+    monthData.paymentUpdatedAt = new Date();
+    monthData.paymentUpdatedBy = req.user.adminId;
+    monthData.paymentUpdatedByName = req.user.name;
+
+    if (notes) {
+      monthData.paymentNotes = notes;
+    }
+
+    // Add to payment history
+    monthData.paymentHistory.push({
+      status: status,
+      changedAt: new Date(),
+      changedBy: req.user.adminId,
+      changedByName: req.user.name,
+      notes: notes || `Changed from ${previousStatus ? 'PAID' : 'PENDING'} to ${status ? 'PAID' : 'PENDING'}`
+    });
+
+    // Keep only last 50 history entries to prevent unlimited growth
+    if (monthData.paymentHistory.length > 50) {
+      monthData.paymentHistory = monthData.paymentHistory.slice(-50);
+    }
+
+    // Save the updated data
+    client.documents.get(yearKey).set(monthKey, monthData);
+    await client.save();
+
+    // Log to ActivityLog
+    const actionDetails = status ?
+      `Marked payment as PAID for ${client.name} - ${month}/${year}` :
+      `Marked payment as PENDING for ${client.name} - ${month}/${year}`;
+
+    await log(req.user.name, req.user.adminId, "PAYMENT_STATUS_UPDATED", actionDetails);
+
+    logToConsole("SUCCESS", "PAYMENT_STATUS_UPDATED_SUCCESSFULLY", {
+      clientId,
+      clientName: client.name,
+      year,
+      month,
+      previousStatus: previousStatus ? 'PAID' : 'PENDING',
+      newStatus: status ? 'PAID' : 'PENDING',
+      updatedBy: req.user.name,
+      historyLength: monthData.paymentHistory.length
+    });
+
+    res.json({
+      success: true,
+      message: `Payment status updated to ${status ? 'PAID' : 'PENDING'} successfully`,
+      paymentStatus: status,
+      paymentUpdatedAt: monthData.paymentUpdatedAt,
+      paymentUpdatedBy: monthData.paymentUpdatedBy,
+      paymentUpdatedByName: monthData.paymentUpdatedByName,
+      paymentHistory: monthData.paymentHistory,
+      previousStatus: previousStatus
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "UPDATE_PAYMENT_STATUS_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      clientId: req.params.clientId,
+      adminId: req.user?.adminId,
+      requestBody: req.body
+    });
+
+    await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "PAYMENT_STATUS_UPDATE_ERROR",
+      `Error updating payment status: ${error.message}`);
+
+    res.status(500).json({
+      success: false,
+      message: "Error updating payment status",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/* ===============================
+   GET PAYMENT HISTORY FOR A MONTH
+================================ */
+router.get("/clients/:clientId/payment-history", auth, async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { year, month } = req.query;
+
+    if (!year || !month) {
+      return res.status(400).json({
+        success: false,
+        message: "Year and month are required"
+      });
+    }
+
+    const client = await Client.findOne({ clientId });
+
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: "Client not found"
+      });
+    }
+
+    const yearKey = String(year);
+    const monthKey = String(month);
+
+    if (!client.documents.has(yearKey) || !client.documents.get(yearKey).has(monthKey)) {
+      return res.json({
+        success: true,
+        paymentHistory: [],
+        message: "No payment history found for this month"
+      });
+    }
+
+    const monthData = client.documents.get(yearKey).get(monthKey);
+
+    res.json({
+      success: true,
+      paymentHistory: monthData.paymentHistory || [],
+      currentStatus: monthData.paymentStatus || false
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "GET_PAYMENT_HISTORY_ERROR", {
+      error: error.message,
+      clientId: req.params.clientId
+    });
+
+    res.status(500).json({
+      success: false,
+      message: "Error fetching payment history",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+
+
+
+
+
+
+
+
 
 
 

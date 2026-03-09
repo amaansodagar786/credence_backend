@@ -75,7 +75,7 @@ const otherCategorySchema = new mongoose.Schema(
 );
 
 /* ===============================
-   MONTH DATA
+   MONTH DATA - UPDATED WITH PAYMENT STATUS
 ================================ */
 const monthDataSchema = new mongoose.Schema(
   {
@@ -101,7 +101,28 @@ const monthDataSchema = new mongoose.Schema(
     },
     monthStatusChangedAt: Date,
     monthStatusChangedBy: String,
-    monthStatusReason: String
+    monthStatusReason: String,
+
+    // ✅ NEW: PAYMENT STATUS FOR THE MONTH
+    paymentStatus: {
+      type: Boolean,
+      default: false
+    },
+    paymentUpdatedAt: Date,
+    paymentUpdatedBy: String,
+    paymentUpdatedByName: String,
+    paymentNotes: String,
+
+    // ✅ NEW: Payment history tracking
+    paymentHistory: [
+      {
+        status: { type: Boolean, required: true },
+        changedAt: { type: Date, default: Date.now },
+        changedBy: String,
+        changedByName: String,
+        notes: String
+      }
+    ]
   },
   { _id: false }
 );
@@ -189,7 +210,7 @@ const clientSchema = new mongoose.Schema(
     enrollmentId: String,
     enrollmentDate: Date,
 
-    // ✅ NEW: Track overall client status history
+    // Track overall client status history
     globalStatusHistory: [
       {
         status: { type: String, enum: ['active', 'inactive'], required: true },
@@ -204,11 +225,10 @@ const clientSchema = new mongoose.Schema(
       }
     ],
 
-    // ✅ NEW: Track when client was deactivated/reactivated
+    // Track when client was deactivated/reactivated
     deactivatedAt: Date,
     deactivatedBy: String,
     deactivationReason: String,
-
     reactivatedAt: Date,
     reactivatedBy: String,
     reactivationReason: String,
