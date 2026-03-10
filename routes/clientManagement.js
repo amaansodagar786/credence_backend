@@ -620,7 +620,7 @@ router.get("/client/:clientId", auth, async (req, res) => {
 //       } else {
 //         // ✅ TODAY IS 2ND OR LATER - SCHEDULE FOR NEXT MONTH
 //         const effectiveDate = getFirstOfNextMonth();
-        
+
 //         filteredUpdate.nextMonthPlan = newPlan;  // FUTURE - Set for next month
 //         // DO NOT update planSelected or currentPlan - they stay same
 //         filteredUpdate.planEffectiveFrom = effectiveDate;
@@ -690,7 +690,7 @@ router.get("/client/:clientId", auth, async (req, res) => {
 //     // ADDED: Activity Log
 //     try {
 //       let actionDetails = `Updated client details for: ${client.name} (${clientId}). Fields changed: ${changes.map(c => c.field).join(', ')}`;
-      
+
 //       if (isPlanChanging) {
 //         actionDetails += `. Plan change: ${isFirstOfMonth ? 'IMMEDIATE' : 'SCHEDULED for next month'}`;
 //       }
@@ -755,12 +755,12 @@ router.get("/client/:clientId", auth, async (req, res) => {
 //         changes.forEach(change => {
 //           let oldValue = change.oldValue || 'Not set';
 //           let newValue = change.newValue || 'Not set';
-          
+
 //           // Add note for scheduled plan changes
 //           if (change.field === 'planSelected' && change.note) {
 //             newValue += ` (${change.note})`;
 //           }
-          
+
 //           changesTable += `
 //             <tr>
 //               <th>${fieldDisplayNames[change.field] || change.field}</th>
@@ -822,19 +822,19 @@ router.get("/client/:clientId", auth, async (req, res) => {
 //               <h1>Credence Enterprise Accounting Services</h1>
 //               <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
 //             </div>
-            
+
 //             <div class="content">
 //               <h2 style="color: #2c3e50; margin-top: 0;">Dear ${client.firstName} ${client.lastName},</h2>
-              
+
 //               <div class="update-box">
 //                 <h3 style="margin-top: 0; color: #4caf50;">✅ PROFILE UPDATED BY ADMIN</h3>
 //                 <p>Your client profile has been updated by our admin team.</p>
 //                 <p><strong>Updated On:</strong> ${currentDateStr} at ${currentTimeStr} EET/EEST</p>
 //                 <p><strong>Updated By:</strong> ${req.user.name} (Admin)</p>
 //               </div>
-              
+
 //               ${specialNotice}
-              
+
 //               <div class="client-info">
 //                 <h3 class="section-title">📋 Profile Changes Summary</h3>
 //                 <table class="change-table">
@@ -846,7 +846,7 @@ router.get("/client/:clientId", auth, async (req, res) => {
 //                   ${changesTable}
 //                 </table>
 //               </div>
-              
+
 //               <div class="client-info">
 //                 <h3 class="section-title">👤 Your Current Profile Information</h3>
 //                 <table>
@@ -878,12 +878,12 @@ router.get("/client/:clientId", auth, async (req, res) => {
 //                   ` : ''}
 //                 </table>
 //               </div>
-              
+
 //               <div class="note-box">
 //                 <p><strong>📝 Note:</strong> This update was performed by our admin team to ensure your profile information is accurate and up-to-date.</p>
 //                 <p>If you have any questions about these changes, please contact our support team.</p>
 //               </div>
-              
+
 //               <div class="contact-info">
 //                 <h3 class="section-title">📞 Need Assistance?</h3>
 //                 <p><strong>Email:</strong> support@jladgroup.fi</p>
@@ -891,7 +891,7 @@ router.get("/client/:clientId", auth, async (req, res) => {
 //                 <p><strong>Business Hours:</strong> Monday to Friday 9am to 3pm (EET/EEST)</p>
 //               </div>
 //             </div>
-            
+
 //             <div class="footer">
 //               <p><strong>Credence Enterprise Accounting Services</strong></p>
 //               <p>Professional Accounting | VAT Compliance | Business Advisory</p>
@@ -1313,6 +1313,315 @@ router.get('/statistics', auth, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch statistics'
+    });
+  }
+});
+
+
+
+
+
+
+/* ===============================
+   HELPER FUNCTION: Get months between two dates with partial month support
+================================ */
+function getMonthsInRange(startDate, endDate) {
+  const months = [];
+  const current = new Date(startDate);
+
+  while (current <= endDate) {
+    const year = current.getFullYear();
+    const month = current.getMonth();
+
+    // First day of this month
+    const monthStart = new Date(year, month, 1);
+    // Last day of this month
+    const monthEnd = new Date(year, month + 1, 0, 23, 59, 59);
+
+    // Check if this is a partial month
+    const isPartial =
+      (current.getTime() === startDate.getTime() && startDate > monthStart) || // First month partial
+      (monthEnd > endDate); // Last month partial
+
+    // Actual start and end for this month within our range
+    const actualStart = isPartial ?
+      new Date(Math.max(monthStart.getTime(), startDate.getTime())) :
+      new Date(monthStart);
+
+    const actualEnd = isPartial ?
+      new Date(Math.min(monthEnd.getTime(), endDate.getTime())) :
+      new Date(monthEnd);
+
+    months.push({
+      year,
+      month,
+      monthName: monthStart.toLocaleString('default', { month: 'long' }),
+      startOfMonth: monthStart,
+      endOfMonth: monthEnd,
+      isPartial,
+      actualStartDate: actualStart,
+      actualEndDate: actualEnd
+    });
+
+    // Move to next month
+    current.setMonth(current.getMonth() + 1);
+    current.setDate(1);
+  }
+
+  return months;
+}
+
+/* ===============================
+   TASK INFO - GET ALL CLIENTS TASK DATA WITH FILTERS
+================================ */
+router.get("/task-info", auth, async (req, res) => {
+  try {
+    const { filterType, fromDate, toDate } = req.query;
+
+    // Get date range based on filter
+    let startDate, endDate;
+    const today = new Date();
+
+    if (filterType === 'thisMonth') {
+      startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+      endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
+    }
+    else if (filterType === 'lastMonth') {
+      startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      endDate = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59);
+    }
+    else if (filterType === 'custom' && fromDate && toDate) {
+      startDate = new Date(fromDate);
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(toDate);
+      endDate.setHours(23, 59, 59, 999);
+    }
+    else {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid date filter parameters"
+      });
+    }
+
+    console.log("🔍 Fetching task info from:", startDate, "to", endDate);
+
+    // Get ONLY ACTIVE clients with their assignments and documents
+    const clients = await Client.find({ isActive: true })
+      .select("clientId name email businessName employeeAssignments documents firstName lastName")
+      .lean();
+
+    console.log(`🔍 Found ${clients.length} active clients`);
+
+    // Process each client's task data
+    const taskData = [];
+
+    for (const client of clients) {
+      // Filter assignments within date range
+      const assignmentsInRange = client.employeeAssignments?.filter(assignment => {
+        if (!assignment.assignedAt) return false;
+        const assignDate = new Date(assignment.assignedAt);
+        return assignDate >= startDate && assignDate <= endDate && !assignment.isRemoved;
+      }) || [];
+
+      // Calculate task counts
+      const totalTasks = assignmentsInRange.length;
+      const pendingTasks = assignmentsInRange.filter(a => !a.accountingDone).length;
+      const completedTasks = assignmentsInRange.filter(a => a.accountingDone).length;
+
+      // Calculate payment summary for the period
+      let paymentSummary = {
+        totalMonths: 0,
+        paidMonths: 0,
+        pendingMonths: 0,
+        months: []
+      };
+
+      // Get all months in the date range
+      const monthsInRange = getMonthsInRange(startDate, endDate);
+
+      for (const monthInfo of monthsInRange) {
+        const year = monthInfo.year.toString();
+        const month = (monthInfo.month + 1).toString(); // Convert to 1-12 for storage
+
+        let paymentStatus = false;
+        let paymentDetails = {
+          status: false,
+          updatedAt: null,
+          updatedBy: null,
+          updatedByName: null,
+          notes: null
+        };
+
+        // Navigate through the documents structure
+        if (client.documents && typeof client.documents === 'object') {
+          if (client.documents[year]) {
+            const yearData = client.documents[year];
+
+            if (yearData && yearData[month]) {
+              const monthData = yearData[month];
+
+              paymentStatus = monthData.paymentStatus === true;
+
+              paymentDetails = {
+                status: paymentStatus,
+                updatedAt: monthData.paymentUpdatedAt || null,
+                updatedBy: monthData.paymentUpdatedBy || null,
+                updatedByName: monthData.paymentUpdatedByName || null,
+                notes: monthData.paymentNotes || null
+              };
+            }
+          }
+        }
+
+        paymentSummary.months.push({
+          year: monthInfo.year,
+          month: monthInfo.month + 1,
+          monthName: monthInfo.monthName,
+          fromDate: monthInfo.actualStartDate,
+          toDate: monthInfo.actualEndDate,
+          isPartial: monthInfo.isPartial,
+          payment: paymentDetails
+        });
+
+        if (paymentStatus) {
+          paymentSummary.paidMonths++;
+        } else {
+          paymentSummary.pendingMonths++;
+        }
+      }
+
+      paymentSummary.totalMonths = paymentSummary.months.length;
+
+      // Create display text based on payment status
+      let paymentDisplayText = 'No Data';
+      if (paymentSummary.totalMonths > 0) {
+        if (paymentSummary.paidMonths === paymentSummary.totalMonths) {
+          paymentDisplayText = 'All Paid';
+        } else if (paymentSummary.pendingMonths === paymentSummary.totalMonths) {
+          paymentDisplayText = 'All Pending';
+        } else {
+          paymentDisplayText = `${paymentSummary.paidMonths}/${paymentSummary.totalMonths} Paid`;
+        }
+      }
+
+      // Create monthly breakdown for modal with tasks
+      const monthlyBreakdown = [];
+
+      for (const monthInfo of monthsInRange) {
+        const year = monthInfo.year;
+        const month = monthInfo.month;
+
+        const monthTasks = assignmentsInRange.filter(assignment => {
+          const assignDate = new Date(assignment.assignedAt);
+
+          if (monthInfo.isPartial) {
+            return assignDate >= monthInfo.actualStartDate &&
+              assignDate <= monthInfo.actualEndDate;
+          }
+
+          return assignDate.getMonth() === month &&
+            assignDate.getFullYear() === year;
+        });
+
+        const monthPayment = paymentSummary.months.find(
+          m => m.year === year && m.month === (month + 1)
+        )?.payment || { status: false };
+
+        monthlyBreakdown.push({
+          month: monthInfo.monthName,
+          year: year,
+          fromDate: monthInfo.actualStartDate,
+          toDate: monthInfo.actualEndDate,
+          isPartial: monthInfo.isPartial,
+          tasks: monthTasks.map(task => ({
+            taskName: task.task || 'Task',
+            employeeName: task.employeeName || 'Not Assigned',
+            employeeId: task.employeeId,
+            assignedAt: task.assignedAt,
+            accountingDone: task.accountingDone || false,
+            completedAt: task.accountingDoneAt || null,
+            completedBy: task.accountingDoneBy || null
+          })),
+          payment: monthPayment
+        });
+      }
+
+      // Sort breakdown by date (newest first)
+      monthlyBreakdown.sort((a, b) => {
+        const dateA = new Date(a.year, a.month - 1);
+        const dateB = new Date(b.year, b.month - 1);
+        return dateB - dateA;
+      });
+
+      // ========== DEBUG LOGS FOR THIS CLIENT ==========
+      console.log("\n========== DEBUG PAYMENT ==========");
+      console.log("Client:", client.clientId, client.name);
+      console.log("Selected date range:", startDate, "to", endDate);
+      console.log("Months in range:", monthsInRange.map(m => `${m.monthName} ${m.year}`));
+      console.log("Payment months data:");
+      paymentSummary.months.forEach(m => {
+        console.log(`  - ${m.monthName} ${m.year}: status = ${m.payment.status}, updatedBy = ${m.payment.updatedByName || 'N/A'}`);
+      });
+      console.log("Raw client.documents structure for relevant months:");
+
+      // Show raw data for debugging
+      for (const monthInfo of monthsInRange) {
+        const year = monthInfo.year.toString();
+        const month = (monthInfo.month + 1).toString();
+
+        if (client.documents && client.documents[year] && client.documents[year][month]) {
+          console.log(`  - ${monthInfo.monthName} ${year}: paymentStatus = ${client.documents[year][month].paymentStatus}`);
+        } else {
+          console.log(`  - ${monthInfo.monthName} ${year}: NO DATA FOUND in documents`);
+        }
+      }
+      console.log("=====================================\n");
+
+      taskData.push({
+        clientId: client.clientId,
+        clientName: client.name || `${client.firstName || ''} ${client.lastName || ''}`.trim(),
+        email: client.email,
+        businessName: client.businessName || 'N/A',
+        tasksSummary: {
+          total: totalTasks,
+          assigned: totalTasks,
+          pending: pendingTasks,
+          completed: completedTasks
+        },
+        paymentSummary: {
+          totalMonths: paymentSummary.totalMonths,
+          paidMonths: paymentSummary.paidMonths,
+          pendingMonths: paymentSummary.pendingMonths,
+          displayText: paymentDisplayText
+        },
+        monthlyBreakdown: monthlyBreakdown,
+        dateRange: {
+          from: startDate,
+          to: endDate,
+          filterType
+        }
+      });
+    }
+
+    // Sort clients by name
+    taskData.sort((a, b) => a.clientName.localeCompare(b.clientName));
+
+    res.json({
+      success: true,
+      data: taskData,
+      filterInfo: {
+        type: filterType,
+        from: startDate,
+        to: endDate
+      }
+    });
+
+  } catch (error) {
+    console.error("Error fetching task info:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error fetching task information",
+      error: error.message
     });
   }
 });
