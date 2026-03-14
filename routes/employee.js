@@ -138,6 +138,20 @@ router.post("/login", async (req, res) => {
       expiresIn: "1d"
     });
 
+    // Clear any stale tokens from previous sessions before setting new one
+    res.clearCookie("clientToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/"
+    });
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/"
+    });
+
     res.cookie("employeeToken", token, {
       httpOnly: true,
       secure: true,        // REQUIRED on HTTPS
@@ -209,6 +223,119 @@ router.post("/login", async (req, res) => {
     });
   }
 });
+
+
+/* ===============================
+   EMPLOYEE LOGOUT
+================================ */
+router.post("/logout", async (req, res) => {
+  try {
+    const token = req.cookies?.employeeToken;
+    let decoded = null;
+
+    // Console log: Logout request
+    logToConsole("INFO", "EMPLOYEE_LOGOUT_REQUEST", {
+      hasToken: !!token,
+      ip: req.ip
+    });
+
+    // Try to decode token to get employee info for activity log
+    if (token) {
+      try {
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
+      } catch {
+        // Token is invalid, but we'll still clear the cookie
+        logToConsole("WARN", "INVALID_TOKEN_ON_LOGOUT", { ip: req.ip });
+      }
+    }
+
+    // Clear employeeToken
+    res.clearCookie("employeeToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/"
+    });
+
+    // Also clear clientToken and accessToken as safety measure
+    res.clearCookie("clientToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/"
+    });
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/"
+    });
+
+    // Console log: Cookie cleared
+    logToConsole("INFO", "COOKIE_CLEARED", {
+      cookieName: "employeeToken"
+    });
+
+    // Log activity if we have valid token info
+    if (decoded && decoded.employeeId) {
+      try {
+        const employee = await Employee.findOne({
+          employeeId: decoded.employeeId
+        }).select("name");
+
+        if (employee) {
+          await ActivityLog.create({
+            userName: employee.name,
+            role: "EMPLOYEE",
+            employeeId: decoded.employeeId,
+            action: "EMPLOYEE_LOGOUT",
+            details: "Employee logged out successfully",
+            metadata: {
+              logoutTime: new Date().toISOString(),
+              ip: req.ip
+            }
+          });
+
+          logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+            action: "EMPLOYEE_LOGOUT",
+            employeeId: decoded.employeeId,
+            employeeName: employee.name
+          });
+        }
+      } catch (logError) {
+        logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
+          error: logError.message,
+          employeeId: decoded.employeeId
+        });
+      }
+    }
+
+    // Console log: Logout successful
+    logToConsole("SUCCESS", "EMPLOYEE_LOGOUT_SUCCESS", {
+      employeeId: decoded?.employeeId || 'unknown',
+      ip: req.ip
+    });
+
+    res.json({
+      message: "Logged out successfully",
+      clearedCookie: true
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "LOGOUT_PROCESS_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip
+    });
+
+    res.status(500).json({
+      message: "Error during logout",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+
 
 /* ===============================
    EMPLOYEE CHECK LOGIN (GET CURRENT USER)
@@ -318,96 +445,6 @@ router.get("/me", async (req, res) => {
   }
 });
 
-/* ===============================
-   EMPLOYEE LOGOUT
-================================ */
-router.post("/logout", async (req, res) => {
-  try {
-    const token = req.cookies?.employeeToken;
-    let decoded = null;
-
-    // Console log: Logout request
-    logToConsole("INFO", "EMPLOYEE_LOGOUT_REQUEST", {
-      hasToken: !!token,
-      ip: req.ip
-    });
-
-    // Try to decode token to get employee info for activity log
-    if (token) {
-      try {
-        decoded = jwt.verify(token, process.env.JWT_SECRET);
-      } catch {
-        // Token is invalid, but we'll still clear the cookie
-        logToConsole("WARN", "INVALID_TOKEN_ON_LOGOUT", { ip: req.ip });
-      }
-    }
-
-    // Clear the cookie
-    res.clearCookie("employeeToken");
-
-    // Console log: Cookie cleared
-    logToConsole("INFO", "COOKIE_CLEARED", {
-      cookieName: "employeeToken"
-    });
-
-    // Log activity if we have valid token info
-    if (decoded && decoded.employeeId) {
-      try {
-        const employee = await Employee.findOne({
-          employeeId: decoded.employeeId
-        }).select("name");
-
-        if (employee) {
-          await ActivityLog.create({
-            userName: employee.name,
-            role: "EMPLOYEE",
-            employeeId: decoded.employeeId,
-            action: "EMPLOYEE_LOGOUT",
-            details: "Employee logged out successfully",
-            metadata: {
-              logoutTime: new Date().toISOString(),
-              ip: req.ip
-            }
-          });
-
-          logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-            action: "EMPLOYEE_LOGOUT",
-            employeeId: decoded.employeeId,
-            employeeName: employee.name
-          });
-        }
-      } catch (logError) {
-        logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
-          error: logError.message,
-          employeeId: decoded.employeeId
-        });
-      }
-    }
-
-    // Console log: Logout successful
-    logToConsole("SUCCESS", "EMPLOYEE_LOGOUT_SUCCESS", {
-      employeeId: decoded?.employeeId || 'unknown',
-      ip: req.ip
-    });
-
-    res.json({
-      message: "Logged out successfully",
-      clearedCookie: true
-    });
-
-  } catch (error) {
-    logToConsole("ERROR", "LOGOUT_PROCESS_ERROR", {
-      error: error.message,
-      stack: error.stack,
-      ip: req.ip
-    });
-
-    res.status(500).json({
-      message: "Error during logout",
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
 
 
 /* ===============================

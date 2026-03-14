@@ -25,9 +25,6 @@ const logToConsole = (type, operation, data) => {
   return logEntry;
 };
 
-/* =========================
-   CLIENT LOGIN
-========================= */
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -69,6 +66,20 @@ router.post("/login", async (req, res) => {
       { expiresIn: "1d" }
     );
 
+    // Clear any stale tokens from previous sessions before setting new one
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/"
+    });
+    res.clearCookie("employeeToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/"
+    });
+
     res.cookie("clientToken", token, {
       httpOnly: true,
       secure: true,
@@ -83,7 +94,6 @@ router.post("/login", async (req, res) => {
       clientId: client.clientId,
       action: "CLIENT_LOGIN",
       details: "Client logged in successfully",
-      // dateTime: new Date().toLocaleString("en-IN")
     });
 
     logToConsole("SUCCESS", "CLIENT_LOGIN_SUCCESS", {
@@ -110,6 +120,87 @@ router.post("/login", async (req, res) => {
     });
   }
 });
+
+
+/* =========================
+   CLIENT LOGOUT
+========================= */
+router.post("/logout", async (req, res) => {
+  try {
+    const token = req.cookies?.clientToken;
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const client = await Client.findOne({ clientId: decoded.clientId });
+
+        if (client) {
+          // Create activity log for logout
+          await ActivityLog.create({
+            userName: client.name,
+            role: "CLIENT",
+            clientId: client.clientId,
+            action: "CLIENT_LOGOUT",
+            details: "Client logged out",
+          });
+
+          logToConsole("INFO", "CLIENT_LOGOUT", {
+            clientId: client.clientId,
+            name: client.name,
+            email: client.email
+          });
+        }
+      } catch (tokenError) {
+        // Token verification failed, but we still clear the cookie
+        logToConsole("WARN", "INVALID_TOKEN_ON_LOGOUT", {
+          error: tokenError.message
+        });
+      }
+    }
+
+    // Clear clientToken
+    res.clearCookie("clientToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/"
+    });
+
+    // Also clear accessToken in case employee was logged in before
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/"
+    });
+
+    // Also clear employeeToken as safety measure
+    res.clearCookie("employeeToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/"
+    });
+
+    res.json({
+      message: "Logged out successfully",
+      success: true
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "CLIENT_LOGOUT_FAILED", {
+      error: error.message,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      message: "Logout failed",
+      success: false
+    });
+  }
+});
+
+
 
 /* =========================
    CLIENT CHECK LOGIN
@@ -168,67 +259,6 @@ router.get("/me", async (req, res) => {
     res.status(500).json({
       message: "Failed to check session",
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-/* =========================
-   CLIENT LOGOUT
-========================= */
-router.post("/logout", async (req, res) => {
-  try {
-    const token = req.cookies?.clientToken;
-
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const client = await Client.findOne({ clientId: decoded.clientId });
-
-        if (client) {
-          // Create activity log for logout
-          await ActivityLog.create({
-            userName: client.name,
-            role: "CLIENT",
-            clientId: client.clientId,
-            action: "CLIENT_LOGOUT",
-            details: "Client logged out",
-            // dateTime: new Date().toLocaleString("en-IN")
-          });
-
-          logToConsole("INFO", "CLIENT_LOGOUT", {
-            clientId: client.clientId,
-            name: client.name,
-            email: client.email
-          });
-        }
-      } catch (tokenError) {
-        // Token verification failed, but we still clear the cookie
-        logToConsole("WARN", "INVALID_TOKEN_ON_LOGOUT", {
-          error: tokenError.message
-        });
-      }
-    }
-
-    res.clearCookie("clientToken", {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none"
-    });
-
-    res.json({
-      message: "Logged out successfully",
-      success: true
-    });
-
-  } catch (error) {
-    logToConsole("ERROR", "CLIENT_LOGOUT_FAILED", {
-      error: error.message,
-      stack: error.stack
-    });
-
-    res.status(500).json({
-      message: "Logout failed",
-      success: false
     });
   }
 });
@@ -2102,6 +2132,7 @@ router.patch("/change-plan", async (req, res) => {
     });
   }
 });
+
 router.patch("/change-plan", async (req, res) => {
   try {
     // Get client from token (client logged in)
