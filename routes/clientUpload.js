@@ -23,35 +23,65 @@ const s3 = new S3Client({
 
 /* ===============================
    MULTER (MEMORY) - ALLOW MULTIPLE FILES
+   UPDATED: MIME types + Extension check (iPhone support)
 ================================ */
+
+// Allowed extensions
+const allowedExtensions = [
+    'pdf',
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif',
+    'xls', 'xlsx', 'csv'
+];
+
+// Allowed MIME types
 const allowedMimeTypes = [
+    // PDF
     "application/pdf",
+    "application/x-pdf",
+
+    // Images
     "image/jpeg",
+    "image/jpg",
+    "image/pjpeg",
+    "image/heic",
+    "image/heif",
     "image/png",
-    "image/webp",
+    "image/x-png",
     "image/gif",
+    "image/webp",
+
+    // Excel/CSV
     "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/excel",
+    "application/csv",
+    "text/csv"
 ];
 
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 10 * 1024 * 1024
+        fileSize: 10 * 1024 * 1024 // 10MB
     },
     fileFilter: (req, file, cb) => {
-        if (allowedMimeTypes.includes(file.mimetype)) {
+        // Get extension
+        const ext = file.originalname.split('.').pop().toLowerCase();
+
+        // Check BOTH extension OR mime type
+        if (allowedExtensions.includes(ext) || allowedMimeTypes.includes(file.mimetype)) {
             cb(null, true);
         } else {
             cb(
                 new Error(
-                    "Invalid file type. Only PDF, Images (jpg, jpeg, png, webp, gif) and Excel files are allowed."
+                    "Invalid file type. Only PDF, Images (jpg, jpeg, png, webp, gif, heic/heif from iPhone) and Excel files are allowed."
                 ),
                 false
             );
         }
     }
 });
+
+
 
 /* ===============================
    CONSOLE LOGGING UTILITY
@@ -378,9 +408,8 @@ const sendNotificationEmails = async ({
 
 
 
-
 /* ===============================
-   UPLOAD / UPDATE FILES (MULTIPLE) - UPDATED WITH ACTIVE MONTH CHECK
+   UPLOAD / UPDATE FILES (MULTIPLE) - WITH TOTAL SIZE LIMIT
 ================================ */
 router.post("/upload", auth, upload.array("files"),
     async (req, res) => {
@@ -395,8 +424,32 @@ router.post("/upload", auth, upload.array("files"),
                 replacedFile
             } = req.body;
 
+            // Check if files exist
             if (!req.files || req.files.length === 0) {
-                return res.status(400).json({ message: "No files uploaded" });
+                return res.status(400).json({
+                    message: "❌ No files selected. Please choose files to upload."
+                });
+            }
+
+            // ✅ NEW: CHECK TOTAL SIZE OF ALL FILES COMBINED (50MB MAX)
+            const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 50MB total limit
+            const totalSize = req.files.reduce((sum, file) => sum + file.size, 0);
+
+            if (totalSize > MAX_TOTAL_SIZE) {
+                const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(2);
+                const maxSizeMB = MAX_TOTAL_SIZE / (1024 * 1024);
+
+                return res.status(400).json({
+                    message: `❌ Total file size (${totalSizeMB}MB) exceeds the maximum allowed of ${maxSizeMB}MB. Please reduce the number of files or compress them.`
+                });
+            }
+
+            // ✅ NEW: CHECK NUMBER OF FILES (20 max)
+            const MAX_FILES = 20;
+            if (req.files.length > MAX_FILES) {
+                return res.status(400).json({
+                    message: `❌ Too many files. Maximum ${MAX_FILES} files allowed per upload. You selected ${req.files.length} files.`
+                });
             }
 
             const client = await Client.findOne({
@@ -404,15 +457,17 @@ router.post("/upload", auth, upload.array("files"),
             });
 
             if (!client) {
-                return res.status(404).json({ message: "Client not found" });
+                return res.status(404).json({
+                    message: "❌ Client not found. Please login again."
+                });
             }
 
             const monthData = getMonthData(client, year, month);
 
-            // ✅ NEW: CHECK IF MONTH IS ACTIVE FOR THIS CLIENT
+            // ✅ CHECK IF MONTH IS ACTIVE FOR THIS CLIENT
             if (monthData.monthActiveStatus === 'inactive') {
                 return res.status(403).json({
-                    message: `Cannot upload files for ${month}/${year} - Client was inactive during this period`
+                    message: `❌ Cannot upload files for ${month}/${year} - Your account was inactive during this period. Please contact support.`
                 });
             }
 
@@ -431,7 +486,7 @@ router.post("/upload", auth, upload.array("files"),
 
                 if (!allowed) {
                     return res.status(403).json({
-                        message: "Month or category is locked"
+                        message: "❌ Cannot upload files. This month or category is locked."
                     });
                 }
             }
@@ -445,7 +500,7 @@ router.post("/upload", auth, upload.array("files"),
 
             if (monthData.wasLockedOnce && isUpdate && !note) {
                 return res.status(400).json({
-                    message: "Note is required when updating files after unlock"
+                    message: "❌ Note is required when updating files. Please add a note explaining the changes."
                 });
             }
 
@@ -457,7 +512,8 @@ router.post("/upload", auth, upload.array("files"),
                 month,
                 type,
                 categoryName: categoryName || "N/A",
-                filesCount: req.files.length
+                filesCount: req.files.length,
+                totalSize: totalSize
             });
 
             // Handle file replacement - track deleted file
@@ -605,12 +661,11 @@ router.post("/upload", auth, upload.array("files"),
             // LOG SUCCESS
             logToConsole("SUCCESS", "CLIENT_FILE_UPLOAD_COMPLETE", {
                 clientId: client.clientId,
-                uploadedFilesCount: uploadedFiles.length
+                uploadedFilesCount: uploadedFiles.length,
+                totalSize: totalSize
             });
 
-            // ============================================
             // SEND EMAIL NOTIFICATIONS FOR NOTE ADDITION
-            // ============================================
             if (monthData.wasLockedOnce && isUpdate && note) {
                 try {
                     const emailsSent = await sendNotificationEmails({
@@ -660,6 +715,7 @@ router.post("/upload", auth, upload.array("files"),
                         type,
                         categoryName: categoryName || "N/A",
                         filesCount: uploadedFiles.length,
+                        totalSize: totalSize,
                         fileNames: uploadedFiles.map(f => f.fileName),
                         wasReplacement: !!replacedFile,
                         replacedFile: replacedFile || null,
@@ -673,22 +729,56 @@ router.post("/upload", auth, upload.array("files"),
                 });
             }
 
+            // SUCCESS RESPONSE
             res.json({
-                message: `${req.files.length} file(s) uploaded successfully`,
+                message: `✅ ${req.files.length} file(s) uploaded successfully! (Total: ${(totalSize / (1024 * 1024)).toFixed(2)}MB)`,
                 filesCount: req.files.length,
+                totalSize: totalSize,
                 monthData: monthData
             });
+
         } catch (err) {
+            // LOG THE ERROR
             logToConsole("ERROR", "CLIENT_FILE_UPLOAD_FAILED", {
                 clientId: req.user?.clientId,
-                error: err.message
+                error: err.message,
+                code: err.code
             });
 
+            // ===== PROPER ERROR MESSAGES FOR FRONTEND =====
+
+            // 1. FILE TYPE ERROR
             if (err.message?.includes("Invalid file type")) {
-                return res.status(400).json({ message: err.message });
+                return res.status(400).json({
+                    message: "❌ Invalid file type. Only PDF, Images (JPG, PNG, GIF, WEBP, HEIC/HEIF from iPhone), and Excel files (XLS, XLSX, CSV) are allowed."
+                });
             }
 
-            res.status(500).json({ message: "Upload failed" });
+            // 2. FILE SIZE ERROR (10MB per file)
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(400).json({
+                    message: "❌ One or more files exceed the 10MB per file limit. Please compress large files or upload separately."
+                });
+            }
+
+            // 3. UNEXPECTED FIELD ERROR
+            if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+                return res.status(400).json({
+                    message: "❌ Too many files or incorrect field name. Please check and try again."
+                });
+            }
+
+            // 4. ANY OTHER MULTER ERROR
+            if (err.code?.startsWith('LIMIT_')) {
+                return res.status(400).json({
+                    message: "❌ Upload limit exceeded. Please check file size and try again."
+                });
+            }
+
+            // 5. GENERIC ERROR
+            res.status(500).json({
+                message: "❌ Upload failed. Please try again. If problem continues, contact support."
+            });
         }
     }
 );
@@ -1264,7 +1354,7 @@ router.get("/test-simple", (req, res) => {
 
 
 /* ===============================
-   UPLOAD & LOCK CATEGORY - UPDATED WITH ACTIVE MONTH CHECK
+   UPLOAD & LOCK CATEGORY - WITH TOTAL SIZE LIMIT
 ================================ */
 router.post("/upload-and-lock", auth, upload.array("files"),
     async (req, res) => {
@@ -1278,7 +1368,28 @@ router.post("/upload-and-lock", auth, upload.array("files"),
             } = req.body;
 
             if (!req.files || req.files.length === 0) {
-                return res.status(400).json({ message: "No files uploaded" });
+                return res.status(400).json({ message: "❌ No files selected. Please choose files to upload." });
+            }
+
+            // ✅ ADD TOTAL SIZE CHECK HERE TOO
+            const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 50MB total limit
+            const totalSize = req.files.reduce((sum, file) => sum + file.size, 0);
+
+            if (totalSize > MAX_TOTAL_SIZE) {
+                const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(2);
+                const maxSizeMB = MAX_TOTAL_SIZE / (1024 * 1024);
+
+                return res.status(400).json({
+                    message: `❌ Total file size (${totalSizeMB}MB) exceeds the maximum allowed of ${maxSizeMB}MB. Please reduce the number of files or compress them.`
+                });
+            }
+
+            // ✅ ADD FILE COUNT CHECK
+            const MAX_FILES = 20;
+            if (req.files.length > MAX_FILES) {
+                return res.status(400).json({
+                    message: `❌ Too many files. Maximum ${MAX_FILES} files allowed per upload. You selected ${req.files.length} files.`
+                });
             }
 
             const client = await Client.findOne({
@@ -1286,15 +1397,15 @@ router.post("/upload-and-lock", auth, upload.array("files"),
             });
 
             if (!client) {
-                return res.status(404).json({ message: "Client not found" });
+                return res.status(404).json({ message: "❌ Client not found. Please login again." });
             }
 
             const monthData = getMonthData(client, year, month);
 
-            // ✅ NEW: CHECK IF MONTH IS ACTIVE FOR THIS CLIENT
+            // ✅ CHECK IF MONTH IS ACTIVE FOR THIS CLIENT
             if (monthData.monthActiveStatus === 'inactive') {
                 return res.status(403).json({
-                    message: `Cannot upload files for ${month}/${year} - Client was inactive during this period`
+                    message: `❌ Cannot upload files for ${month}/${year} - Your account was inactive during this period. Please contact support.`
                 });
             }
 
@@ -1305,13 +1416,13 @@ router.post("/upload-and-lock", auth, upload.array("files"),
                 );
                 if (o?.document?.isLocked) {
                     return res.status(403).json({
-                        message: "Category is already locked"
+                        message: "❌ Category is already locked"
                     });
                 }
             } else {
                 if (monthData[type]?.isLocked) {
                     return res.status(403).json({
-                        message: "Category is already locked"
+                        message: "❌ Category is already locked"
                     });
                 }
             }
@@ -1319,7 +1430,8 @@ router.post("/upload-and-lock", auth, upload.array("files"),
             // LOG REQUEST
             logToConsole("INFO", "CLIENT_UPLOAD_AND_LOCK_REQUEST", {
                 clientId: client.clientId,
-                filesCount: req.files.length
+                filesCount: req.files.length,
+                totalSize: totalSize
             });
 
             // UPLOAD FILES TO S3
@@ -1409,12 +1521,11 @@ router.post("/upload-and-lock", auth, upload.array("files"),
             // LOG SUCCESS
             logToConsole("SUCCESS", "CLIENT_UPLOAD_AND_LOCK_COMPLETE", {
                 clientId: client.clientId,
-                uploadedFilesCount: uploadedFiles.length
+                uploadedFilesCount: uploadedFiles.length,
+                totalSize: totalSize
             });
 
-            // ============================================
-            // SEND EMAIL NOTIFICATIONS FOR UPLOAD AND LOCK
-            // ============================================
+            // SEND EMAIL NOTIFICATIONS
             if (note) {
                 try {
                     const emailsSent = await sendNotificationEmails({
@@ -1444,7 +1555,7 @@ router.post("/upload-and-lock", auth, upload.array("files"),
                 }
             }
 
-            // ALSO SEND NOTIFICATION FOR LOCK ACTION (even without note)
+            // ALSO SEND NOTIFICATION FOR LOCK ACTION
             try {
                 const emailsSent = await sendNotificationEmails({
                     client,
@@ -1472,7 +1583,7 @@ router.post("/upload-and-lock", auth, upload.array("files"),
                 });
             }
 
-            // ===== ACTIVITY LOG: UPLOAD AND LOCK =====
+            // ===== ACTIVITY LOG =====
             try {
                 await ActivityLog.create({
                     userName: client.name,
@@ -1490,6 +1601,7 @@ router.post("/upload-and-lock", auth, upload.array("files"),
                         type,
                         categoryName: categoryName || "N/A",
                         filesCount: uploadedFiles.length,
+                        totalSize: totalSize,
                         noteProvided: !!note,
                         performedBy: req.user.role === "ADMIN" ? "ADMIN" : "CLIENT"
                     }
@@ -1501,17 +1613,34 @@ router.post("/upload-and-lock", auth, upload.array("files"),
             }
 
             res.json({
-                message: `${req.files.length} file(s) uploaded and category locked successfully!`,
+                message: `✅ ${req.files.length} file(s) uploaded and category locked successfully! (Total: ${(totalSize / (1024 * 1024)).toFixed(2)}MB)`,
                 filesCount: req.files.length,
+                totalSize: totalSize,
                 monthData: monthData
             });
+
         } catch (err) {
             logToConsole("ERROR", "CLIENT_UPLOAD_AND_LOCK_FAILED", {
                 clientId: req.user?.clientId,
-                error: err.message
+                error: err.message,
+                code: err.code
             });
 
-            res.status(500).json({ message: "Upload and lock failed" });
+            // File type error
+            if (err.message?.includes("Invalid file type")) {
+                return res.status(400).json({
+                    message: "❌ Invalid file type. Only PDF, Images (JPG, PNG, GIF, WEBP, HEIC/HEIF from iPhone), and Excel files (XLS, XLSX, CSV) are allowed."
+                });
+            }
+
+            // File size error
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(400).json({
+                    message: "❌ One or more files exceed the 10MB per file limit. Please compress large files or upload separately."
+                });
+            }
+
+            res.status(500).json({ message: "❌ Upload and lock failed. Please try again." });
         }
     }
 );

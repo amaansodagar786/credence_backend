@@ -13,7 +13,8 @@
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.12",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "winston": "^3.19.0"
   },
   "name": "credence_backend",
   "version": "1.0.0",

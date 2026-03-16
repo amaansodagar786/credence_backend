@@ -5,6 +5,7 @@ const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 require("dotenv").config();
+const logger = require("./utils/logger");
 
 const app = express();
 
@@ -22,19 +23,32 @@ connectDB();
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-app.use(
-    cors({
-        origin: [
-            "https://credence-two.vercel.app",
-            "http://localhost:5173",
-            "https://credence.techorses.com",
-            "https://jladgroup.fi"
-        ],
-        credentials: true
-    })
-);
+app.use(cors({
+    origin: [
+        "https://credence-two.vercel.app",
+        "http://localhost:5173",
+        "https://credence.techorses.com",
+        "https://jladgroup.fi"
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
 
 app.use(cookieParser());
+
+
+
+app.use((req, res, next) => {
+    logger.info({
+        type: "REQUEST",
+        method: req.method,
+        url: req.originalUrl,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"]
+    });
+    next();
+});
 
 // ===============================
 // CRON JOBS
@@ -151,4 +165,14 @@ app.listen(PORT, () => {
     console.log(`💰 Payment Reminder System: ACTIVE`);
     console.log(`📄 Document Upload Reminder System: ACTIVE`);
     console.log(`🔒 Month Auto-Lock System: ACTIVE (Runs on 26th of each month at 12:00 AM Finland time)`);
+});
+
+
+// Global error handlers
+process.on("uncaughtException", (err) => {
+    console.error("UNCAUGHT EXCEPTION:", err);
+});
+
+process.on("unhandledRejection", (err) => {
+    console.error("UNHANDLED REJECTION:", err);
 });

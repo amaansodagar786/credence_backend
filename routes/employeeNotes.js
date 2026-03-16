@@ -534,7 +534,7 @@ router.get("/assigned-clients", async (req, res) => {
             month: parseInt(month),
             monthName: new Date(year, month - 1).toLocaleString('default', {
               month: 'long',
-              timeZone: "Europe/Helsheimong"  // Finland timezone
+              timeZone: "Europe/Helsinki"  // Finland timezone
             })
           };
         })
