@@ -28,13 +28,14 @@ const logToConsole = (type, operation, data) => {
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
+    const normalizedEmail = email.toLowerCase();
 
     logToConsole("INFO", "CLIENT_LOGIN_REQUEST", {
-      email,
+      email: normalizedEmail,
       ip: req.ip
     });
 
-    const client = await Client.findOne({ email });
+    const client = await Client.findOne({ email: normalizedEmail });
     if (!client) {
       logToConsole("WARN", "CLIENT_NOT_FOUND", {
         email,
