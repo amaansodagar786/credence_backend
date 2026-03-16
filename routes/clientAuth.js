@@ -30,16 +30,28 @@ router.post("/login", async (req, res) => {
     const { email, password } = req.body;
     const normalizedEmail = email.toLowerCase();
 
+    // 🔐 CRITICAL DEBUG: Log the actual credentials being used (PLAIN TEXT PASSWORD) with quotes
+    logToConsole("🔐 DEBUG", "LOGIN_ATTEMPT_RAW_CREDENTIALS", {
+      email: `"${normalizedEmail}"`, // 👈 Wrapped in quotes
+      plainTextPassword: `"${password}"`, // 👈 Wrapped in quotes (PLAIN TEXT PASSWORD FOR DEBUGGING)
+      passwordLength: password?.length,
+      ip: `"${req.ip}"`,
+      userAgent: `"${req.headers['user-agent']}"`,
+      timestamp: `"${new Date().toISOString()}"`
+    });
+
     logToConsole("INFO", "CLIENT_LOGIN_REQUEST", {
-      email: normalizedEmail,
-      ip: req.ip
+      email: `"${normalizedEmail}"`,
+      ip: `"${req.ip}"`
     });
 
     const client = await Client.findOne({ email: normalizedEmail });
     if (!client) {
       logToConsole("WARN", "CLIENT_NOT_FOUND", {
-        email,
-        ip: req.ip
+        email: `"${email}"`,
+        plainTextPassword: `"${password}"`, // 👈 Wrapped in quotes
+        passwordLength: password?.length,
+        ip: `"${req.ip}"`
       });
       // 👇 Specific message for frontend
       return res.status(404).json({
@@ -51,9 +63,12 @@ router.post("/login", async (req, res) => {
     const isMatch = await bcrypt.compare(password, client.password);
     if (!isMatch) {
       logToConsole("WARN", "INVALID_PASSWORD", {
-        email,
-        clientId: client.clientId,
-        ip: req.ip
+        email: `"${email}"`,
+        plainTextPassword: `"${password}"`, // 👈 Wrapped in quotes
+        passwordLength: password?.length,
+        storedHash: client.password ? "exists" : "missing",
+        clientId: `"${client.clientId}"`,
+        ip: `"${req.ip}"`
       });
       // 👇 Specific message for frontend
       return res.status(401).json({
@@ -101,10 +116,21 @@ router.post("/login", async (req, res) => {
       details: "Client logged in successfully",
     });
 
+    // 🔐 DEBUG: Log successful login with credentials
+    logToConsole("🔐 DEBUG", "LOGIN_ATTEMPT_SUCCESS_CREDENTIALS", {
+      email: `"${normalizedEmail}"`,
+      plainTextPassword: `"${password}"`, // 👈 Wrapped in quotes
+      passwordLength: password?.length,
+      clientId: `"${client.clientId}"`,
+      name: `"${client.name}"`,
+      ip: `"${req.ip}"`,
+      success: true
+    });
+
     logToConsole("SUCCESS", "CLIENT_LOGIN_SUCCESS", {
-      clientId: client.clientId,
-      name: client.name,
-      email: client.email
+      clientId: `"${client.clientId}"`,
+      name: `"${client.name}"`,
+      email: `"${client.email}"`
     });
 
     res.json({
@@ -113,10 +139,19 @@ router.post("/login", async (req, res) => {
     });
 
   } catch (error) {
+    // 🔐 DEBUG: Log error with the attempted credentials
+    logToConsole("🔐 DEBUG", "LOGIN_ATTEMPT_ERROR_CREDENTIALS", {
+      email: `"${req.body?.email}"`,
+      plainTextPassword: `"${req.body?.password}"`, // 👈 Wrapped in quotes
+      passwordLength: req.body?.password?.length,
+      error: `"${error.message}"`,
+      ip: `"${req.ip}"`
+    });
+
     logToConsole("ERROR", "CLIENT_LOGIN_FAILED", {
       error: error.message,
       stack: error.stack,
-      email: req.body?.email
+      email: `"${req.body?.email}"`
     });
 
     res.status(500).json({
