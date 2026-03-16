@@ -40,9 +40,10 @@ router.post("/login", async (req, res) => {
         email,
         ip: req.ip
       });
+      // 👇 Specific message for frontend
       return res.status(404).json({
-        message: "Account not found. Please enroll first.",
-        enrollRequired: true
+        message: "Email not registered. Please enroll first.",
+        errorCode: "EMAIL_NOT_FOUND"
       });
     }
 
@@ -53,7 +54,11 @@ router.post("/login", async (req, res) => {
         clientId: client.clientId,
         ip: req.ip
       });
-      return res.status(401).json({ message: "Invalid credentials" });
+      // 👇 Specific message for frontend
+      return res.status(401).json({
+        message: "Incorrect password. Please try again.",
+        errorCode: "INVALID_PASSWORD"
+      });
     }
 
     const token = jwt.sign(
@@ -66,7 +71,7 @@ router.post("/login", async (req, res) => {
       { expiresIn: "1d" }
     );
 
-    // Clear any stale tokens from previous sessions before setting new one
+    // Clear any stale tokens
     res.clearCookie("accessToken", {
       httpOnly: true,
       secure: true,
@@ -87,7 +92,6 @@ router.post("/login", async (req, res) => {
       maxAge: 24 * 60 * 60 * 1000
     });
 
-    // Create activity log
     await ActivityLog.create({
       userName: client.name,
       role: "CLIENT",
@@ -115,8 +119,8 @@ router.post("/login", async (req, res) => {
     });
 
     res.status(500).json({
-      message: "Login failed. Please try again.",
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: "Server error. Please try again later.",
+      errorCode: "SERVER_ERROR"
     });
   }
 });
