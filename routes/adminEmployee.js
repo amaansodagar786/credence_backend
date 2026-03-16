@@ -392,44 +392,57 @@ router.get("/all-clients", auth, async (req, res) => {
 });
 
 /* ===============================
-   ASSIGN CLIENT TO EMPLOYEE (FIXED DOCUMENT CHECK)
+   ASSIGN CLIENT TO EMPLOYEE (UPDATED FOR MULTIPLE TASKS)
 ================================ */
 router.post("/assign-client", auth, async (req, res) => {
-    const { clientId, employeeId, year, month, task } = req.body;
+    const { clientId, employeeId, year, month, tasks } = req.body;
 
     // ===== BASIC VALIDATION =====
-    if (!clientId || !employeeId || !year || !month || !task) {
+    if (!clientId || !employeeId || !year || !month || !tasks) {
         logToConsole("WARN", "ASSIGN_CLIENT_MISSING_FIELDS", {
             ...req.body,
             adminId: req.user.adminId
         });
         return res.status(400).json({
-            message: "Missing required fields: clientId, employeeId, year, month, task"
+            message: "Missing required fields: clientId, employeeId, year, month, tasks"
         });
     }
 
-    // Validate task
+    // Ensure tasks is an array
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+        logToConsole("WARN", "INVALID_TASKS_ARRAY", {
+            tasks,
+            adminId: req.user.adminId
+        });
+        return res.status(400).json({
+            message: "Tasks must be a non-empty array"
+        });
+    }
+
+    // Validate each task
     const validTasks = ['Bookkeeping', 'VAT Filing Computation', 'VAT Filing', 'Financial Statement Generation', 'Audit'];
-    if (!validTasks.includes(task)) {
-        logToConsole("WARN", "INVALID_TASK", {
-            task,
+    const invalidTasks = tasks.filter(task => !validTasks.includes(task));
+
+    if (invalidTasks.length > 0) {
+        logToConsole("WARN", "INVALID_TASKS_FOUND", {
+            invalidTasks,
             validTasks,
             adminId: req.user.adminId
         });
         return res.status(400).json({
-            message: "Invalid task. Must be one of: " + validTasks.join(", ")
+            message: `Invalid tasks found: ${invalidTasks.join(', ')}. Must be one of: ${validTasks.join(", ")}`
         });
     }
 
     try {
-        logToConsole("INFO", "ASSIGN_CLIENT_WITH_TASK_REQUEST", {
+        logToConsole("INFO", "ASSIGN_MULTIPLE_TASKS_REQUEST", {
             adminId: req.user.adminId,
             adminName: req.user.name,
             clientId,
             employeeId,
             year,
             month,
-            task
+            tasks
         });
 
         // ===== FETCH CLIENT =====
@@ -610,28 +623,60 @@ router.post("/assign-client", auth, async (req, res) => {
                 adminId: req.user.adminId
             });
             return res.status(400).json({
-                message: `Cannot assign task. No documents uploaded for ${getMonthName(numericMonth)} ${numericYear}. Please upload documents first.`
+                message: `Cannot assign tasks. No documents uploaded for ${getMonthName(numericMonth)} ${numericYear}. Please upload documents first.`
             });
         }
 
-        // ===== DUPLICATE TASK CHECK (UPDATED) =====
-        const taskAlreadyAssigned = client.employeeAssignments.some(
-            (a) => a.year === numericYear &&
-                a.month === numericMonth &&
-                a.task === task &&
-                !a.isRemoved
-        );
+        // ===== CHECK FOR DUPLICATE AND ALREADY ASSIGNED TASKS =====
+        const alreadyAssignedTasks = [];
+        const assignableTasks = [];
 
-        if (taskAlreadyAssigned) {
-            logToConsole("WARN", "TASK_ALREADY_ASSIGNED", {
+        for (const task of tasks) {
+            // Check if task already assigned to this client-month
+            const taskAlreadyAssigned = client.employeeAssignments.some(
+                (a) => a.year === numericYear &&
+                    a.month === numericMonth &&
+                    a.task === task &&
+                    !a.isRemoved
+            );
+
+            // Check if employee already has this task
+            const employeeAlreadyHasTask = employee.assignedClients.some(
+                (ac) => ac.clientId === clientId &&
+                    ac.year === numericYear &&
+                    ac.month === numericMonth &&
+                    ac.task === task &&
+                    !ac.isRemoved
+            );
+
+            if (taskAlreadyAssigned || employeeAlreadyHasTask) {
+                alreadyAssignedTasks.push(task);
+            } else {
+                assignableTasks.push(task);
+            }
+        }
+
+        if (assignableTasks.length === 0) {
+            logToConsole("WARN", "ALL_TASKS_ALREADY_ASSIGNED", {
                 clientId,
                 year: numericYear,
                 month: numericMonth,
-                task,
+                tasks,
                 adminId: req.user.adminId
             });
             return res.status(409).json({
-                message: `Task "${task}" already assigned for ${numericYear}-${numericMonth.toString().padStart(2, '0')}`
+                message: `All selected tasks are already assigned: ${alreadyAssignedTasks.join(', ')}`
+            });
+        }
+
+        if (alreadyAssignedTasks.length > 0) {
+            logToConsole("WARN", "SOME_TASKS_ALREADY_ASSIGNED", {
+                clientId,
+                year: numericYear,
+                month: numericMonth,
+                alreadyAssignedTasks,
+                assignableTasks,
+                adminId: req.user.adminId
             });
         }
 
@@ -642,39 +687,20 @@ router.post("/assign-client", auth, async (req, res) => {
                 !a.isRemoved
         );
 
-        if (existingAssignments.length >= 4) {
-            logToConsole("WARN", "MAX_TASKS_REACHED", {
+        const totalAfterAssignment = existingAssignments.length + assignableTasks.length;
+
+        if (totalAfterAssignment > 4) {
+            logToConsole("WARN", "MAX_TASKS_EXCEEDED", {
                 clientId,
                 year: numericYear,
                 month: numericMonth,
                 existingCount: existingAssignments.length,
+                newTasksCount: assignableTasks.length,
+                maxAllowed: 4,
                 adminId: req.user.adminId
             });
             return res.status(409).json({
-                message: `Maximum 4 tasks already assigned for ${numericYear}-${numericMonth.toString().padStart(2, '0')}. Remove a task first.`
-            });
-        }
-
-        // ===== CHECK IF EMPLOYEE ALREADY HAS THIS TASK =====
-        const employeeAlreadyHasTask = employee.assignedClients.some(
-            (ac) => ac.clientId === clientId &&
-                ac.year === numericYear &&
-                ac.month === numericMonth &&
-                ac.task === task &&
-                !ac.isRemoved
-        );
-
-        if (employeeAlreadyHasTask) {
-            logToConsole("WARN", "EMPLOYEE_ALREADY_HAS_TASK", {
-                employeeId,
-                clientId,
-                year: numericYear,
-                month: numericMonth,
-                task,
-                adminId: req.user.adminId
-            });
-            return res.status(409).json({
-                message: `Employee already has "${task}" task for this client-month`
+                message: `Cannot assign ${assignableTasks.length} tasks. Maximum 4 tasks allowed per month. Current: ${existingAssignments.length}, Available slots: ${4 - existingAssignments.length}`
             });
         }
 
@@ -683,54 +709,66 @@ router.post("/assign-client", auth, async (req, res) => {
             employeeId,
             year: numericYear,
             month: numericMonth,
-            task,
+            assignableTasks,
+            alreadyAssignedTasks,
             existingTasks: existingAssignments.map(a => a.task),
             hasDocuments: true,
-            totalAssignments: existingAssignments.length,
+            totalAfterAssignment,
             adminId: req.user.adminId
         });
 
-        // ===== PREPARE ASSIGNMENT OBJECTS =====
+        // ===== PREPARE ASSIGNMENT OBJECTS FOR EACH TASK =====
         const assignmentDate = new Date();
+        const successfulAssignments = [];
+        const failedAssignments = [];
 
-        const clientAssignment = {
-            year: numericYear,
-            month: numericMonth,
-            employeeId,
-            employeeName: employee.name,
-            assignedAt: assignmentDate,
-            assignedBy: req.user.adminId,
-            adminName: req.user.name,
-            task: task,
-            accountingDone: false,
-            isRemoved: false
-        };
+        // Start with client assignments array
+        const clientAssignments = [];
+        const employeeAssignments = [];
 
-        const employeeAssignment = {
-            clientId,
-            clientName: client.name,
-            year: numericYear,
-            month: numericMonth,
-            assignedAt: assignmentDate,
-            assignedBy: req.user.adminId,
-            adminName: req.user.name,
-            task: task,
-            accountingDone: false,
-            isRemoved: false
-        };
+        for (const task of assignableTasks) {
+            const clientAssignment = {
+                year: numericYear,
+                month: numericMonth,
+                employeeId,
+                employeeName: employee.name,
+                assignedAt: assignmentDate,
+                assignedBy: req.user.adminId,
+                adminName: req.user.name,
+                task: task,
+                accountingDone: false,
+                isRemoved: false
+            };
 
-        // ===== SAVE TO CLIENT FIRST =====
-        client.employeeAssignments.push(clientAssignment);
+            const employeeAssignment = {
+                clientId,
+                clientName: client.name,
+                year: numericYear,
+                month: numericMonth,
+                assignedAt: assignmentDate,
+                assignedBy: req.user.adminId,
+                adminName: req.user.name,
+                task: task,
+                accountingDone: false,
+                isRemoved: false
+            };
+
+            clientAssignments.push(clientAssignment);
+            employeeAssignments.push(employeeAssignment);
+        }
+
+        // ===== SAVE ALL TO CLIENT FIRST =====
+        client.employeeAssignments.push(...clientAssignments);
         await client.save();
 
-        logToConsole("INFO", "CLIENT_TASK_ASSIGNMENT_SAVED", {
+        logToConsole("INFO", "CLIENT_TASKS_ASSIGNMENT_SAVED", {
             clientId: client.clientId,
             clientName: client.name,
             employeeId,
             employeeName: employee.name,
             year: numericYear,
             month: numericMonth,
-            task,
+            tasksAssigned: assignableTasks,
             totalTasksNow: client.employeeAssignments.filter(a =>
                 a.year === numericYear && a.month === numericMonth && !a.isRemoved
             ).length,
@@ -738,39 +776,45 @@ router.post("/assign-client", auth, async (req, res) => {
         });
 
         try {
-            // ===== SAVE TO EMPLOYEE =====
-            employee.assignedClients.push(employeeAssignment);
+            // ===== SAVE ALL TO EMPLOYEE =====
+            employee.assignedClients.push(...employeeAssignments);
             await employee.save();
 
-            logToConsole("INFO", "EMPLOYEE_TASK_ASSIGNMENT_SAVED", {
+            logToConsole("INFO", "EMPLOYEE_TASKS_ASSIGNMENT_SAVED", {
                 employeeId: employee.employeeId,
                 employeeName: employee.name,
                 clientId,
                 clientName: client.name,
                 year: numericYear,
                 month: numericMonth,
-                task,
+                tasksAssigned: assignableTasks,
                 adminId: req.user.adminId
             });
+
+            successfulAssignments.push(...assignableTasks);
         } catch (employeeSaveError) {
-            // ===== ROLLBACK CLIENT UPDATE =====
-            client.employeeAssignments.pop();
+            // ===== ROLLBACK CLIENT UPDATE (REMOVE ONLY THE NEWLY ADDED TASKS) =====
+            for (let i = 0; i < assignableTasks.length; i++) {
+                client.employeeAssignments.pop();
+            }
             await client.save();
 
             logToConsole("ERROR", "EMPLOYEE_SAVE_FAILED_ROLLBACK_DONE", {
                 clientId,
                 employeeId,
                 error: employeeSaveError.message,
+                tasks: assignableTasks,
                 adminId: req.user.adminId
             });
 
             return res.status(500).json({
                 message: "Assignment failed, rollback completed",
-                error: process.env.NODE_ENV === "development" ? employeeSaveError.message : undefined
+                error: process.env.NODE_ENV === "development" ? employeeSaveError.message : undefined,
+                failedTasks: assignableTasks
             });
         }
 
-        // ===== ACTIVITY LOG =====
+        // ===== ACTIVITY LOG (SINGLE LOG FOR BULK ASSIGNMENT) =====
         try {
             await ActivityLog.create({
                 userName: req.user.name,
@@ -780,23 +824,24 @@ router.post("/assign-client", auth, async (req, res) => {
                 employeeName: employee.name,
                 clientId,
                 clientName: client.name,
-                action: "TASK_ASSIGNED_TO_EMPLOYEE",
-                details: `Task "${task}" assigned to employee "${employee.name}" for client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')}) - Documents verified`,
-                dateTime: new Date(),  // FIXED: Use Date object instead of String
+                action: "TASKS_ASSIGNED_BULK",
+                details: `Tasks [${assignableTasks.join(', ')}] assigned to employee "${employee.name}" for client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')}) - Documents verified`,
+                dateTime: new Date(),
                 metadata: {
-                    task,
+                    tasks: assignableTasks,
                     year: numericYear,
                     month: numericMonth,
-                    totalTasksAssigned: existingAssignments.length + 1,
-                    documentsVerified: true
+                    totalTasksAssigned: existingAssignments.length + assignableTasks.length,
+                    documentsVerified: true,
+                    alreadyAssignedTasks: alreadyAssignedTasks.length > 0 ? alreadyAssignedTasks : undefined
                 }
             });
 
-            logToConsole("INFO", "TASK_ASSIGNMENT_ACTIVITY_LOG_CREATED", {
-                action: "TASK_ASSIGNED_TO_EMPLOYEE",
+            logToConsole("INFO", "BULK_TASK_ASSIGNMENT_ACTIVITY_LOG_CREATED", {
+                action: "TASKS_ASSIGNED_BULK",
                 clientId,
                 employeeId,
-                task,
+                tasks: assignableTasks,
                 adminId: req.user.adminId
             });
         } catch (logError) {
@@ -806,48 +851,67 @@ router.post("/assign-client", auth, async (req, res) => {
             });
         }
 
-        // ===== SEND NOTIFICATION EMAIL =====
+        // ===== SEND SINGLE NOTIFICATION EMAIL WITH ALL TASKS =====
         try {
+            const taskListHtml = assignableTasks.map(task => `<li><b>${task}</b></li>`).join('');
+
             await sendEmail(
                 employee.email,
-                `New Task Assignment: ${task}`,
+                `${assignableTasks.length} New Task${assignableTasks.length > 1 ? 's' : ''} Assigned`,
                 `
           <p>Hello ${employee.name},</p>
-          <p>You have been assigned a new task.</p>
-          <p><b>Task:</b> ${task}</p>
+          <p>You have been assigned ${assignableTasks.length} new task${assignableTasks.length > 1 ? 's' : ''}.</p>
+          
+          <h3>Tasks Assigned:</h3>
+          <ul>
+            ${taskListHtml}
+          </ul>
+          
           <p><b>Client:</b> ${client.name}</p>
           <p><b>Client ID:</b> ${clientId}</p>
           <p><b>Period:</b> ${numericYear}-${numericMonth.toString().padStart(2, '0')}</p>
           <p><b>Assigned By:</b> ${req.user.name}</p>
-          <p>Please check your dashboard and complete the assigned task.</p>
+          
+          <p>Please check your dashboard and complete the assigned tasks.</p>
           <p><small>Note: Client documents have been verified for this period.</small></p>
+          
+          ${alreadyAssignedTasks.length > 0 ? `
+          <p><small style="color: #666;">Note: These tasks were already assigned and were skipped: ${alreadyAssignedTasks.join(', ')}</small></p>
+          ` : ''}
         `
             );
 
-            logToConsole("INFO", "TASK_ASSIGNMENT_EMAIL_SENT", {
+            logToConsole("INFO", "BULK_TASK_ASSIGNMENT_EMAIL_SENT", {
                 employeeEmail: employee.email,
-                task,
+                tasks: assignableTasks,
                 adminId: req.user.adminId
             });
         } catch (emailError) {
-            logToConsole("WARN", "TASK_ASSIGNMENT_EMAIL_FAILED", {
+            logToConsole("WARN", "BULK_TASK_ASSIGNMENT_EMAIL_FAILED", {
                 error: emailError.message,
                 adminId: req.user.adminId
             });
         }
 
-        logToConsole("SUCCESS", "TASK_ASSIGNED_SUCCESSFULLY", {
+        logToConsole("SUCCESS", "TASKS_ASSIGNED_SUCCESSFULLY", {
             clientId,
             employeeId,
-            task,
+            tasksAssigned: assignableTasks,
+            tasksSkipped: alreadyAssignedTasks,
             timestamp: assignmentDate.toISOString(),
-            assignedTasksCount: existingAssignments.length + 1,
+            assignedTasksCount: existingAssignments.length + assignableTasks.length,
             documentsVerified: true,
             adminId: req.user.adminId
         });
 
+        // Prepare response message
+        let responseMessage = `${assignableTasks.length} task${assignableTasks.length > 1 ? 's' : ''} assigned successfully`;
+        if (alreadyAssignedTasks.length > 0) {
+            responseMessage += `. ${alreadyAssignedTasks.length} task${alreadyAssignedTasks.length > 1 ? 's were' : ' was'} already assigned and skipped.`;
+        }
+
         res.json({
-            message: `Task "${task}" assigned successfully`,
+            message: responseMessage,
             data: {
                 clientId,
                 clientName: client.name,
@@ -855,14 +919,15 @@ router.post("/assign-client", auth, async (req, res) => {
                 employeeName: employee.name,
                 year: numericYear,
                 month: numericMonth,
-                task,
+                tasksAssigned: assignableTasks,
+                tasksSkipped: alreadyAssignedTasks,
                 assignedAt: assignmentDate,
-                totalTasksForMonth: existingAssignments.length + 1,
+                totalTasksForMonth: existingAssignments.length + assignableTasks.length,
                 documentsVerified: true
             }
         });
     } catch (error) {
-        logToConsole("ERROR", "ASSIGN_CLIENT_TASK_FAILED", {
+        logToConsole("ERROR", "ASSIGN_MULTIPLE_TASKS_FAILED", {
             error: error.message,
             stack: error.stack,
             requestBody: req.body,
@@ -870,7 +935,7 @@ router.post("/assign-client", auth, async (req, res) => {
         });
 
         res.status(500).json({
-            message: "Error assigning task",
+            message: "Error assigning tasks",
             error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }
@@ -1555,7 +1620,7 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
             'Bookkeeping',
             'VAT Filing Computation',
             'VAT Filing',
-            'Financial Statement Generation' ,
+            'Financial Statement Generation',
             'Audit'
         ];
 
