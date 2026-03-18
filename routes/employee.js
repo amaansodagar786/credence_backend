@@ -926,7 +926,8 @@ router.put("/toggle-accounting-done", async (req, res) => {
         a => a.year === parseInt(year) &&
           a.month === parseInt(month) &&
           a.employeeId === employee.employeeId &&
-          a.task === task
+          a.task === task &&
+          a.isRemoved !== true  // 👈 ADD THIS
       );
 
       if (clientAssignmentIndex !== -1) {
@@ -2316,5 +2317,201 @@ router.post("/toggle-file-viewed", async (req, res) => {
     });
   }
 });
+
+
+
+
+/* ===============================
+   GET ALL CLIENTS WITH LAST 6 MONTHS PAYMENT STATUS (FOR EMPLOYEE)
+   Returns: client name, email, and payment status for last 6 months only
+================================ */
+router.get("/all-clients-payment-status", async (req, res) => {
+  try {
+    const { search } = req.query;
+    const token = req.cookies?.employeeToken;
+
+    // Console log
+    logToConsole("INFO", "GET_ALL_CLIENTS_PAYMENT_REQUEST", {
+      search: search || 'none',
+      ip: req.ip
+    });
+
+    // Verify employee token
+    if (!token) {
+      logToConsole("WARN", "NO_TOKEN_FOR_CLIENTS_PAYMENT", { ip: req.ip });
+      return res.status(401).json({ message: "Unauthorized - No token" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (jwtError) {
+      logToConsole("ERROR", "TOKEN_VERIFICATION_FAILED_CLIENTS_PAYMENT", {
+        error: jwtError.message
+      });
+      res.clearCookie("employeeToken");
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+
+    // Verify employee exists
+    const employee = await Employee.findOne({
+      employeeId: decoded.employeeId
+    });
+
+    if (!employee) {
+      logToConsole("ERROR", "EMPLOYEE_NOT_FOUND_CLIENTS_PAYMENT", {
+        employeeId: decoded.employeeId
+      });
+      return res.status(404).json({ message: "Employee not found" });
+    }
+
+    // Get current date info for last 6 months
+    const currentDate = new Date();
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1; // 1-12
+
+    // Generate last 6 months (including current)
+    const last6Months = [];
+    for (let i = 0; i < 6; i++) {
+      let year = currentYear;
+      let month = currentMonth - i;
+      
+      if (month <= 0) {
+        month += 12;
+        year -= 1;
+      }
+      
+      last6Months.push({
+        year,
+        month,
+        key: `${year}-${month}`
+      });
+    }
+
+    logToConsole("DEBUG", "LAST_6_MONTHS_GENERATED", {
+      months: last6Months.map(m => `${m.month}/${m.year}`)
+    });
+
+    // Build query for clients
+    const query = {};
+    
+    // Add search functionality (case-insensitive)
+    if (search && search.trim()) {
+      const searchRegex = new RegExp(search.trim(), 'i');
+      query.$or = [
+        { name: searchRegex },
+        { email: searchRegex },
+        { clientId: searchRegex }
+      ];
+    }
+
+    // Fetch ONLY name, email, and documents (for payment status)
+    // Using lean() for better performance
+    const clients = await Client.find(query)
+      .select('name email clientId documents') // Only select what we need
+      .lean(); // Convert to plain JS objects for faster processing
+
+    logToConsole("DEBUG", "CLIENTS_FETCHED", {
+      totalClients: clients.length,
+      searchApplied: !!search
+    });
+
+    // Process each client to extract only payment status for last 6 months
+    const response = clients.map(client => {
+      // Initialize payment status object for last 6 months
+      const paymentStatus = {};
+      
+      // For each of the last 6 months, check payment status
+      last6Months.forEach(({ year, month, key }) => {
+        const yearKey = String(year);
+        const monthKey = String(month);
+        
+        let isPaid = false;
+        
+        // Check if client has documents for this year/month
+        if (client.documents && 
+            client.documents[yearKey] && 
+            client.documents[yearKey][monthKey]) {
+          
+          const monthData = client.documents[yearKey][monthKey];
+          // Get payment status (default to false if not set)
+          isPaid = monthData.paymentStatus === true;
+        }
+        
+        // Store in YYYY-M format for easy frontend use
+        paymentStatus[key] = isPaid;
+      });
+
+      // Return only what's needed
+      return {
+        clientId: client.clientId,
+        name: client.name || 'No Name',
+        email: client.email || 'No Email',
+        paymentStatus // Object with keys like "2024-12": true/false
+      };
+    });
+
+    // Sort by name for better UX
+    response.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    // Create activity log
+    try {
+      await ActivityLog.create({
+        userName: employee.name,
+        role: "EMPLOYEE",
+        employeeId: employee.employeeId,
+        action: "VIEWED_ALL_CLIENTS_PAYMENT_STATUS",
+        details: `Employee viewed payment status for all clients (last 6 months)`,
+        metadata: {
+          totalClients: response.length,
+          searchApplied: !!search,
+          searchTerm: search || null,
+          monthsRequested: last6Months.map(m => `${m.month}/${m.year}`)
+        }
+      });
+
+      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+        action: "VIEWED_ALL_CLIENTS_PAYMENT_STATUS",
+        employeeId: employee.employeeId
+      });
+    } catch (logError) {
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
+        error: logError.message
+      });
+    }
+
+    logToConsole("SUCCESS", "ALL_CLIENTS_PAYMENT_STATUS_FETCHED", {
+      employeeId: employee.employeeId,
+      totalClients: response.length,
+      monthsIncluded: last6Months.length,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      data: response,
+      meta: {
+        total: response.length,
+        months: last6Months.map(m => ({ year: m.year, month: m.month })),
+        searchApplied: !!search
+      }
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "ALL_CLIENTS_PAYMENT_STATUS_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      query: req.query,
+      ip: req.ip
+    });
+
+    res.status(500).json({
+      success: false,
+      message: "Error fetching clients payment status",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 
 module.exports = router;

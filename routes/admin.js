@@ -1141,7 +1141,7 @@ router.get("/clients/:clientId", auth, async (req, res) => {
 });
 
 /* ===============================
-   LOCK / UNLOCK ENTIRE MONTH (UPDATED TO CASCADE TO FILES & SEND EMAIL)
+   LOCK / UNLOCK ENTIRE MONTH (UPDATED WITH ENROLLMENT VALIDATION)
 ================================ */
 router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
   try {
@@ -1169,15 +1169,14 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
         providedData: req.body
       });
 
-      // Save warning to ActivityLog
       await log(req.user.name, req.user.adminId, "MONTH_LOCK_VALIDATION_FAILED", `Invalid month lock data for client: ${clientId}, year: ${year}, month: ${month}`);
 
       return res.status(400).json({
+        success: false,
         message: "Year, month, and lock (boolean) are required"
       });
     }
 
-    // Console log: Searching for client
     logToConsole("INFO", "SEARCHING_CLIENT_FOR_MONTH_LOCK", {
       clientId,
       adminId: req.user.adminId,
@@ -1190,22 +1189,63 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
     if (!client) {
       logToConsole("ERROR", "CLIENT_NOT_FOUND_MONTH_LOCK", {
         clientId,
-        adminId: req.user.adminId,
-        year,
-        month,
-        lockAction: lock ? "LOCK" : "UNLOCK"
+        adminId: req.user.adminId
       });
 
-      // Save error to ActivityLog
       await log(req.user.name, req.user.adminId, "CLIENT_NOT_FOUND_MONTH_LOCK", `Client not found for month lock: ${clientId}`);
 
       return res.status(404).json({
+        success: false,
         message: "Client not found",
         clientId
       });
     }
 
-    // Console log: Client found, processing month lock
+    // ============================================
+    // ENROLLMENT DATE VALIDATION - PREVENT UNLOCKING PAST MONTHS
+    // ============================================
+    if (lock === false) { // Only check when trying to UNLOCK
+      const enrollDate = new Date(client.enrollmentDate);
+      const enrollYear = enrollDate.getFullYear();
+      const enrollMonth = enrollDate.getMonth() + 1; // JavaScript months are 0-based
+
+      // Check if target month is BEFORE enrollment month
+      const isPreEnrollment = (year < enrollYear) ||
+        (year === enrollYear && month < enrollMonth);
+
+      if (isPreEnrollment) {
+        const targetMonthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
+        const enrollMonthName = new Date(enrollYear, enrollMonth - 1).toLocaleString('default', { month: 'long' });
+
+        logToConsole("WARN", "PRE_ENROLLMENT_MONTH_UNLOCK_ATTEMPT", {
+          clientId,
+          clientName: client.name,
+          targetMonth: `${targetMonthName} ${year}`,
+          enrollmentMonth: `${enrollMonthName} ${enrollYear}`,
+          adminId: req.user.adminId,
+          adminName: req.user.name
+        });
+
+        await log(req.user.name, req.user.adminId, "PRE_ENROLLMENT_UNLOCK_BLOCKED",
+          `Attempted to unlock ${targetMonthName} ${year} for client ${client.name} who enrolled in ${enrollMonthName} ${enrollYear}`);
+
+        return res.status(403).json({
+          success: false,
+          message: "Cannot unlock months before client enrollment date",
+          error: "PRE_ENROLLMENT_MONTH",
+          details: {
+            targetMonth: month,
+            targetYear: year,
+            targetDisplay: `${targetMonthName} ${year}`,
+            enrollmentMonth: enrollMonth,
+            enrollmentYear: enrollYear,
+            enrollmentDisplay: `${enrollMonthName} ${enrollYear}`,
+            explanation: `Client enrolled in ${enrollMonthName} ${enrollYear}. Months before this cannot be unlocked.`
+          }
+        });
+      }
+    }
+
     logToConsole("INFO", "PROCESSING_MONTH_LOCK", {
       clientId,
       clientName: client.name,
@@ -1247,7 +1287,6 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
     };
 
     // CASCADE LOCK/UNLOCK TO ALL FILES
-    // 1. Main document types (sales, purchase, bank)
     const mainDocTypes = ['sales', 'purchase', 'bank'];
 
     mainDocTypes.forEach(docType => {
@@ -1256,17 +1295,10 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
         monthData[docType].lockedAt = lock ? new Date() : null;
         monthData[docType].lockedBy = lock ? req.user.name : null;
         fileLockStatus[docType] = true;
-
-        logToConsole("DEBUG", `${docType.toUpperCase()}_FILE_${lock ? 'LOCKED' : 'UNLOCKED'}`, {
-          clientId,
-          year,
-          month,
-          docType
-        });
       }
     });
 
-    // 2. Other categories
+    // Other categories
     if (monthData.other && Array.isArray(monthData.other)) {
       monthData.other.forEach((otherCategory, index) => {
         if (otherCategory.document) {
@@ -1274,19 +1306,11 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
           otherCategory.document.lockedAt = lock ? new Date() : null;
           otherCategory.document.lockedBy = lock ? req.user.name : null;
           fileLockStatus.otherCategories.push(otherCategory.categoryName);
-
-          logToConsole("DEBUG", `OTHER_FILE_${lock ? 'LOCKED' : 'UNLOCKED'}`, {
-            clientId,
-            year,
-            month,
-            categoryName: otherCategory.categoryName,
-            index
-          });
         }
       });
     }
 
-    // 3. Set month-level lock status
+    // Set month-level lock status
     monthData.isLocked = lock;
     monthData.lockedAt = lock ? new Date() : null;
     monthData.lockedBy = lock ? req.user.name : null;
@@ -1295,57 +1319,26 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
     client.documents.get(yearKey).set(monthKey, monthData);
     await client.save();
 
-    // ============================================
-    // SEND EMAIL TO CLIENT
-    // ============================================
+    // Send email to client
     try {
       const actionType = lock ? "MONTH_LOCKED" : "MONTH_UNLOCKED";
-
-      const additionalInfo = {
-        year,
-        month
-      };
-
-      const emailResult = await sendEmailToClient(client, actionType, additionalInfo);
-
-      logToConsole("INFO", "CLIENT_EMAIL_RESULT", {
-        clientId,
-        clientName: client.name,
-        actionType,
-        emailSent: emailResult.sent,
-        clientEmail: client.email,
-        isLock: lock
-      });
+      const additionalInfo = { year, month };
+      await sendEmailToClient(client, actionType, additionalInfo);
     } catch (emailError) {
       logToConsole("ERROR", "CLIENT_EMAIL_FAILED_MONTH_LOCK", {
         error: emailError.message,
-        clientId,
-        clientName: client.name,
-        isLock: lock
+        clientId
       });
-      // Don't fail the operation if email fails
     }
 
-    // Console log: Month lock successful
     logToConsole("SUCCESS", "MONTH_LOCK_SUCCESSFUL_WITH_CASCADE", {
       clientId,
       clientName: client.name,
       year,
       month,
-      monthLockStatus: lock,
-      filesLocked: {
-        sales: fileLockStatus.sales,
-        purchase: fileLockStatus.purchase,
-        bank: fileLockStatus.bank,
-        otherCategoriesCount: fileLockStatus.otherCategories.length,
-        otherCategories: fileLockStatus.otherCategories
-      },
-      lockedAt: monthData.lockedAt,
-      lockedBy: monthData.lockedBy,
-      adminId: req.user.adminId
+      monthLockStatus: lock
     });
 
-    // Save success to ActivityLog
     const actionType = lock ? "LOCKED_MONTH_CASCADE" : "UNLOCKED_MONTH_CASCADE";
     const actionDetails = lock ?
       `Locked month ${month}/${year} for client ${client.name}` :
@@ -1353,18 +1346,8 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
 
     await log(req.user.name, req.user.adminId, actionType, actionDetails);
 
-    // Console log: Response sent
-    logToConsole("SUCCESS", "MONTH_LOCK_RESPONSE_SENT", {
-      adminId: req.user.adminId,
-      clientId,
-      year,
-      month,
-      lockStatus: lock,
-      filesAffected: fileLockStatus.otherCategories.length + 3,
-      timestamp: new Date().toISOString()
-    });
-
     res.json({
+      success: true,
       message: lock ?
         "Month and all files locked successfully" :
         "Month and all files unlocked successfully",
@@ -1379,39 +1362,31 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
         purchase: fileLockStatus.purchase,
         bank: fileLockStatus.bank,
         otherCategories: fileLockStatus.otherCategories,
-        totalFiles: fileLockStatus.otherCategories.length +
-          (fileLockStatus.sales ? 1 : 0) +
-          (fileLockStatus.purchase ? 1 : 0) +
-          (fileLockStatus.bank ? 1 : 0)
+        totalFiles: fileLockStatus.otherCategories.length + 3
       }
     });
 
   } catch (error) {
-    // Console log: Month lock error
     logToConsole("ERROR", "MONTH_LOCK_CASCADE_ERROR", {
       error: error.message,
       stack: error.stack,
-      ip: req.ip,
-      endpoint: "/clients/:clientId/month-lock",
       clientId: req.params.clientId,
-      adminId: req.user?.adminId,
-      requestBody: req.body
+      adminId: req.user?.adminId
     });
 
-    // Save error to ActivityLog
     await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "MONTH_LOCK_CASCADE_ERROR",
-      `Error processing month lock/unlock with cascade for client: ${clientId} - ${error.message}`);
+      `Error processing month lock/unlock for client: ${req.params.clientId} - ${error.message}`);
 
     res.status(500).json({
+      success: false,
       message: "Error processing month lock/unlock",
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      timestamp: new Date().toISOString()
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
 /* ===============================
-   LOCK / UNLOCK FILE - UPDATED TO HANDLE NON-EXISTENT FILES & SEND EMAIL
+   LOCK / UNLOCK FILE - UPDATED WITH ENROLLMENT VALIDATION
 ================================ */
 router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
   try {
@@ -1421,13 +1396,14 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
     // Validate required fields
     if (!year || !month || !type || typeof lock !== 'boolean') {
       return res.status(400).json({
+        success: false,
         message: "Year, month, type, and lock (boolean) are required"
       });
     }
 
-    // Additional validation for 'other' type
     if (type === "other" && !categoryName) {
       return res.status(400).json({
+        success: false,
         message: "categoryName is required when type is 'other'"
       });
     }
@@ -1436,9 +1412,57 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
 
     if (!client) {
       return res.status(404).json({
+        success: false,
         message: "Client not found",
         clientId
       });
+    }
+
+    // ============================================
+    // ENROLLMENT DATE VALIDATION - PREVENT UNLOCKING PAST MONTHS
+    // ============================================
+    if (lock === false) { // Only check when trying to UNLOCK
+      const enrollDate = new Date(client.enrollmentDate);
+      const enrollYear = enrollDate.getFullYear();
+      const enrollMonth = enrollDate.getMonth() + 1;
+
+      // Check if target month is BEFORE enrollment month
+      const isPreEnrollment = (year < enrollYear) ||
+        (year === enrollYear && month < enrollMonth);
+
+      if (isPreEnrollment) {
+        const targetMonthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
+        const enrollMonthName = new Date(enrollYear, enrollMonth - 1).toLocaleString('default', { month: 'long' });
+        const categoryDisplay = type === "other" ? categoryName : type;
+
+        logToConsole("WARN", "PRE_ENROLLMENT_FILE_UNLOCK_ATTEMPT", {
+          clientId,
+          clientName: client.name,
+          targetMonth: `${targetMonthName} ${year}`,
+          enrollmentMonth: `${enrollMonthName} ${enrollYear}`,
+          category: categoryDisplay,
+          adminId: req.user.adminId
+        });
+
+        await log(req.user.name, req.user.adminId, "PRE_ENROLLMENT_FILE_UNLOCK_BLOCKED",
+          `Attempted to unlock ${categoryDisplay} in ${targetMonthName} ${year} for client ${client.name} who enrolled in ${enrollMonthName} ${enrollYear}`);
+
+        return res.status(403).json({
+          success: false,
+          message: "Cannot unlock files in months before client enrollment date",
+          error: "PRE_ENROLLMENT_MONTH",
+          details: {
+            targetMonth: month,
+            targetYear: year,
+            targetDisplay: `${targetMonthName} ${year}`,
+            enrollmentMonth: enrollMonth,
+            enrollmentYear: enrollYear,
+            enrollmentDisplay: `${enrollMonthName} ${enrollYear}`,
+            category: categoryDisplay,
+            explanation: `Client enrolled in ${enrollMonthName} ${enrollYear}. Files in months before this cannot be unlocked.`
+          }
+        });
+      }
     }
 
     const yearKey = String(year);
@@ -1457,7 +1481,6 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
 
     // Handle file locking for different types
     if (type === "other") {
-      // Handle other documents
       if (!monthData.other) {
         monthData.other = [];
       }
@@ -1467,7 +1490,6 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
       );
 
       if (!otherCategory) {
-        // Create the category if it doesn't exist
         otherCategory = {
           categoryName,
           document: {
@@ -1483,15 +1505,12 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
         monthData.other.push(otherCategory);
       }
 
-      // Update lock status
       otherCategory.document.isLocked = lock;
       otherCategory.document.lockedAt = lock ? new Date() : null;
       otherCategory.document.lockedBy = lock ? req.user.adminId : null;
 
     } else {
-      // Handle main document types (sales, purchase, bank)
       if (!monthData[type]) {
-        // Create the file structure if it doesn't exist
         monthData[type] = {
           url: null,
           fileName: null,
@@ -1503,7 +1522,6 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
         };
       }
 
-      // Update lock status
       monthData[type].isLocked = lock;
       monthData[type].lockedAt = lock ? new Date() : null;
       monthData[type].lockedBy = lock ? req.user.name : null;
@@ -1513,49 +1531,29 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
     client.documents.get(yearKey).set(monthKey, monthData);
     await client.save();
 
-    // ============================================
-    // SEND EMAIL TO CLIENT
-    // ============================================
+    // Send email to client
     try {
       const actionType = lock ? "CATEGORY_LOCKED" : "CATEGORY_UNLOCKED";
       const categoryDisplayName = type === "other" ? categoryName : type;
-
-      const additionalInfo = {
-        year,
-        month,
-        categoryType: categoryDisplayName,
-        categoryName: type === "other" ? categoryName : null
-      };
-
-      const emailResult = await sendEmailToClient(client, actionType, additionalInfo);
-
-      logToConsole("INFO", "CLIENT_EMAIL_RESULT_FILE_LOCK", {
-        clientId,
-        clientName: client.name,
-        actionType,
-        emailSent: emailResult.sent,
-        clientEmail: client.email,
-        isLock: lock
-      });
+      const additionalInfo = { year, month, categoryType: categoryDisplayName };
+      await sendEmailToClient(client, actionType, additionalInfo);
     } catch (emailError) {
       logToConsole("ERROR", "CLIENT_EMAIL_FAILED_FILE_LOCK", {
         error: emailError.message,
-        clientId,
-        clientName: client.name,
-        isLock: lock
+        clientId
       });
-      // Don't fail the operation if email fails
     }
 
-    // Log the action
     const actionType = lock ? "LOCKED_FILE" : "UNLOCKED_FILE";
+    const categoryDisplay = type === "other" ? categoryName : type;
     const actionDetails = lock ?
-      `Locked file ${type}${categoryName ? ' (' + categoryName + ')' : ''} for client ${client.name} (${month}/${year})` :
-      `Unlocked file ${type}${categoryName ? ' (' + categoryName + ')' : ''} for client ${client.name} (${month}/${year})`;
+      `Locked file ${categoryDisplay} for client ${client.name} (${month}/${year})` :
+      `Unlocked file ${categoryDisplay} for client ${client.name} (${month}/${year})`;
 
     await log(req.user.name, req.user.adminId, actionType, actionDetails);
 
     res.json({
+      success: true,
       message: lock ? "File locked successfully" : "File unlocked successfully",
       clientId,
       year,
@@ -1571,15 +1569,15 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
     console.error("File lock error:", error);
 
     await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "FILE_LOCK_ERROR",
-      `Error processing file lock/unlock for client: ${clientId} - ${error.message}`);
+      `Error processing file lock/unlock for client: ${req.params.clientId} - ${error.message}`);
 
     res.status(500).json({
+      success: false,
       message: "Error processing file lock/unlock",
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
-
 
 
 

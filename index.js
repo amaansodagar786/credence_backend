@@ -116,6 +116,17 @@ app.use('/employee/notes', employeeNotesRoutes);
 app.use('/client/financial-statement', financialStatementRoutes);
 app.use("/api", googleDriveRoutes);
 
+
+
+
+const fs = require("fs");
+const path = require("path");
+const UPLOAD_DIR = path.join(__dirname, "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+app.use("/uploads", express.static(UPLOAD_DIR));
+
 // ===============================
 // BASIC ROUTE
 // ===============================
