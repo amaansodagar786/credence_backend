@@ -162,9 +162,6 @@ router.post("/login", async (req, res) => {
 });
 
 
-/* =========================
-   CLIENT LOGOUT
-========================= */
 router.post("/logout", async (req, res) => {
   try {
     const token = req.cookies?.clientToken;
@@ -175,7 +172,6 @@ router.post("/logout", async (req, res) => {
         const client = await Client.findOne({ clientId: decoded.clientId });
 
         if (client) {
-          // Create activity log for logout
           await ActivityLog.create({
             userName: client.name,
             role: "CLIENT",
@@ -191,7 +187,6 @@ router.post("/logout", async (req, res) => {
           });
         }
       } catch (tokenError) {
-        // Token verification failed, but we still clear the cookie
         logToConsole("WARN", "INVALID_TOKEN_ON_LOGOUT", {
           error: tokenError.message
         });
@@ -202,23 +197,23 @@ router.post("/logout", async (req, res) => {
     res.clearCookie("clientToken", {
       httpOnly: true,
       secure: true,
-      sameSite: "none",
+      sameSite: "lax",   // ✅ CHANGED from "none" to "lax"
       path: "/"
     });
 
-    // Also clear accessToken in case employee was logged in before
+    // Clear accessToken
     res.clearCookie("accessToken", {
       httpOnly: true,
       secure: true,
-      sameSite: "none",
+      sameSite: "lax",   // ✅ CHANGED from "none" to "lax"
       path: "/"
     });
 
-    // Also clear employeeToken as safety measure
+    // Clear employeeToken
     res.clearCookie("employeeToken", {
       httpOnly: true,
       secure: true,
-      sameSite: "none",
+      sameSite: "lax",   // ✅ CHANGED from "none" to "lax"
       path: "/"
     });
 
