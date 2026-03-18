@@ -695,7 +695,6 @@ router.post("/assign-client", auth, async (req, res) => {
             alreadyAssignedTasks,
             existingTasks: existingAssignments.map(a => a.task),
             hasDocuments: true,
-            totalAfterAssignment,
             adminId: req.user.adminId
         });
 
