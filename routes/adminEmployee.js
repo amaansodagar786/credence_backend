@@ -680,29 +680,11 @@ router.post("/assign-client", auth, async (req, res) => {
             });
         }
 
-        // ===== CHECK MAX 4 TASKS PER MONTH =====
         const existingAssignments = client.employeeAssignments.filter(
             a => a.year === numericYear &&
                 a.month === numericMonth &&
                 !a.isRemoved
         );
-
-        const totalAfterAssignment = existingAssignments.length + assignableTasks.length;
-
-        if (totalAfterAssignment > 4) {
-            logToConsole("WARN", "MAX_TASKS_EXCEEDED", {
-                clientId,
-                year: numericYear,
-                month: numericMonth,
-                existingCount: existingAssignments.length,
-                newTasksCount: assignableTasks.length,
-                maxAllowed: 4,
-                adminId: req.user.adminId
-            });
-            return res.status(409).json({
-                message: `Cannot assign ${assignableTasks.length} tasks. Maximum 4 tasks allowed per month. Current: ${existingAssignments.length}, Available slots: ${4 - existingAssignments.length}`
-            });
-        }
 
         logToConsole("DEBUG", "VALIDATION_PASSED", {
             clientId,
