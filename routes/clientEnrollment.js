@@ -787,6 +787,414 @@ const logToConsole = (type, operation, data) => {
 
 
 
+
+
+router.post("/enroll", async (req, res) => {
+  let enrollment = null;
+
+  try {
+    console.log("📨 FULL REQUEST BODY:", req.body);
+
+    // EXTRACT ALL FIELDS FROM REQUEST
+    const enrollmentData = {
+      firstName: req.body.firstName || '',
+      lastName: req.body.lastName || '',
+      address: req.body.address || '',
+      visaType: req.body.visaType || '',
+      hasStrongId: req.body.hasStrongId || '',
+      mobile: req.body.mobile || '',
+      email: req.body.email || '',
+      businessAddress: req.body.businessAddress || '',
+      bankAccount: req.body.bankAccount || '',
+      bicCode: req.body.bicCode || '',
+      businessName: req.body.businessName || '',
+      vatPeriod: req.body.vatPeriod || '',
+      businessNature: req.body.businessNature || '',
+      registerTrade: req.body.registerTrade || '',
+      planSelected: req.body.planSelected || ''
+    };
+
+    console.log("📋 PROCESSED DATA:", enrollmentData);
+
+    // Validate required fields
+    if (!enrollmentData.firstName || !enrollmentData.lastName || !enrollmentData.email || !enrollmentData.mobile || !enrollmentData.planSelected) {
+      return res.status(400).json({
+        success: false,
+        message: "Required fields are missing",
+        missing: {
+          firstName: !enrollmentData.firstName,
+          lastName: !enrollmentData.lastName,
+          email: !enrollmentData.email,
+          mobile: !enrollmentData.mobile,
+          planSelected: !enrollmentData.planSelected
+        }
+      });
+    }
+
+    // Check if email already exists
+    const existingEnrollment = await ClientEnrollment.findOne({
+      email: enrollmentData.email.toLowerCase().trim(),
+      status: { $in: ["PENDING", "APPROVED"] }
+    });
+
+    if (existingEnrollment) {
+      return res.status(409).json({
+        success: false,
+        message: "An enrollment with this email already exists",
+        currentStatus: existingEnrollment.status,
+        enrollId: existingEnrollment.enrollId
+      });
+    }
+
+    // Generate unique enrollment ID
+    const enrollId = uuidv4();
+    enrollmentData.enrollId = enrollId;
+    enrollmentData.status = "PENDING";
+    enrollmentData.email = enrollmentData.email.toLowerCase().trim();
+
+    console.log("💾 FINAL DATA TO SAVE:", enrollmentData);
+
+    // Create enrollment record
+    enrollment = await ClientEnrollment.create(enrollmentData);
+
+    console.log("✅ ENROLLMENT SAVED TO DB:", {
+      _id: enrollment._id,
+      enrollId: enrollment.enrollId,
+      firstName: enrollment.firstName,
+      lastName: enrollment.lastName,
+      email: enrollment.email,
+      mobile: enrollment.mobile,
+      planSelected: enrollment.planSelected
+    });
+
+    // Log the activity
+    await ActivityLog.create({
+      userName: `${enrollmentData.firstName} ${enrollmentData.lastName}`,
+      role: "CLIENT",
+      enrollId,
+      action: "CLIENT_ENROLL",
+      details: `Client enrollment submitted for ${enrollmentData.planSelected} plan`,
+      // dateTime: new Date().toLocaleString("en-IN")
+    });
+
+    logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
+      action: "CLIENT_ENROLL",
+      enrollId,
+      clientName: `${enrollmentData.firstName} ${enrollmentData.lastName}`
+    });
+
+    // ===========================================
+    // SEND NOTIFICATION EMAIL TO ADMIN (UPDATED)
+    // ===========================================
+    try {
+      const adminEmail = "support@jladgroup.fi";
+      const currentDateTime = new Date().toLocaleString("en-IN", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        timeZone: "Asia/Kolkata"
+      });
+
+      const adminNotificationSubject = `🚨 New Client Enrollment - ${enrollment.businessName || enrollment.firstName + " " + enrollment.lastName}`;
+
+      await sendEmail(
+        adminEmail,
+        adminNotificationSubject,
+        `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>New Enrollment Notification</title>
+            <style>
+              body { font-family: 'Arial', 'Helvetica Neue', Helvetica, sans-serif; line-height: 1.6; color: #333; max-width: 700px; margin: 0 auto; }
+              .header { background: #111111; color: #ffffff; padding: 25px 20px; text-align: center; }
+              .header h1 { margin: 0; font-size: 22px; color: #7cd64b; }
+              .content { padding: 30px; background: #ffffff; }
+              .alert-box { background: #e3f2fd; border-left: 4px solid #2196f3; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+              .info-box { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 20px 0; border-radius: 8px; }
+              .quick-actions { background: #e8f5e9; border: 1px solid #4caf50; padding: 20px; margin: 20px 0; border-radius: 8px; }
+              .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; font-size: 14px; }
+              .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 15px; font-size: 18px; }
+              .dev-info { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8; }
+              .dev-link { color: #7cd64b !important; text-decoration: none; }
+              table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+              th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
+              th { background: #f8f9fa; font-weight: 600; width: 35%; }
+              .status-badge { display: inline-block; padding: 4px 10px; background: #ff9800; color: #000; border-radius: 12px; font-size: 12px; font-weight: 600; }
+              .action-btn { display: inline-block; padding: 8px 16px; background: #7cd64b; color: #000000; text-decoration: none; border-radius: 4px; font-weight: 600; font-size: 14px; margin: 5px; }
+              .admin-url { color: #7cd64b; font-weight: 600; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Credence Enterprise Accounting Services</h1>
+              <p style="margin-top: 5px; opacity: 0.9; font-size: 14px;">Admin Notification - New Enrollment</p>
+            </div>
+            
+            <div class="content">
+              <div class="alert-box">
+                <h2 style="margin-top: 0; color: #2196f3;">📋 New Client Enrollment Received!</h2>
+                <p>A new client has submitted an enrollment form and is awaiting your review.</p>
+                <p><strong>Submission Time:</strong> ${currentDateTime} EET/EEST</p>
+              </div>
+              
+              <div class="info-box">
+                <h3 class="section-title">📊 Enrollment Summary</h3>
+                <table>
+                  <tr>
+                    <th>Enrollment ID</th>
+                    <td><strong>${enrollment.enrollId}</strong></td>
+                  </tr>
+                  <tr>
+                    <th>Client Name</th>
+                    <td>${enrollment.firstName} ${enrollment.lastName}</td>
+                  </tr>
+                  <tr>
+                    <th>Email</th>
+                    <td>${enrollment.email}</td>
+                  </tr>
+                  <tr>
+                    <th>Phone</th>
+                    <td>${enrollment.mobile || "Not provided"}</td>
+                  </tr>
+                  <tr>
+                    <th>Business Name</th>
+                    <td>${enrollment.businessName || "Not provided"}</td>
+                  </tr>
+                  <tr>
+                    <th>Selected Plan</th>
+                    <td><strong>${enrollment.planSelected}</strong></td>
+                  </tr>
+                  <tr>
+                    <th>Current Status</th>
+                    <td><span class="status-badge">PENDING REVIEW</span></td>
+                  </tr>
+                </table>
+              </div>
+              
+              <div class="info-box">
+                <h3 class="section-title">📝 Additional Details</h3>
+                <table>
+                  <tr>
+                    <th>Visa Type</th>
+                    <td>${enrollment.visaType || "Not provided"}</td>
+                  </tr>
+                  <tr>
+                    <th>Strong ID Available</th>
+                    <td>${enrollment.hasStrongId === "yes" ? "✅ Yes" : "❌ No"}</td>
+                  </tr>
+                  <tr>
+                    <th>VAT Period</th>
+                    <td>${enrollment.vatPeriod === "monthly" ? "Monthly" : "Quarterly"}</td>
+                  </tr>
+                  <tr>
+                    <th>Nature of Business</th>
+                    <td>${enrollment.businessNature || "Not specified"}</td>
+                  </tr>
+                  <tr>
+                    <th>Trade Register</th>
+                    <td>${enrollment.registerTrade === "yes" ? "✅ Registered" : "❌ Not Registered"}</td>
+                  </tr>
+                  <tr>
+                    <th>Address</th>
+                    <td>${enrollment.address || "Not provided"}</td>
+                  </tr>
+                </table>
+              </div>
+              
+              
+              <div style="margin-top: 25px; padding: 15px; background: #fff8e1; border-radius: 8px; border-left: 4px solid #ffc107;">
+                <h4 style="margin-top: 0; color: #ff9800;">📋 Next Steps Required:</h4>
+                <ol style="margin-bottom: 0;">
+                  <li>Review the client's information in the admin panel</li>
+                  <li>Verify business details and plan selection</li>
+                  <li>Approve to create client account OR Reject with reason</li>
+                  <li>System will automatically send approval/rejection email to client</li>
+                </ol>
+              </div>
+            </div>
+            
+            <div class="footer">
+              <p style="font-size: 16px; margin-bottom: 10px;"><strong>Credence Enterprise Accounting Services - Admin Panel</strong></p>
+              <p style="margin-bottom: 10px; opacity: 0.9; font-size: 14px;">Professional Client Management System</p>
+              <div class="dev-info">
+                System Notification | Developed by Vapautus Media Private Limited
+              </div>
+              <p style="font-size: 12px; margin-top: 15px; opacity: 0.7;">
+                © ${new Date().getFullYear()} Credence Enterprise Accounting Services. All rights reserved.<br>
+                This is an automated notification email from the enrollment system.
+              </p>
+            </div>
+          </body>
+          </html>
+        `
+      );
+
+      console.log("📧 ADMIN NOTIFICATION EMAIL SENT to:", adminEmail);
+      logToConsole("INFO", "ADMIN_NOTIFICATION_SENT", {
+        to: adminEmail,
+        enrollId: enrollment.enrollId,
+        clientName: `${enrollment.firstName} ${enrollment.lastName}`
+      });
+
+    } catch (emailError) {
+      console.error("❌ ADMIN NOTIFICATION EMAIL FAILED:", emailError);
+      logToConsole("ERROR", "ADMIN_NOTIFICATION_FAILED", {
+        email: adminEmail,
+        error: emailError.message,
+        enrollId: enrollment.enrollId
+      });
+      // Don't fail the enrollment if admin email fails
+    }
+
+    // ===========================================
+    // SEND CONFIRMATION EMAIL TO CLIENT (UPDATED)
+    // ===========================================
+    try {
+      await sendEmail(
+        enrollment.email,
+        "Enrollment Submitted Successfully - Credence Enterprise Accounting Services",
+        `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Enrollment Confirmation</title>
+            <style>
+              body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
+              .header { background: #111111; color: #ffffff; padding: 25px 20px; text-align: center; }
+              .header h1 { margin: 0; font-size: 22px; color: #7cd64b; }
+              .content { padding: 25px; background: #ffffff; }
+              .confirmation-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+              .info-box { background: #f8f9fa; border: 1px solid #e9ecef; padding: 15px; margin: 15px 0; border-radius: 8px; }
+              .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; font-size: 14px; }
+              .dev-info { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8; }
+              .dev-link { color: #7cd64b !important; text-decoration: none; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Credence Enterprise Accounting Services</h1>
+              <p style="margin-top: 5px; opacity: 0.9;">Enrollment Confirmation</p>
+            </div>
+            
+            <div class="content">
+              <div class="confirmation-box">
+                <h2 style="margin-top: 0; color: #4caf50;">✅ Enrollment Submitted Successfully!</h2>
+                <p>Dear ${enrollment.firstName} ${enrollment.lastName},</p>
+                <p>Thank you for choosing Credence Enterprise Accounting Services. Your enrollment has been received and is currently under review.</p>
+              </div>
+              
+              <div class="info-box">
+                <p><strong>Enrollment ID:</strong> ${enrollment.enrollId}</p>
+                <p><strong>Selected Plan:</strong> ${enrollment.planSelected}</p>
+                <p><strong>Status:</strong> <span style="color: #ff9800; font-weight: 600;">Pending Review</span></p>
+                <p><strong>Submission Date:</strong> ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</p>
+              </div>
+              
+              <div class="info-box">
+                <h3 style="margin-top: 0;">What Happens Next?</h3>
+                <ol>
+                  <li>Our team will review your application within 24-48 hours</li>
+                  <li>You will receive an approval or rejection email with details</li>
+                  <li>If approved, you'll get login credentials for your client portal</li>
+                  <li>You can then upload documents and start using our services</li>
+                </ol>
+              </div>
+              
+              <p style="margin-top: 20px;">If you have any questions, please contact our support team.</p>
+            </div>
+            
+            <div class="footer">
+              <p><strong>Credence Enterprise Accounting Services</strong></p>
+              <p>Professional Accounting | VAT Compliance | Business Advisory</p>
+              <div class="dev-info">
+                Developed by Vapautus Media Private Limited
+              </div>
+              <p style="font-size: 12px; margin-top: 10px;">
+                This email confirms your enrollment submission.<br>
+                Please do not reply to this automated email.
+              </p>
+            </div>
+          </body>
+          </html>
+        `
+      );
+
+      console.log("📧 CLIENT CONFIRMATION EMAIL SENT to:", enrollment.email);
+      logToConsole("INFO", "CLIENT_CONFIRMATION_EMAIL_SENT", {
+        to: enrollment.email,
+        enrollId: enrollment.enrollId
+      });
+
+    } catch (clientEmailError) {
+      console.error("❌ CLIENT CONFIRMATION EMAIL FAILED:", clientEmailError);
+      logToConsole("ERROR", "CLIENT_CONFIRMATION_EMAIL_FAILED", {
+        email: enrollment.email,
+        error: clientEmailError.message,
+        enrollId: enrollment.enrollId
+      });
+      // Don't fail the enrollment if client email fails
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Enrollment submitted successfully",
+      enrollId,
+      status: "PENDING",
+      savedData: {
+        firstName: enrollment.firstName,
+        lastName: enrollment.lastName,
+        email: enrollment.email,
+        mobile: enrollment.mobile
+      }
+    });
+
+    logToConsole("SUCCESS", "CLIENT_ENROLLMENT_COMPLETE", {
+      enrollId,
+      clientName: `${enrollment.firstName} ${enrollment.lastName}`,
+      email: enrollment.email,
+      planSelected: enrollment.planSelected
+    });
+
+  } catch (error) {
+    console.error("❌ ENROLLMENT ERROR:", error);
+    console.error("❌ Error details:", {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+      errors: error.errors
+    });
+
+    logToConsole("ERROR", "CLIENT_ENROLLMENT_FAILED", {
+      error: error.message,
+      stack: error.stack,
+      requestBody: req.body
+    });
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Duplicate enrollment detected",
+        error: "DUPLICATE_ENROLLMENT"
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Server error during enrollment",
+      error: error.message
+    });
+  }
+});
+
+
 /* ==============================================
    HELPER FUNCTION TO LOCK PAST MONTHS
 ============================================== */
