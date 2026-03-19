@@ -93,6 +93,9 @@ const adminNotesRoutes = require("./routes/adminNotes");
 const employeeNotesRoutes = require('./routes/employeeNotes');
 const financialStatementRoutes = require('./routes/financialStatementRoutes');
 const googleDriveRoutes = require("./routes/googledrive");
+const adminPdfRoutes = require("./routes/adminPdfRoutes");
+const clientConsentRoutes = require("./routes/Clientconsent");
+
 
 app.use("/client-enrollment", ClientEnrollment);
 app.use("/client", ClientAuth);
@@ -115,6 +118,10 @@ app.use("/admin/notes", adminNotesRoutes);
 app.use('/employee/notes', employeeNotesRoutes);
 app.use('/client/financial-statement', financialStatementRoutes);
 app.use("/api", googleDriveRoutes);
+app.use("/admin/pdf", adminPdfRoutes);
+app.use("/client-consent", clientConsentRoutes);
+
+
 
 
 

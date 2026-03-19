@@ -8,7 +8,8 @@ const ActivityLog = require("../models/ActivityLog");
 
 const sendEmail = require("../utils/sendEmail");
 const auth = require("../middleware/authMiddleware");
-
+const AgreementPdf = require("../models/AgreementPdf");
+const ClientConsent = require("../models/Clientconsent")
 const router = express.Router();
 
 
@@ -788,12 +789,22 @@ const logToConsole = (type, operation, data) => {
 
 
 
-
 router.post("/enroll", async (req, res) => {
   let enrollment = null;
 
   try {
     console.log("📨 FULL REQUEST BODY:", req.body);
+
+    // ============================================
+    // CAPTURE USER IP ADDRESS — backend only, no frontend needed
+    // ============================================
+    const userIp =
+      req.headers["x-forwarded-for"]?.split(",")[0].trim() ||
+      req.headers["x-real-ip"] ||
+      req.socket.remoteAddress ||
+      "Unknown";
+
+    logToConsole("INFO", "ENROLLMENT_IP_CAPTURED", { ip: userIp });
 
     // EXTRACT ALL FIELDS FROM REQUEST
     const enrollmentData = {
@@ -811,7 +822,8 @@ router.post("/enroll", async (req, res) => {
       vatPeriod: req.body.vatPeriod || '',
       businessNature: req.body.businessNature || '',
       registerTrade: req.body.registerTrade || '',
-      planSelected: req.body.planSelected || ''
+      planSelected: req.body.planSelected || '',
+      ipAddress: userIp
     };
 
     console.log("📋 PROCESSED DATA:", enrollmentData);
@@ -864,7 +876,8 @@ router.post("/enroll", async (req, res) => {
       lastName: enrollment.lastName,
       email: enrollment.email,
       mobile: enrollment.mobile,
-      planSelected: enrollment.planSelected
+      planSelected: enrollment.planSelected,
+      ipAddress: enrollment.ipAddress
     });
 
     // Log the activity
@@ -874,7 +887,6 @@ router.post("/enroll", async (req, res) => {
       enrollId,
       action: "CLIENT_ENROLL",
       details: `Client enrollment submitted for ${enrollmentData.planSelected} plan`,
-      // dateTime: new Date().toLocaleString("en-IN")
     });
 
     logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
@@ -884,7 +896,7 @@ router.post("/enroll", async (req, res) => {
     });
 
     // ===========================================
-    // SEND NOTIFICATION EMAIL TO ADMIN (UPDATED)
+    // SEND NOTIFICATION EMAIL TO ADMIN
     // ===========================================
     try {
       const adminEmail = "support@jladgroup.fi";
@@ -917,17 +929,13 @@ router.post("/enroll", async (req, res) => {
               .content { padding: 30px; background: #ffffff; }
               .alert-box { background: #e3f2fd; border-left: 4px solid #2196f3; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0; }
               .info-box { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 20px 0; border-radius: 8px; }
-              .quick-actions { background: #e8f5e9; border: 1px solid #4caf50; padding: 20px; margin: 20px 0; border-radius: 8px; }
               .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; font-size: 14px; }
               .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 15px; font-size: 18px; }
               .dev-info { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8; }
-              .dev-link { color: #7cd64b !important; text-decoration: none; }
               table { width: 100%; border-collapse: collapse; margin: 15px 0; }
               th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }
               th { background: #f8f9fa; font-weight: 600; width: 35%; }
               .status-badge { display: inline-block; padding: 4px 10px; background: #ff9800; color: #000; border-radius: 12px; font-size: 12px; font-weight: 600; }
-              .action-btn { display: inline-block; padding: 8px 16px; background: #7cd64b; color: #000000; text-decoration: none; border-radius: 4px; font-weight: 600; font-size: 14px; margin: 5px; }
-              .admin-url { color: #7cd64b; font-weight: 600; }
             </style>
           </head>
           <body>
@@ -946,68 +954,29 @@ router.post("/enroll", async (req, res) => {
               <div class="info-box">
                 <h3 class="section-title">📊 Enrollment Summary</h3>
                 <table>
-                  <tr>
-                    <th>Enrollment ID</th>
-                    <td><strong>${enrollment.enrollId}</strong></td>
-                  </tr>
-                  <tr>
-                    <th>Client Name</th>
-                    <td>${enrollment.firstName} ${enrollment.lastName}</td>
-                  </tr>
-                  <tr>
-                    <th>Email</th>
-                    <td>${enrollment.email}</td>
-                  </tr>
-                  <tr>
-                    <th>Phone</th>
-                    <td>${enrollment.mobile || "Not provided"}</td>
-                  </tr>
-                  <tr>
-                    <th>Business Name</th>
-                    <td>${enrollment.businessName || "Not provided"}</td>
-                  </tr>
-                  <tr>
-                    <th>Selected Plan</th>
-                    <td><strong>${enrollment.planSelected}</strong></td>
-                  </tr>
-                  <tr>
-                    <th>Current Status</th>
-                    <td><span class="status-badge">PENDING REVIEW</span></td>
-                  </tr>
+                  <tr><th>Enrollment ID</th><td><strong>${enrollment.enrollId}</strong></td></tr>
+                  <tr><th>Client Name</th><td>${enrollment.firstName} ${enrollment.lastName}</td></tr>
+                  <tr><th>Email</th><td>${enrollment.email}</td></tr>
+                  <tr><th>Phone</th><td>${enrollment.mobile || "Not provided"}</td></tr>
+                  <tr><th>Business Name</th><td>${enrollment.businessName || "Not provided"}</td></tr>
+                  <tr><th>Selected Plan</th><td><strong>${enrollment.planSelected}</strong></td></tr>
+                  <tr><th>IP Address</th><td>${userIp}</td></tr>
+                  <tr><th>Current Status</th><td><span class="status-badge">PENDING REVIEW</span></td></tr>
                 </table>
               </div>
               
               <div class="info-box">
                 <h3 class="section-title">📝 Additional Details</h3>
                 <table>
-                  <tr>
-                    <th>Visa Type</th>
-                    <td>${enrollment.visaType || "Not provided"}</td>
-                  </tr>
-                  <tr>
-                    <th>Strong ID Available</th>
-                    <td>${enrollment.hasStrongId === "yes" ? "✅ Yes" : "❌ No"}</td>
-                  </tr>
-                  <tr>
-                    <th>VAT Period</th>
-                    <td>${enrollment.vatPeriod === "monthly" ? "Monthly" : "Quarterly"}</td>
-                  </tr>
-                  <tr>
-                    <th>Nature of Business</th>
-                    <td>${enrollment.businessNature || "Not specified"}</td>
-                  </tr>
-                  <tr>
-                    <th>Trade Register</th>
-                    <td>${enrollment.registerTrade === "yes" ? "✅ Registered" : "❌ Not Registered"}</td>
-                  </tr>
-                  <tr>
-                    <th>Address</th>
-                    <td>${enrollment.address || "Not provided"}</td>
-                  </tr>
+                  <tr><th>Visa Type</th><td>${enrollment.visaType || "Not provided"}</td></tr>
+                  <tr><th>Strong ID Available</th><td>${enrollment.hasStrongId === "yes" ? "✅ Yes" : "❌ No"}</td></tr>
+                  <tr><th>VAT Period</th><td>${enrollment.vatPeriod === "monthly" ? "Monthly" : "Quarterly"}</td></tr>
+                  <tr><th>Nature of Business</th><td>${enrollment.businessNature || "Not specified"}</td></tr>
+                  <tr><th>Trade Register</th><td>${enrollment.registerTrade === "yes" ? "✅ Registered" : "❌ Not Registered"}</td></tr>
+                  <tr><th>Address</th><td>${enrollment.address || "Not provided"}</td></tr>
                 </table>
               </div>
-              
-              
+
               <div style="margin-top: 25px; padding: 15px; background: #fff8e1; border-radius: 8px; border-left: 4px solid #ffc107;">
                 <h4 style="margin-top: 0; color: #ff9800;">📋 Next Steps Required:</h4>
                 <ol style="margin-bottom: 0;">
@@ -1022,9 +991,7 @@ router.post("/enroll", async (req, res) => {
             <div class="footer">
               <p style="font-size: 16px; margin-bottom: 10px;"><strong>Credence Enterprise Accounting Services - Admin Panel</strong></p>
               <p style="margin-bottom: 10px; opacity: 0.9; font-size: 14px;">Professional Client Management System</p>
-              <div class="dev-info">
-                System Notification | Developed by Vapautus Media Private Limited
-              </div>
+              <div class="dev-info">System Notification | Developed by Vapautus Media Private Limited</div>
               <p style="font-size: 12px; margin-top: 15px; opacity: 0.7;">
                 © ${new Date().getFullYear()} Credence Enterprise Accounting Services. All rights reserved.<br>
                 This is an automated notification email from the enrollment system.
@@ -1045,17 +1012,44 @@ router.post("/enroll", async (req, res) => {
     } catch (emailError) {
       console.error("❌ ADMIN NOTIFICATION EMAIL FAILED:", emailError);
       logToConsole("ERROR", "ADMIN_NOTIFICATION_FAILED", {
-        email: adminEmail,
         error: emailError.message,
         enrollId: enrollment.enrollId
       });
-      // Don't fail the enrollment if admin email fails
     }
 
     // ===========================================
-    // SEND CONFIRMATION EMAIL TO CLIENT (UPDATED)
+    // FETCH ACTIVE AGREEMENT PDF — BUFFER FOR ATTACHMENT
+    // AWS URL never exposed to client at any point
+    // ===========================================
+    let pdfAttachment = null;
+    try {
+      const activePdf = await AgreementPdf.findOne({ isActive: true }).lean();
+      if (activePdf) {
+        const fileResponse = await fetch(activePdf.fileUrl);
+        const arrayBuffer = await fileResponse.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        pdfAttachment = {
+          filename: "Agreement.pdf",
+          content: buffer,
+          contentType: "application/pdf"
+        };
+        logToConsole("INFO", "AGREEMENT_PDF_FETCHED_FOR_ATTACHMENT", {
+          version: activePdf.version,
+          size: buffer.length
+        });
+      } else {
+        logToConsole("WARN", "NO_ACTIVE_AGREEMENT_PDF", { enrollId });
+      }
+    } catch (pdfErr) {
+      logToConsole("WARN", "AGREEMENT_PDF_FETCH_FAILED", { error: pdfErr.message });
+    }
+
+    // ===========================================
+    // SEND CONFIRMATION EMAIL TO CLIENT (PDF ATTACHED)
     // ===========================================
     try {
+      const attachments = pdfAttachment ? [pdfAttachment] : [];
+
       await sendEmail(
         enrollment.email,
         "Enrollment Submitted Successfully - Credence Enterprise Accounting Services",
@@ -1073,9 +1067,9 @@ router.post("/enroll", async (req, res) => {
               .content { padding: 25px; background: #ffffff; }
               .confirmation-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0; }
               .info-box { background: #f8f9fa; border: 1px solid #e9ecef; padding: 15px; margin: 15px 0; border-radius: 8px; }
+              .pdf-box { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 15px 0; border-radius: 8px; border-left: 4px solid #7cd64b; }
               .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; font-size: 14px; }
               .dev-info { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8; }
-              .dev-link { color: #7cd64b !important; text-decoration: none; }
             </style>
           </head>
           <body>
@@ -1107,16 +1101,25 @@ router.post("/enroll", async (req, res) => {
                   <li>You can then upload documents and start using our services</li>
                 </ol>
               </div>
-              
+
+              ${pdfAttachment ? `
+              <div class="pdf-box">
+                <h3 style="margin-top: 0; color: #2c3e50;">📄 Agreement Document</h3>
+                <p>Please find the <strong>Agreement.pdf</strong> attached to this email.</p>
+                <p>Kindly read the Terms &amp; Conditions carefully before your application is processed.</p>
+              </div>
+              ` : ''}
+
               <p style="margin-top: 20px;">If you have any questions, please contact our support team.</p>
+              <p><strong>Email:</strong> support@jladgroup.fi</p>
+              <p><strong>Phone:</strong> +358413250081</p>
+              <p><strong>Business Hours:</strong> Monday to Friday, 9am to 3pm (EET/EEST)</p>
             </div>
             
             <div class="footer">
               <p><strong>Credence Enterprise Accounting Services</strong></p>
               <p>Professional Accounting | VAT Compliance | Business Advisory</p>
-              <div class="dev-info">
-                Developed by Vapautus Media Private Limited
-              </div>
+              <div class="dev-info">Developed by Vapautus Media Private Limited</div>
               <p style="font-size: 12px; margin-top: 10px;">
                 This email confirms your enrollment submission.<br>
                 Please do not reply to this automated email.
@@ -1124,13 +1127,15 @@ router.post("/enroll", async (req, res) => {
             </div>
           </body>
           </html>
-        `
+        `,
+        attachments
       );
 
       console.log("📧 CLIENT CONFIRMATION EMAIL SENT to:", enrollment.email);
       logToConsole("INFO", "CLIENT_CONFIRMATION_EMAIL_SENT", {
         to: enrollment.email,
-        enrollId: enrollment.enrollId
+        enrollId: enrollment.enrollId,
+        agreementPdfAttached: !!pdfAttachment
       });
 
     } catch (clientEmailError) {
@@ -1140,7 +1145,6 @@ router.post("/enroll", async (req, res) => {
         error: clientEmailError.message,
         enrollId: enrollment.enrollId
       });
-      // Don't fail the enrollment if client email fails
     }
 
     res.status(201).json({
@@ -1160,7 +1164,8 @@ router.post("/enroll", async (req, res) => {
       enrollId,
       clientName: `${enrollment.firstName} ${enrollment.lastName}`,
       email: enrollment.email,
-      planSelected: enrollment.planSelected
+      planSelected: enrollment.planSelected,
+      ipAddress: userIp
     });
 
   } catch (error) {
@@ -1283,7 +1288,6 @@ const lockPastMonthsForClient = (currentYear, currentMonth) => {
   return documents;
 };
 
-
 router.post("/action", auth, async (req, res) => {
   try {
     const { enrollId, action, rejectionReason } = req.body;
@@ -1326,7 +1330,9 @@ router.post("/action", auth, async (req, res) => {
       timeZone: "Europe/Helsinki"
     });
 
+    // ============================================
     // 2. REJECT ENROLLMENT
+    // ============================================
     if (action === "REJECT") {
       enrollment.status = "REJECTED";
       enrollment.reviewedBy = req.user.adminId;
@@ -1334,13 +1340,13 @@ router.post("/action", auth, async (req, res) => {
       enrollment.rejectionReason = rejectionReason || "No reason provided";
 
       await enrollment.save();
+
       logToConsole("INFO", "ENROLLMENT_REJECTED", {
         enrollId: enrollment.enrollId,
         email: enrollment.email,
         adminId: req.user.adminId
       });
 
-      // Send professional rejection email (UPDATED)
       try {
         await sendEmail(
           enrollment.email,
@@ -1363,7 +1369,6 @@ router.post("/action", auth, async (req, res) => {
                 .contact-info { margin-top: 20px; padding-top: 20px; border-top: 1px solid #dee2e6; }
                 .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 8px; margin-bottom: 20px; }
                 .dev-info { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8; }
-                .dev-link { color: #7cd64b !important; text-decoration: none; }
               </style>
             </head>
             <body>
@@ -1371,12 +1376,12 @@ router.post("/action", auth, async (req, res) => {
                 <h1>Credence Enterprise Accounting Services</h1>
                 <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting & VAT Compliance</p>
               </div>
-              
+
               <div class="content">
                 <h2 style="color: #2c3e50; margin-top: 0;">Dear ${enrollment.firstName} ${enrollment.lastName},</h2>
-                
+
                 <p>Thank you for your interest in Credence Enterprise Accounting Services. We have reviewed your application submitted on ${new Date(enrollment.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}.</p>
-                
+
                 <div class="status-box">
                   <h3 style="color: #ff6b6b; margin-top: 0;">Application Status: <strong>Rejected</strong></h3>
                   <p><strong>Application ID:</strong> ${enrollment.enrollId}</p>
@@ -1384,12 +1389,12 @@ router.post("/action", auth, async (req, res) => {
                   <p><strong>Review Time:</strong> ${currentTime} EET/EEST</p>
                   <p><strong>Review By:</strong> ${req.user.name || "Administrator"}</p>
                 </div>
-                
+
                 <div class="info-box">
                   <h4 class="section-title">Reason for Rejection</h4>
                   <p>${enrollment.rejectionReason || "No specific reason provided."}</p>
                 </div>
-                
+
                 <div class="info-box">
                   <h4 class="section-title">Application Details</h4>
                   <p><strong>Business Name:</strong> ${enrollment.businessName || "Not provided"}</p>
@@ -1397,24 +1402,22 @@ router.post("/action", auth, async (req, res) => {
                   <p><strong>Contact Email:</strong> ${enrollment.email}</p>
                   <p><strong>Contact Phone:</strong> ${enrollment.mobile || "Not provided"}</p>
                 </div>
-                
+
                 <p>If you believe there has been an error, or if you wish to provide additional information, please feel free to contact our support team for clarification.</p>
-                
+
                 <div class="contact-info">
                   <h4 class="section-title">📞 Our Contact Information</h4>
                   <p><strong>Email:</strong> support@jladgroup.fi</p>
-                  <p><strong>Phone Support:</strong> +358413250081</p>                  
+                  <p><strong>Phone Support:</strong> +358413250081</p>
                   <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
                 </div>
               </div>
-              
+
               <div class="footer">
                 <p><strong>Credence Enterprise Accounting Services</strong></p>
                 <p>Professional Accounting | VAT Compliance | Business Advisory</p>
                 <p>© ${new Date().getFullYear()} Credence Enterprise Accounting Services. All rights reserved.</p>
-                <div class="dev-info">
-                  Developed by Vapautus Media Private Limited
-                </div>
+                <div class="dev-info">Developed by Vapautus Media Private Limited</div>
                 <p style="font-size: 12px; margin-top: 10px;">
                   This email was sent to ${enrollment.email} regarding your application.<br>
                   Please do not reply to this automated email.
@@ -1436,7 +1439,6 @@ router.post("/action", auth, async (req, res) => {
         });
       }
 
-      // Activity log
       await ActivityLog.create({
         userName: req.user.name,
         role: "ADMIN",
@@ -1444,7 +1446,6 @@ router.post("/action", auth, async (req, res) => {
         enrollId,
         action: "CLIENT_REJECTED",
         details: `Client enrollment rejected. Reason: ${enrollment.rejectionReason}`,
-        // dateTime: new Date().toLocaleString("en-IN")
       });
 
       logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
@@ -1461,12 +1462,11 @@ router.post("/action", auth, async (req, res) => {
       });
     }
 
+    // ============================================
     // 3. APPROVE ENROLLMENT
+    // ============================================
     if (action === "APPROVE") {
-      // Check if client already exists with this email
-      const existingClient = await Client.findOne({
-        email: enrollment.email
-      });
+      const existingClient = await Client.findOne({ email: enrollment.email });
 
       if (existingClient) {
         logToConsole("WARN", "DUPLICATE_CLIENT_EMAIL", {
@@ -1486,12 +1486,10 @@ router.post("/action", auth, async (req, res) => {
       const plainPassword = `${enrollment.firstName.trim()}@1234`;
       const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
-      // ============================================
-      // NEW: GET CURRENT DATE AND LOCK PAST MONTHS
-      // ============================================
+      // Auto-lock past months
       const now = new Date();
       const currentYear = now.getFullYear();
-      const currentMonth = now.getMonth() + 1; // JavaScript months are 0-based
+      const currentMonth = now.getMonth() + 1;
 
       logToConsole("INFO", "AUTO-LOCKING PAST MONTHS", {
         currentYear,
@@ -1499,10 +1497,8 @@ router.post("/action", auth, async (req, res) => {
         monthsToLock: currentMonth > 1 ? `January to ${currentMonth - 1}` : "No months to lock"
       });
 
-      // Generate documents with past months locked
       const documents = lockPastMonthsForClient(currentYear, currentMonth);
 
-      // Prepare client data
       const clientData = {
         clientId,
         name: `${enrollment.firstName} ${enrollment.lastName}`,
@@ -1526,7 +1522,7 @@ router.post("/action", auth, async (req, res) => {
         currentPlan: enrollment.planSelected,
         enrollmentId: enrollment.enrollId,
         enrollmentDate: new Date(),
-        documents: documents, // UPDATED: Now includes locked past months
+        documents: documents,
         employeeAssignments: []
       };
 
@@ -1538,7 +1534,6 @@ router.post("/action", auth, async (req, res) => {
         autoLockedMonths: currentMonth > 1 ? `Months 1-${currentMonth - 1} locked` : "No months locked"
       });
 
-      // Create client account
       const client = await Client.create(clientData);
       logToConsole("INFO", "CLIENT_CREATED", {
         clientId: client.clientId,
@@ -1546,27 +1541,119 @@ router.post("/action", auth, async (req, res) => {
         adminId: req.user.adminId
       });
 
-      // Update enrollment status
       enrollment.status = "APPROVED";
       enrollment.reviewedBy = req.user.adminId;
       enrollment.reviewedAt = new Date();
       enrollment.clientId = clientId;
       await enrollment.save();
+
       logToConsole("INFO", "ENROLLMENT_APPROVED", {
         enrollId: enrollment.enrollId,
         clientId,
         adminId: req.user.adminId
       });
 
-      // Send professional welcome email to client (UPDATED)
+      // ============================================
+      // FETCH ACTIVE AGREEMENT PDF
+      // Used for: (1) consent record audit trail
+      //           (2) email attachment to client
+      // AWS URL stored in DB only — never sent to client
+      // ============================================
+      let pdfAttachment = null;
+      let activePdfUrl = "";
+
       try {
-        logToConsole("DEBUG", "SENDING_WELCOME_EMAIL", {
-          to: enrollment.email,
-          clientId
+        const activePdf = await AgreementPdf.findOne({ isActive: true }).lean();
+        if (activePdf) {
+          // Save URL for consent record (internal audit only)
+          activePdfUrl = activePdf.fileUrl;
+
+          // Fetch as buffer for email attachment
+          const fileResponse = await fetch(activePdf.fileUrl);
+          const arrayBuffer = await fileResponse.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          pdfAttachment = {
+            filename: "Agreement.pdf",
+            content: buffer,
+            contentType: "application/pdf"
+          };
+          logToConsole("INFO", "AGREEMENT_PDF_FETCHED", {
+            version: activePdf.version,
+            size: buffer.length
+          });
+        } else {
+          logToConsole("WARN", "NO_ACTIVE_AGREEMENT_PDF", { enrollId });
+        }
+      } catch (pdfErr) {
+        logToConsole("WARN", "AGREEMENT_PDF_FETCH_FAILED", { error: pdfErr.message });
+        // Don't fail approval if PDF fetch fails
+      }
+
+      // ============================================
+      // CREATE CLIENT CONSENT RECORD
+      // Date, time, IP all taken from enrollment
+      // (when user originally submitted the form)
+      // agreementPdfUrl stored for audit — never exposed to client
+      // ============================================
+      try {
+        const enrollmentDate = new Date(enrollment.createdAt);
+
+        const consentDate = enrollmentDate.toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "long",
+          year: "numeric"
         });
 
-        // Client portal URL (update with your actual URL)
+        const consentTime = enrollmentDate.toLocaleTimeString("en-IN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true,
+          timeZone: "Europe/Helsinki"
+        });
+
+        await ClientConsent.create({
+          clientId,
+          name: `${enrollment.firstName} ${enrollment.lastName}`,
+          email: enrollment.email.toLowerCase().trim(),
+          phone: enrollment.mobile || "",
+          consentHistory: [
+            {
+              ipAddress: enrollment.ipAddress || "Unknown",
+              acceptAgreement: true,
+              date: consentDate,
+              time: consentTime,
+              agreementPdfUrl: activePdfUrl, // internal audit only, never sent to client
+              recordedAt: enrollmentDate
+            }
+          ]
+        });
+
+        logToConsole("INFO", "CLIENT_CONSENT_CREATED", {
+          clientId,
+          enrollId: enrollment.enrollId,
+          ipAddress: enrollment.ipAddress,
+          consentDate,
+          consentTime,
+          agreementPdfUrlStored: !!activePdfUrl
+        });
+
+      } catch (consentErr) {
+        logToConsole("ERROR", "CLIENT_CONSENT_CREATION_FAILED", {
+          clientId,
+          error: consentErr.message,
+          enrollId: enrollment.enrollId
+        });
+        // Don't fail approval if consent record creation fails
+      }
+
+      // ============================================
+      // SEND WELCOME EMAIL TO CLIENT (WITH PDF ATTACHED)
+      // ============================================
+      try {
+        logToConsole("DEBUG", "SENDING_WELCOME_EMAIL", { to: enrollment.email, clientId });
+
         const portalUrl = "https://jladgroup.fi/login";
+        const attachments = pdfAttachment ? [pdfAttachment] : [];
 
         await sendEmail(
           enrollment.email,
@@ -1586,45 +1673,16 @@ router.post("/action", auth, async (req, res) => {
                 .credentials-box { background: #f0f9ff; border: 2px solid #7cd64b; padding: 25px; margin: 25px 0; border-radius: 8px; }
                 .client-info { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; }
                 .important-box { background: #fff8e1; border-left: 4px solid #ffc107; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
-                .terms-box { background: #ffffff; padding: 25px; margin: 25px 0; border: 2px solid #7cd64b; border-radius: 8px; }
+                .pdf-box { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; border-left: 4px solid #7cd64b; }
                 .footer { background: #111111; color: #ffffff; padding: 25px; text-align: center; }
                 .contact-info { margin-top: 25px; padding-top: 25px; border-top: 1px solid #dee2e6; }
                 .login-button { display: inline-block; padding: 14px 32px; background: #7cd64b; color: #000000; text-decoration: none; border-radius: 4px; font-weight: 700; font-size: 16px; margin: 15px 0; }
                 .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 10px; margin-bottom: 20px; font-size: 18px; }
-                ul { padding-left: 20px; }
-                li { margin-bottom: 12px; }
                 .highlight { background: #7cd64b; color: #000000; padding: 3px 6px; border-radius: 3px; font-weight: 600; }
-                .warning { color: #dc3545; font-weight: 600; }
                 table { width: 100%; border-collapse: collapse; margin: 15px 0; }
                 th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #dee2e6; }
                 th { background: #f8f9fa; font-weight: 600; }
                 .dev-info { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8; }
-                .dev-link { color: #7cd64b !important; text-decoration: none; }
-                .terms-list li { margin-bottom: 15px; line-height: 1.8; }
-                .sub-heading { color: #2c3e50; font-weight: 600; margin-top: 20px; margin-bottom: 10px; }
-                .guideline-item { margin-bottom: 15px; padding-left: 10px; border-left: 3px solid #7cd64b; }
-                .guideline-number { font-weight: 700; color: #2c3e50; margin-right: 8px; }
-                .plan-table { width: 100%; border: 1px solid #dee2e6; border-collapse: collapse; margin: 15px 0; }
-                .plan-table th { background: #7cd64b; color: #000; padding: 12px; text-align: center; }
-                .plan-table td { padding: 10px; text-align: center; border: 1px solid #dee2e6; }
-                .plan-table .lite-bg { background: #f8f9fa; }
-                .plan-table .taxi-bg { background: #f8f9fa; }
-                .plan-table .premium-bg { background: #f8f9fa; }
-                .plan-table .pro-bg { background: #f8f9fa; }
-                .plan-table .restaurant-bg { background: #f8f9fa; }
-                .services-table { width: 100%; border: 1px solid #dee2e6; border-collapse: collapse; margin: 15px 0; }
-                .services-table th { background: #2c3e50; color: #fff; padding: 12px; text-align: left; }
-                .services-table td { padding: 12px; text-align: left; border: 1px solid #dee2e6; }
-                .services-table tr:nth-child(even) { background: #f8f9fa; }
-                .terms-content { padding: 15px 0; }
-                .terms-content p { margin: 15px 0; }
-                .terms-content .section { margin-bottom: 30px; }
-                .terms-content .section h4 { color: #2c3e50; font-size: 16px; margin-bottom: 10px; border-left: 4px solid #7cd64b; padding-left: 10px; }
-                
-                /* NEW: Auto-lock notification styles */
-                .lock-notification { background: #e3f2fd; border: 2px solid #2196f3; padding: 15px; margin: 20px 0; border-radius: 8px; }
-                .lock-notification h4 { color: #0b5e9e; margin-top: 0; }
-                .lock-notification ul { margin-bottom: 0; }
               </style>
             </head>
             <body>
@@ -1632,25 +1690,12 @@ router.post("/action", auth, async (req, res) => {
                 <h1>Credence Enterprise Accounting Services</h1>
                 <p style="margin-top: 5px; opacity: 0.9; font-size: 16px;">Professional Accounting | VAT Compliance | Business Advisory</p>
               </div>
-              
+
               <div class="content">
                 <h2 style="color: #2c3e50; margin-top: 0;">Welcome ${enrollment.firstName} ${enrollment.lastName}!</h2>
-                
+
                 <p>We are pleased to inform you that your application has been <span class="highlight">APPROVED</span> and your client account has been successfully activated.</p>
-                
-                <!-- NEW: Auto-lock notification -->
-                ${currentMonth > 1 ? `
-                <div class="lock-notification">
-                  <h4>🔒 Important: Past Months Locked</h4>
-                  <p>As per our accounting policies, the following past months have been automatically locked:</p>
-                  <ul>
-                    ${Array.from({ length: currentMonth - 1 }, (_, i) => `<li><strong>${new Date(currentYear, i).toLocaleString('default', { month: 'long' })} ${currentYear}</strong> - Locked (past month)</li>`).join('')}
-                  </ul>
-                  <p>You can start uploading documents for <strong>${new Date(currentYear, currentMonth - 1).toLocaleString('default', { month: 'long' })} ${currentYear}</strong> and future months.</p>
-                  <p><em>Note: Locked months cannot be modified. Please contact support if you need to make changes to locked months.</em></p>
-                </div>
-                ` : ''}
-                
+
                 <div class="credentials-box">
                   <h3 class="section-title">🔐 Your Portal Access Credentials</h3>
                   <p><strong>Client Portal URL:</strong> <a href="${portalUrl}" style="color: #7cd64b; text-decoration: none;">${portalUrl}</a></p>
@@ -1675,7 +1720,7 @@ router.post("/action", auth, async (req, res) => {
                     <strong>Important:</strong> Please change your password after first login for security.
                   </p>
                 </div>
-                
+
                 <div class="client-info">
                   <h3 class="section-title">📋 Your Account Details</h3>
                   <table>
@@ -1706,250 +1751,27 @@ router.post("/action", auth, async (req, res) => {
                   </table>
                 </div>
 
-                <!-- PACKAGE PLANS TABLE (STATIC) -->
-                <div class="client-info">
-                  <h3 class="section-title">📊 Our Package Plans Overview</h3>
-                  <p>Here's a complete overview of all our available packages:</p>
-                  
-                  <table class="plan-table">
-                    <thead>
-                      <tr>
-                        <th>Features</th>
-                        <th class="lite-bg">Lite</th>
-                        <th class="taxi-bg">Taxi</th>
-                        <th class="premium-bg">Premium</th>
-                        <th class="pro-bg">Pro</th>
-                        <th class="restaurant-bg">Restaurant</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td><strong>Monthly Price</strong></td>
-                        <td class="lite-bg">€40</td>
-                        <td class="taxi-bg">€45</td>
-                        <td class="premium-bg">€50</td>
-                        <td class="pro-bg">€60</td>
-                        <td class="restaurant-bg">€80</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Income Sources Covered</strong></td>
-                        <td class="lite-bg">1</td>
-                        <td class="taxi-bg">1</td>
-                        <td class="premium-bg">2</td>
-                        <td class="pro-bg">3</td>
-                        <td class="restaurant-bg">1</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Outgoing Invoices</strong></td>
-                        <td class="lite-bg">Up to 2</td>
-                        <td class="taxi-bg">Up to 4</td>
-                        <td class="premium-bg">Up to 4</td>
-                        <td class="pro-bg">Up to 8</td>
-                        <td class="restaurant-bg">Up to 10</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Expense Receipts</strong></td>
-                        <td class="lite-bg">Up to 10</td>
-                        <td class="taxi-bg">Up to 40</td>
-                        <td class="premium-bg">Up to 40</td>
-                        <td class="pro-bg">Up to 50</td>
-                        <td class="restaurant-bg">Up to 50</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Support Availability</strong></td>
-                        <td class="lite-bg">Mon-Fri (9am-3pm)</td>
-                        <td class="taxi-bg">Mon-Fri (9am-3pm)</td>
-                        <td class="premium-bg">Mon-Fri (9am-3pm)</td>
-                        <td class="pro-bg">Mon-Fri (9am-3pm)</td>
-                        <td class="restaurant-bg">Mon-Fri (9am-3pm)</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Invoice Generation via Email</strong></td>
-                        <td class="lite-bg">✔ Yes</td>
-                        <td class="taxi-bg">✔ Yes</td>
-                        <td class="premium-bg">✔ Yes</td>
-                        <td class="pro-bg">✔ Yes</td>
-                        <td class="restaurant-bg">✖ No</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <p style="font-size: 14px; color: #6c757d; margin-top: 10px;">
-                    <em>All prices are Monthly Fixed Pricing | VAT Excluded</em>
-                  </p>
-                </div>
-
-                <!-- ADDITIONAL SERVICES TABLE (STATIC) -->
-                <div class="client-info">
-                  <h3 class="section-title">💰 Additional Services & Charges</h3>
-                  <p>Applicable only when required | Prices exclude VAT</p>
-                  
-                  <table class="services-table">
-                    <thead>
-                      <tr>
-                        <th>Additional Service</th>
-                        <th>Price (Excl. VAT)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td>New Tax Card / New Tax Declaration / Amendment</td>
-                        <td>€25</td>
-                      </tr>
-                      <tr>
-                        <td>Salary Processing (Palkka)</td>
-                        <td>€20 per salary</td>
-                      </tr>
-                      <tr>
-                        <td>Financial Statement (Interim / Year-End) – Toiminimi</td>
-                        <td>Equivalent to <strong>1 month's accounting fee</strong></td>
-                      </tr>
-                      <tr>
-                        <td>Financial Statement (Interim / Year-End) – OY</td>
-                        <td>€150</td>
-                      </tr>
-                      <tr>
-                        <td>Tax Return (Year-End)</td>
-                        <td>Equivalent to <strong>1 month's accounting fee</strong></td>
-                      </tr>
-                      <tr>
-                        <td>Other Accounting Services</td>
-                        <td>€50 per hour</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <p style="font-size: 14px; color: #6c757d; margin-top: 10px;">
-                    <em>These services are available at additional cost when required</em>
-                  </p>
-                </div>
-                
                 <div class="important-box">
                   <h3 class="section-title">✅ Acceptance Confirmation</h3>
-                  <p>By using our services and accessing the client portal, you acknowledge and agree to our <strong>Terms & Conditions and Privacy Policy</strong> as mentioned below:</p>
+                  <p>By using our services and accessing the client portal, you acknowledge and agree to our <strong>Terms &amp; Conditions and Privacy Policy</strong>.</p>
                   <p style="margin-top: 15px;">
                     <strong>Approval Time:</strong> ${currentDate} at ${currentTime} EET/EEST<br>
                     <strong>Service Start Date:</strong> ${currentDate}
                   </p>
                 </div>
-                
-                <div class="terms-box">
-                  <h3 class="section-title">📜 Important Guidelines & Terms of Service</h3>
-                  
-                  <div class="terms-content">
-                    <!-- SECTION 1: SCOPE OF SERVICES -->
-                    <div class="section">
-                      <h4>1. Scope of Services</h4>
-                      <p>The Service Provider shall provide bookkeeping, accounting, VAT compliance, financial reporting, and related advisory services according to the selected plan. All Osakeyhtiö plans include double-entry bookkeeping only.</p>
-                    </div>
 
-                    <!-- SECTION 2: PRICE SCHEDULE - TOIMIMINI FEES STRUCTURE -->
-                    <div class="section">
-                      <h4>2. Price Schedule - Toimimini Fees Structure</h4>
-                      <p>All prices are monthly and exclusive of VAT. Support hours are Monday-Friday, 09:00-15:00 (EET/EEST).</p>
-                      <table style="width:100%; border-collapse:collapse; margin:10px 0;">
-                        <thead>
-                          <tr style="background:#7cd64b; color:#000;">
-                            <th style="padding:8px; border:1px solid #dee2e6;">Plan</th>
-                            <th style="padding:8px; border:1px solid #dee2e6;">Monthly Fee (€)</th>
-                            <th style="padding:8px; border:1px solid #dee2e6;">Income Sources</th>
-                            <th style="padding:8px; border:1px solid #dee2e6;">Outgoing Invoices</th>
-                            <th style="padding:8px; border:1px solid #dee2e6;">Expense Receipts</th>
-                            <th style="padding:8px; border:1px solid #dee2e6;">Accounting Method</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr><td>Lite</td><td>40</td><td>1</td><td>Up to 2</td><td>Up to 10</td><td>Single-entry</td></tr>
-                          <tr><td>Taxi</td><td>45</td><td>1</td><td>Up to 4</td><td>Up to 40</td><td>Double-entry</td></tr>
-                          <tr><td>Premium</td><td>50</td><td>2</td><td>Up to 4</td><td>Up to 40</td><td>Double-entry</td></tr>
-                          <tr><td>Pro</td><td>60</td><td>3</td><td>Up to 8</td><td>Up to 50</td><td>Double-entry</td></tr>
-                          <tr><td>Restaurant</td><td>80</td><td>1</td><td>Up to 10</td><td>Up to 50</td><td>Double-entry</td></tr>
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <!-- SECTION 3: PRICE SCHEDULE - OSAKEYHTIÖ FEES STRUCTURE -->
-                    <div class="section">
-                      <h4>3. Price Schedule - Osakeyhtiö Fees Structure</h4>
-                      <p>All Osakeyhtiö plans are billed monthly, exclude VAT, and include double-entry bookkeeping only.</p>
-                      <table style="width:100%; border-collapse:collapse; margin:10px 0;">
-                        <thead>
-                          <tr style="background:#7cd64b; color:#000;">
-                            <th style="padding:8px; border:1px solid #dee2e6;">Plan</th>
-                            <th style="padding:8px; border:1px solid #dee2e6;">Monthly Fee (€)</th>
-                            <th style="padding:8px; border:1px solid #dee2e6;">Income Sources</th>
-                            <th style="padding:8px; border:1px solid #dee2e6;">Receipts + Payments</th>
-                            <th style="padding:8px; border:1px solid #dee2e6;">Accounting Method</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr><td>Lite Oy</td><td>120</td><td>1</td><td>Up to 30</td><td>Double-entry</td></tr>
-                          <tr><td>Premium Oy</td><td>160</td><td>2</td><td>Up to 60</td><td>Double-entry</td></tr>
-                          <tr><td>Pro Oy</td><td>200</td><td>3</td><td>Up to 90</td><td>Double-entry</td></tr>
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <!-- SECTION 4: BILLING & PAYMENT TERMS -->
-                    <div class="section">
-                      <h4>4. Billing & Payment Terms</h4>
-                      <p>Monthly fees are invoiced on the 1st day of each month and must be paid in advance no later than the 15th. Minimum monthly fees apply even if there are no transactions. VAT on bookkeeping fees is deductible as per Finnish tax law.</p>
-                    </div>
-
-                    <!-- SECTION 5: ADDITIONAL SERVICES & CHARGES -->
-                    <div class="section">
-                      <h4>5. Additional Services & Charges</h4>
-                      <p>Additional services are charged separately when required: tax card amendments (€25), salary processing (€20 per salary), financial statements (Toimimini: one month fee, Oy: €150), annual tax return (one month fee), and other advisory services (€50 per hour).</p>
-                    </div>
-
-                    <!-- SECTION 6: DOCUMENT HANDLING & PORTAL ACCESS -->
-                    <div class="section">
-                      <h4>6. Document Handling & Portal Access</h4>
-                      <p>A separate Google Drive folder will be provided for document upload. The Service Provider may also provide a client portal with lock dates. Data cannot be modified after the lock date and nil returns may be filed. Changes after filing may attract additional charges depending on data volume.</p>
-                    </div>
-
-                    <!-- SECTION 7: CLIENT RESPONSIBILITIES -->
-                    <div class="section">
-                      <h4>7. Client Responsibilities</h4>
-                      <p>The Client must provide accurate and timely data, check emails daily, maintain required records, and ensure compliance with tax, VAT, and pension obligations.</p>
-                    </div>
-
-                    <!-- SECTION 8: YEL PENSION INSURANCE -->
-                    <div class="section">
-                      <h4>8. YEL Pension Insurance</h4>
-                      <p>YEL pension insurance is mandatory for entrepreneurs under Finnish law. The client is responsible for ensuring compliance with YEL contribution requirements.</p>
-                    </div>
-
-                    <!-- SECTION 9: NON-PAYMENT & SERVICE SUSPENSION -->
-                    <div class="section">
-                      <h4>9. Non-Payment & Service Suspension</h4>
-                      <p>Failure to pay fees by the due date may result in suspension of bookkeeping and filings. The Service Provider bears no liability for penalties arising from non-payment.</p>
-                    </div>
-
-                    <!-- SECTION 10: TERMINATION -->
-                    <div class="section">
-                      <h4>10. Termination</h4>
-                      <p>Either party may terminate this Agreement. The Client must provide at least 30 days' prior written notice before termination. Outstanding fees remain payable.</p>
-                    </div>
-
-                    <!-- SECTION 11: GOVERNING LAW & DISPUTES -->
-                    <div class="section">
-                      <h4>11. Governing Law & Disputes</h4>
-                      <p>This Agreement shall be governed by and interpreted in accordance with the laws of Finland. Any disputes shall be handled under Finnish jurisdiction.</p>
-                    </div>
-
-                    <!-- SECTION 12: ACCEPTANCE & LEGAL BINDING -->
-                    <div class="section">
-                      <h4>12. Acceptance & Legal Binding</h4>
-                      <p>Use of services or portal access constitutes acceptance of this Agreement. These terms are legally binding.</p>
-                    </div>
-                  </div>
-
-                 
+                ${pdfAttachment ? `
+                <div class="pdf-box">
+                  <h3 style="margin-top: 0; color: #2c3e50;">📄 Agreement Document</h3>
+                  <p>Please find the <strong>Agreement.pdf</strong> attached to this email.</p>
+                  <p>Kindly read the Terms &amp; Conditions carefully. By accessing your portal and using our services, you confirm that you have read, understood, and agreed to all terms.</p>
                 </div>
-                
+                ` : ''}
+
                 <p style="background: #e7f4ff; padding: 15px; border-radius: 8px; border-left: 4px solid #007bff;">
-                  <strong>Note:</strong> By accessing your client portal and using our services, you acknowledge that you have read, understood, and agree to all the terms and conditions mentioned above.
+                  <strong>Note:</strong> By accessing your client portal and using our services, you acknowledge that you have read, understood, and agree to all the terms and conditions in the attached agreement.
                 </p>
-                
+
                 <div class="contact-info">
                   <h3 class="section-title">📞 Our Contact Information</h3>
                   <p><strong>Email:</strong> support@jladgroup.fi</p>
@@ -1957,35 +1779,36 @@ router.post("/action", auth, async (req, res) => {
                   <p><strong>Business Hours:</strong> Monday to Fri 9am to 3pm (EET/EEST)</p>
                 </div>
               </div>
-              
+
               <div class="footer">
                 <p style="font-size: 18px; margin-bottom: 10px;"><strong>Credence Enterprise Accounting Services</strong></p>
                 <p style="margin-bottom: 15px; opacity: 0.9;">Professional Accounting Solutions for Growing Businesses</p>
                 <p style="font-size: 14px; opacity: 0.8; margin-bottom: 5px;">
                   VAT Compliance | Financial Reporting | Business Advisory | Tax Planning
                 </p>
-                <div class="dev-info">
-                  Developed by Vapautus Media Private Limited
-                </div>
+                <div class="dev-info">Developed by Vapautus Media Private Limited</div>
                 <p style="font-size: 12px; margin-top: 20px; opacity: 0.7;">
                   © ${new Date().getFullYear()} Credence Enterprise Accounting Services. All rights reserved.<br>
                   This is an automated email. Please do not reply directly to this message.<br>
                   Email sent to: ${enrollment.email}
                 </p>
                 <p style="font-size: 12px; margin-top: 10px; color: #7cd64b;">
-                  This email contains legally binding terms and conditions. Please retain it for your records.
+                  Please retain this email and the attached agreement for your records.
                 </p>
               </div>
             </body>
             </html>
-          `
+          `,
+          attachments
         );
 
         logToConsole("INFO", "WELCOME_EMAIL_SENT", {
           to: enrollment.email,
           clientId,
-          enrollId: enrollment.enrollId
+          enrollId: enrollment.enrollId,
+          agreementPdfAttached: !!pdfAttachment
         });
+
       } catch (emailError) {
         logToConsole("ERROR", "WELCOME_EMAIL_FAILED", {
           email: enrollment.email,
@@ -1996,7 +1819,6 @@ router.post("/action", auth, async (req, res) => {
         // Don't fail the request if email fails
       }
 
-      // Log the activity
       await ActivityLog.create({
         userName: req.user.name,
         role: "ADMIN",
@@ -2005,7 +1827,6 @@ router.post("/action", auth, async (req, res) => {
         clientId,
         action: "CLIENT_APPROVED",
         details: `Client approved and account created for ${enrollment.planSelected} plan. Auto-locked past months: ${currentMonth > 1 ? `Months 1-${currentMonth - 1}` : 'None'}`,
-        // dateTime: new Date().toLocaleString("en-IN"),
         metadata: {
           clientName: clientData.name,
           planSelected: clientData.planSelected,
@@ -2076,6 +1897,8 @@ router.post("/action", auth, async (req, res) => {
     });
   }
 });
+
+
 
 
 /* ===============================

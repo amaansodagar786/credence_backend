@@ -10,11 +10,12 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-module.exports = async (to, subject, html) => {
+module.exports = async (to, subject, html, attachments = []) => {
   await transporter.sendMail({
     from: `"Accounting Portal" <${process.env.EMAIL_USER}>`,
     to,
     subject,
-    html
+    html,
+    attachments // nodemailer accepts: [{ filename, content, contentType }]
   });
 };

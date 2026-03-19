@@ -209,6 +209,8 @@ const clientSchema = new mongoose.Schema(
     // STATUS & TRACKING
     enrollmentId: String,
     enrollmentDate: Date,
+    // CONSENT UPDATE FLAG
+    requiresConsentUpdate: { type: Boolean, default: false },
 
     // Track overall client status history
     globalStatusHistory: [

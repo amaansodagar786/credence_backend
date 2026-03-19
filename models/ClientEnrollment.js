@@ -2,35 +2,38 @@ const mongoose = require("mongoose");
 
 const clientEnrollmentSchema = new mongoose.Schema(
   {
-    enrollId: { 
-      type: String, 
+    enrollId: {
+      type: String,
       unique: true,
-      required: true 
+      required: true
     },
 
-    // Personal Information - REMOVED required: true for now
-    firstName: { type: String }, // CHANGED: removed required
-    lastName: { type: String }, // CHANGED: removed required
-    address: { type: String }, // CHANGED: removed required
-    visaType: { type: String }, // CHANGED: removed required
-    hasStrongId: { type: String }, // CHANGED: removed required
-    mobile: { type: String }, // CHANGED: removed required
-    email: { 
-      type: String, 
-      required: true, // KEEP required for email
+    // Personal Information
+    firstName: { type: String },
+    lastName: { type: String },
+    address: { type: String },
+    visaType: { type: String },
+    hasStrongId: { type: String },
+    mobile: { type: String },
+    email: {
+      type: String,
+      required: true,
       lowercase: true,
       trim: true
     },
 
-    // Business Information - REMOVED required: true for now
-    businessAddress: { type: String }, // CHANGED: removed required
-    bankAccount: { type: String }, // CHANGED: removed required
-    bicCode: { type: String }, // CHANGED: removed required
-    businessName: { type: String }, // CHANGED: removed required
-    vatPeriod: { type: String }, // CHANGED: removed required
-    businessNature: { type: String }, // CHANGED: removed required
-    registerTrade: { type: String }, // CHANGED: removed required
-    planSelected: { type: String }, // CHANGED: removed required
+    // Business Information
+    businessAddress: { type: String },
+    bankAccount: { type: String },
+    bicCode: { type: String },
+    businessName: { type: String },
+    vatPeriod: { type: String },
+    businessNature: { type: String },
+    registerTrade: { type: String },
+    planSelected: { type: String },
+
+    // IP Address — captured from request on backend, never from frontend
+    ipAddress: { type: String, default: "Unknown" },
 
     // Status and tracking
     status: {
@@ -39,27 +42,27 @@ const clientEnrollmentSchema = new mongoose.Schema(
       default: "PENDING"
     },
 
-    reviewedBy: String, // admin UUID
+    reviewedBy: String,
     reviewedAt: Date,
-    clientId: String, // set after approval
-    rejectionReason: String // optional: reason for rejection
+    clientId: String,
+    rejectionReason: String
   },
-  { 
+  {
     timestamps: true,
     indexes: [
-      { email: 1 }, // Index for faster email lookup
-      { status: 1 } // Index for status filtering
+      { email: 1 },
+      { status: 1 }
     ]
   }
 );
 
-// Create a compound index to prevent duplicate pending/approved enrollments
+// Compound index to prevent duplicate pending/approved enrollments
 clientEnrollmentSchema.index(
   { email: 1, status: 1 },
-  { 
+  {
     unique: true,
-    partialFilterExpression: { 
-      status: { $in: ["PENDING", "APPROVED"] } 
+    partialFilterExpression: {
+      status: { $in: ["PENDING", "APPROVED"] }
     }
   }
 );
