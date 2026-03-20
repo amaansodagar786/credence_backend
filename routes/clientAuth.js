@@ -61,7 +61,6 @@ router.post("/login", async (req, res) => {
         ip: `"${req.ip}"`
       });
 
-      // 👇 Specific message for frontend - EMAIL NOT FOUND
       return res.status(404).json({
         message: "This email is not registered in our system. Please enroll first.",
         errorCode: "EMAIL_NOT_FOUND"
@@ -77,7 +76,6 @@ router.post("/login", async (req, res) => {
         ip: `"${req.ip}"`
       });
 
-      // 👇 Specific message for frontend - WRONG PASSWORD
       return res.status(401).json({
         message: "The password you entered is incorrect. Please try again.",
         errorCode: "INVALID_PASSWORD"
@@ -99,22 +97,23 @@ router.post("/login", async (req, res) => {
     // Clear any stale tokens
     res.clearCookie("accessToken", {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "none",
-      path: "/"
-    });
-    res.clearCookie("employeeToken", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "none",
+      secure: process.env.NODE_ENV === "production", // Use secure only in production
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       path: "/"
     });
 
-    // Set new client token
-    res.cookie("clientToken", token, {
+    res.clearCookie("employeeToken", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "none",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/"
+    });
+
+    // Set new client token - FIXED for development!
+    res.cookie("clientToken", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production", // false in development (localhost)
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // 'lax' for dev, 'none' for prod
       maxAge: 24 * 60 * 60 * 1000 // 1 day
     });
 
@@ -130,7 +129,6 @@ router.post("/login", async (req, res) => {
         userAgent: req.headers['user-agent']
       });
     } catch (logError) {
-      // Don't fail login if activity logging fails
       console.error("Failed to log activity:", logError);
     }
 
@@ -150,7 +148,6 @@ router.post("/login", async (req, res) => {
     });
 
   } catch (error) {
-    // Log the error with details
     logToConsole("ERROR", "CLIENT_LOGIN_ERROR", {
       error: error.message,
       stack: error.stack,
@@ -158,14 +155,12 @@ router.post("/login", async (req, res) => {
       ip: `"${req.ip}"`
     });
 
-    // Send appropriate error response
     res.status(500).json({
       message: "We're experiencing technical difficulties. Please try again later.",
       errorCode: "SERVER_ERROR"
     });
   }
 });
-
 
 router.post("/logout", async (req, res) => {
   try {
