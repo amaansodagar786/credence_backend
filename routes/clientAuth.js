@@ -36,7 +36,7 @@ router.post("/login", async (req, res) => {
     logToConsole("🔐 DEBUG", "LOGIN_ATTEMPT", {
       email: `"${normalizedEmail}"`,
       ip: `"${req.ip}"`,
-      password: password ? password: "No password provided",
+      password: `"${password}"`,
       userAgent: `"${req.headers['user-agent']}"`,
       timestamp: `"${new Date().toISOString()}"`
     });
