@@ -25,63 +25,72 @@ const logToConsole = (type, operation, data) => {
   return logEntry;
 };
 
+
+
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    const normalizedEmail = email.toLowerCase();
+    const normalizedEmail = email?.toLowerCase();
 
-    // 🔐 CRITICAL DEBUG: Log the actual credentials being used (PLAIN TEXT PASSWORD) with quotes
-    logToConsole("🔐 DEBUG", "LOGIN_ATTEMPT_RAW_CREDENTIALS", {
-      email: `"${normalizedEmail}"`, // 👈 Wrapped in quotes
-      plainTextPassword: `"${password}"`, // 👈 Wrapped in quotes (PLAIN TEXT PASSWORD FOR DEBUGGING)
-      passwordLength: password?.length,
+    // 🔐 DEBUG: Log the attempt
+    logToConsole("🔐 DEBUG", "LOGIN_ATTEMPT", {
+      email: `"${normalizedEmail}"`,
       ip: `"${req.ip}"`,
       userAgent: `"${req.headers['user-agent']}"`,
       timestamp: `"${new Date().toISOString()}"`
     });
 
-    logToConsole("INFO", "CLIENT_LOGIN_REQUEST", {
-      email: `"${normalizedEmail}"`,
-      ip: `"${req.ip}"`
-    });
+    // Validate input
+    if (!email || !password) {
+      logToConsole("WARN", "MISSING_CREDENTIALS", {
+        email: `"${email}"`,
+        hasPassword: !!password,
+        ip: `"${req.ip}"`
+      });
+      return res.status(400).json({
+        message: "Email and password are required",
+        errorCode: "MISSING_CREDENTIALS"
+      });
+    }
 
+    // Check if client exists
     const client = await Client.findOne({ email: normalizedEmail });
     if (!client) {
       logToConsole("WARN", "CLIENT_NOT_FOUND", {
         email: `"${email}"`,
-        plainTextPassword: `"${password}"`, // 👈 Wrapped in quotes
-        passwordLength: password?.length,
         ip: `"${req.ip}"`
       });
-      // 👇 Specific message for frontend
+
+      // 👇 Specific message for frontend - EMAIL NOT FOUND
       return res.status(404).json({
-        message: "Email not registered. Please enroll first.",
+        message: "This email is not registered in our system. Please enroll first.",
         errorCode: "EMAIL_NOT_FOUND"
       });
     }
 
+    // Compare passwords
     const isMatch = await bcrypt.compare(password, client.password);
     if (!isMatch) {
       logToConsole("WARN", "INVALID_PASSWORD", {
         email: `"${email}"`,
-        plainTextPassword: `"${password}"`, // 👈 Wrapped in quotes
-        passwordLength: password?.length,
-        storedHash: client.password ? "exists" : "missing",
         clientId: `"${client.clientId}"`,
         ip: `"${req.ip}"`
       });
-      // 👇 Specific message for frontend
+
+      // 👇 Specific message for frontend - WRONG PASSWORD
       return res.status(401).json({
-        message: "Incorrect password. Please try again.",
+        message: "The password you entered is incorrect. Please try again.",
         errorCode: "INVALID_PASSWORD"
       });
     }
 
+    // Generate JWT token
     const token = jwt.sign(
       {
         clientId: client.clientId,
         role: "CLIENT",
-        name: client.name
+        name: client.name,
+        email: client.email
       },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
@@ -90,72 +99,68 @@ router.post("/login", async (req, res) => {
     // Clear any stale tokens
     res.clearCookie("accessToken", {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "none",
       path: "/"
     });
     res.clearCookie("employeeToken", {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "none",
       path: "/"
     });
 
+    // Set new client token
     res.cookie("clientToken", token, {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "none",
-      maxAge: 24 * 60 * 60 * 1000
+      maxAge: 24 * 60 * 60 * 1000 // 1 day
     });
 
-    await ActivityLog.create({
-      userName: client.name,
-      role: "CLIENT",
-      clientId: client.clientId,
-      action: "CLIENT_LOGIN",
-      details: "Client logged in successfully",
-    });
-
-    // 🔐 DEBUG: Log successful login with credentials
-    logToConsole("🔐 DEBUG", "LOGIN_ATTEMPT_SUCCESS_CREDENTIALS", {
-      email: `"${normalizedEmail}"`,
-      plainTextPassword: `"${password}"`, // 👈 Wrapped in quotes
-      passwordLength: password?.length,
-      clientId: `"${client.clientId}"`,
-      name: `"${client.name}"`,
-      ip: `"${req.ip}"`,
-      success: true
-    });
+    // Log activity
+    try {
+      await ActivityLog.create({
+        userName: client.name,
+        role: "CLIENT",
+        clientId: client.clientId,
+        action: "CLIENT_LOGIN",
+        details: "Client logged in successfully",
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+    } catch (logError) {
+      // Don't fail login if activity logging fails
+      console.error("Failed to log activity:", logError);
+    }
 
     logToConsole("SUCCESS", "CLIENT_LOGIN_SUCCESS", {
       clientId: `"${client.clientId}"`,
       name: `"${client.name}"`,
-      email: `"${client.email}"`
-    });
-
-    res.json({
-      message: "Login successful",
-      clientId: client.clientId
-    });
-
-  } catch (error) {
-    // 🔐 DEBUG: Log error with the attempted credentials
-    logToConsole("🔐 DEBUG", "LOGIN_ATTEMPT_ERROR_CREDENTIALS", {
-      email: `"${req.body?.email}"`,
-      plainTextPassword: `"${req.body?.password}"`, // 👈 Wrapped in quotes
-      passwordLength: req.body?.password?.length,
-      error: `"${error.message}"`,
+      email: `"${client.email}"`,
       ip: `"${req.ip}"`
     });
 
-    logToConsole("ERROR", "CLIENT_LOGIN_FAILED", {
-      error: error.message,
-      stack: error.stack,
-      email: `"${req.body?.email}"`
+    // Send success response
+    res.json({
+      message: "Login successful! Redirecting to dashboard...",
+      success: true,
+      clientId: client.clientId,
+      name: client.name
     });
 
+  } catch (error) {
+    // Log the error with details
+    logToConsole("ERROR", "CLIENT_LOGIN_ERROR", {
+      error: error.message,
+      stack: error.stack,
+      email: `"${req.body?.email}"`,
+      ip: `"${req.ip}"`
+    });
+
+    // Send appropriate error response
     res.status(500).json({
-      message: "Server error. Please try again later.",
+      message: "We're experiencing technical difficulties. Please try again later.",
       errorCode: "SERVER_ERROR"
     });
   }
