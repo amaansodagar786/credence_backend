@@ -47,7 +47,7 @@ router.get("/check", async (req, res) => {
 });
 
 /* ===============================
-   ACCEPT AGREEMENT — SAVE CONSENT + SEND EMAIL
+   ACCEPT AGREEMENT — SAVE CONSENT + SEND EMAIL WITH PDF
    POST /client-consent/accept
 ================================ */
 router.post("/accept", async (req, res) => {
@@ -87,15 +87,39 @@ router.post("/accept", async (req, res) => {
             timeZone: "Europe/Helsinki"
         });
 
-        // Get active PDF URL for audit trail — never exposed to client
+        // ============================================
+        // FETCH ACTIVE PDF
+        // URL stored for audit trail (DB only, never sent to client)
+        // Buffer used for email attachment
+        // ============================================
         let activePdfUrl = "";
+        let pdfAttachment = null;
+
         try {
             const activePdf = await AgreementPdf.findOne({ isActive: true }).lean();
             if (activePdf) {
+                // Save URL for audit trail in DB only
                 activePdfUrl = activePdf.fileUrl;
+
+                // Fetch as buffer for email attachment
+                const fileResponse = await fetch(activePdf.fileUrl);
+                const arrayBuffer = await fileResponse.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+
+                pdfAttachment = {
+                    filename: "Agreement.pdf",
+                    content: buffer,
+                    contentType: "application/pdf"
+                };
+
+                logToConsole("INFO", "ACTIVE_PDF_FETCHED_FOR_CONSENT_EMAIL", {
+                    version: activePdf.version,
+                    size: buffer.length
+                });
             }
         } catch (pdfErr) {
             logToConsole("WARN", "ACTIVE_PDF_FETCH_FAILED_FOR_CONSENT", { error: pdfErr.message });
+            // Don't fail — consent still saves, email sends without attachment
         }
 
         const newConsentEntry = {
@@ -103,7 +127,7 @@ router.post("/accept", async (req, res) => {
             acceptAgreement: true,
             date: consentDate,
             time: consentTime,
-            agreementPdfUrl: activePdfUrl,
+            agreementPdfUrl: activePdfUrl, // stored in DB only, never sent to client
             recordedAt: now
         };
 
@@ -153,10 +177,12 @@ router.post("/accept", async (req, res) => {
         }
 
         // ============================================
-        // SEND CONFIRMATION EMAIL TO CLIENT
+        // SEND CONFIRMATION EMAIL TO CLIENT (WITH PDF ATTACHED)
+        // AWS URL never exposed — only buffer sent as attachment
         // ============================================
         try {
             const clientName = client.name || `${client.firstName} ${client.lastName}`;
+            const attachments = pdfAttachment ? [pdfAttachment] : [];
 
             await sendEmail(
                 client.email,
@@ -175,6 +201,7 @@ router.post("/accept", async (req, res) => {
                         .content { padding: 25px; background: #ffffff; }
                         .confirmation-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0; }
                         .info-box { background: #f8f9fa; border: 1px solid #e9ecef; padding: 15px; margin: 15px 0; border-radius: 8px; }
+                        .pdf-box { background: #f8f9fa; border: 1px solid #e9ecef; padding: 15px; margin: 15px 0; border-radius: 8px; border-left: 4px solid #7cd64b; }
                         .footer { background: #111111; color: #ffffff; padding: 20px; text-align: center; font-size: 14px; }
                         .dev-info { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8; }
                         table { width: 100%; border-collapse: collapse; margin: 10px 0; }
@@ -221,6 +248,13 @@ router.post("/accept", async (req, res) => {
                             </table>
                         </div>
 
+                        ${pdfAttachment ? `
+                        <div class="pdf-box">
+                            <h3 style="margin-top: 0; color: #2c3e50;">📄 Agreement Document</h3>
+                            <p>Please find the accepted <strong>Agreement.pdf</strong> attached to this email for your records.</p>
+                        </div>
+                        ` : ''}
+
                         <p style="background: #e7f4ff; padding: 15px; border-radius: 8px; border-left: 4px solid #007bff; font-size: 14px;">
                             <strong>Note:</strong> This record has been saved for compliance purposes.
                             If you did not perform this action, please contact our support team immediately.
@@ -243,12 +277,14 @@ router.post("/accept", async (req, res) => {
                     </div>
                 </body>
                 </html>
-                `
+                `,
+                attachments
             );
 
             logToConsole("INFO", "CONSENT_CONFIRMATION_EMAIL_SENT", {
                 clientId,
-                email: client.email
+                email: client.email,
+                pdfAttached: !!pdfAttachment
             });
 
         } catch (emailErr) {
