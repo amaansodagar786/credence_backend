@@ -574,11 +574,11 @@ router.get("/assigned-clients", async (req, res) => {
       try {
 
 
-        console.log('🔍 PROCESSING ASSIGNMENT:', {
-          task: assign.task,
-          clientId: assign.clientId,
-          willBeIncluded: true // We'll see if it actually gets included
-        });
+        // console.log('🔍 PROCESSING ASSIGNMENT:', {
+        //   task: assign.task,
+        //   clientId: assign.clientId,
+        //   willBeIncluded: true 
+        // });
 
         // ===== UPDATED: Skip only if the LATEST version is removed =====
         if (assign.isRemoved) {
@@ -693,7 +693,7 @@ router.get("/assigned-clients", async (req, res) => {
           task: assign.task,
           clientName: assign.clientName || client.name,
           isLocked: assign.isLocked || monthData.isLocked || false,
-          accountingDone: assign.accountingDone || monthData.accountingDone || false,
+          accountingDone: assign.accountingDone,
           accountingDoneAt: assign.accountingDoneAt || monthData.accountingDoneAt,
           accountingDoneBy: assign.accountingDoneBy || monthData.accountingDoneBy,
           isCurrentMonth: isCurrentMonth,
@@ -811,15 +811,13 @@ router.get("/assigned-clients", async (req, res) => {
   }
 });
 
-/* ===============================
-   TOGGLE ACCOUNTING DONE STATUS (UPDATED WITH TASK FILTERING)
-================================ */
+
+
 router.put("/toggle-accounting-done", async (req, res) => {
   try {
     const { clientId, year, month, task, accountingDone } = req.body;
     const token = req.cookies?.employeeToken;
 
-    // Console log: Toggle request
     logToConsole("INFO", "TOGGLE_ACCOUNTING_DONE_REQUEST", {
       clientId,
       year,
@@ -829,7 +827,6 @@ router.put("/toggle-accounting-done", async (req, res) => {
       ip: req.ip
     });
 
-    // Validation (ADDED TASK TO REQUIRED FIELDS)
     if (!clientId || !year || !month || !task) {
       logToConsole("WARN", "MISSING_PARAMETERS_ACCOUNTING", {
         clientId: !!clientId,
@@ -862,10 +859,7 @@ router.put("/toggle-accounting-done", async (req, res) => {
       return res.status(401).json({ message: "Invalid or expired token" });
     }
 
-    // Find employee
-    const employee = await Employee.findOne({
-      employeeId: decoded.employeeId
-    });
+    const employee = await Employee.findOne({ employeeId: decoded.employeeId });
 
     if (!employee) {
       logToConsole("ERROR", "EMPLOYEE_NOT_FOUND_ACCOUNTING", {
@@ -874,7 +868,21 @@ router.put("/toggle-accounting-done", async (req, res) => {
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    // Find the assignment using composite key (clientId + year + month + task)
+    // ========== LOG: ALL assignments for this client+month in Employee collection ==========
+    const employeeMonthAssignments = employee.assignedClients.filter(
+      a => a.clientId === clientId &&
+        a.year === parseInt(year) &&
+        a.month === parseInt(month)
+    );
+    logToConsole("DEBUG", "EMPLOYEE_ALL_ASSIGNMENTS_FOR_THIS_MONTH", {
+      totalFound: employeeMonthAssignments.length,
+      assignments: employeeMonthAssignments.map(a => ({
+        task: a.task,
+        accountingDone: a.accountingDone,
+        isRemoved: a.isRemoved || false
+      }))
+    });
+
     const assignmentIndex = employee.assignedClients.findIndex(
       a => a.clientId === clientId &&
         a.year === parseInt(year) &&
@@ -882,12 +890,16 @@ router.put("/toggle-accounting-done", async (req, res) => {
         a.task === task
     );
 
+    // ========== LOG: Did we find the assignment in Employee collection? ==========
+    logToConsole("DEBUG", "EMPLOYEE_ASSIGNMENT_FINDINDEX_RESULT", {
+      assignmentIndex,
+      found: assignmentIndex !== -1,
+      searchedFor: { clientId, year, month, task }
+    });
+
     if (assignmentIndex === -1) {
       logToConsole("WARN", "ASSIGNMENT_NOT_FOUND_IN_EMPLOYEE", {
-        clientId,
-        year,
-        month,
-        task,
+        clientId, year, month, task,
         employeeId: employee.employeeId,
         availableTasks: employee.assignedClients
           .filter(a => a.clientId === clientId && a.year === parseInt(year) && a.month === parseInt(month))
@@ -898,44 +910,73 @@ router.put("/toggle-accounting-done", async (req, res) => {
       });
     }
 
-    // Update accounting status in Employee collection
+    // ========== LOG: Before update in Employee collection ==========
+    logToConsole("DEBUG", "EMPLOYEE_ASSIGNMENT_BEFORE_UPDATE", {
+      task: employee.assignedClients[assignmentIndex].task,
+      accountingDone_BEFORE: employee.assignedClients[assignmentIndex].accountingDone,
+      accountingDone_WILL_SET_TO: accountingDone
+    });
+
     employee.assignedClients[assignmentIndex].accountingDone = accountingDone;
     employee.assignedClients[assignmentIndex].accountingDoneAt = new Date();
     employee.assignedClients[assignmentIndex].accountingDoneBy = employee.employeeId;
 
     await employee.save();
 
-    logToConsole("DEBUG", "EMPLOYEE_ASSIGNMENT_UPDATED", {
-      clientId,
-      year,
-      month,
-      task,
-      accountingDone,
-      employeeId: employee.employeeId,
-      assignmentId: employee.assignedClients[assignmentIndex]._id
+    // ========== LOG: After update in Employee collection ==========
+    logToConsole("DEBUG", "EMPLOYEE_ASSIGNMENT_AFTER_UPDATE", {
+      task: employee.assignedClients[assignmentIndex].task,
+      accountingDone_AFTER: employee.assignedClients[assignmentIndex].accountingDone,
+      accountingDoneAt: employee.assignedClients[assignmentIndex].accountingDoneAt
     });
 
-    // Also update in Client collection for consistency
-    const client = await Client.findOne({
-      clientId: clientId
-    });
+    const client = await Client.findOne({ clientId });
 
     if (client) {
-      // Find the assignment in client's employeeAssignments
+
+      // ========== LOG: ALL assignments for this client+month in Client collection ==========
+      const clientMonthAssignments = client.employeeAssignments.filter(
+        a => a.year === parseInt(year) &&
+          a.month === parseInt(month) &&
+          a.employeeId === employee.employeeId
+      );
+      logToConsole("DEBUG", "CLIENT_ALL_ASSIGNMENTS_FOR_THIS_MONTH", {
+        totalFound: clientMonthAssignments.length,
+        assignments: clientMonthAssignments.map(a => ({
+          task: a.task,
+          accountingDone: a.accountingDone,
+          isRemoved: a.isRemoved || false
+        }))
+      });
+
       const clientAssignmentIndex = client.employeeAssignments.findIndex(
         a => a.year === parseInt(year) &&
           a.month === parseInt(month) &&
           a.employeeId === employee.employeeId &&
           a.task === task &&
-          a.isRemoved !== true  // 👈 ADD THIS
+          a.isRemoved !== true
       );
 
+      // ========== LOG: Did we find the assignment in Client collection? ==========
+      logToConsole("DEBUG", "CLIENT_ASSIGNMENT_FINDINDEX_RESULT", {
+        clientAssignmentIndex,
+        found: clientAssignmentIndex !== -1,
+        searchedFor: { year, month, employeeId: employee.employeeId, task }
+      });
+
       if (clientAssignmentIndex !== -1) {
+
+        // ========== LOG: Before update in Client collection ==========
+        logToConsole("DEBUG", "CLIENT_ASSIGNMENT_BEFORE_UPDATE", {
+          task: client.employeeAssignments[clientAssignmentIndex].task,
+          accountingDone_BEFORE: client.employeeAssignments[clientAssignmentIndex].accountingDone,
+          accountingDone_WILL_SET_TO: accountingDone
+        });
+
         client.employeeAssignments[clientAssignmentIndex].accountingDone = accountingDone;
         client.employeeAssignments[clientAssignmentIndex].accountingDoneAt = new Date();
         client.employeeAssignments[clientAssignmentIndex].accountingDoneBy = employee.employeeId;
 
-        // Also update in documents map if exists
         const yearKey = String(year);
         const monthKey = String(month);
 
@@ -944,87 +985,109 @@ router.put("/toggle-accounting-done", async (req, res) => {
           client.documents.get(yearKey).get(monthKey)) {
 
           const monthData = client.documents.get(yearKey).get(monthKey);
-          // Note: Documents are per month, not per task
-          // Accounting status in documents remains per month
-          // We'll keep it as is, or you can track per task in documents too
-          // For now, we'll update if this is the first task being marked done
 
-          // Check if all tasks for this month are done
+          // ========== LOG: monthData BEFORE allDone check ==========
+          logToConsole("DEBUG", "MONTH_DATA_BEFORE_ALLDONE_CHECK", {
+            accountingDone_BEFORE: monthData.accountingDone,
+            accountingDoneAt_BEFORE: monthData.accountingDoneAt
+          });
+
+          // ✅ CHANGE 1: Added isRemoved !== true filter
           const allTasksForMonth = client.employeeAssignments.filter(
             a => a.year === parseInt(year) &&
               a.month === parseInt(month) &&
-              a.employeeId === employee.employeeId
+              a.employeeId === employee.employeeId &&
+              a.isRemoved !== true  // 👈 ADDED
           );
+
+          // ========== LOG: allTasksForMonth details ==========
+          logToConsole("DEBUG", "ALL_TASKS_FOR_MONTH_CHECK", {
+            totalTasksFound: allTasksForMonth.length,
+            tasks: allTasksForMonth.map(a => ({
+              task: a.task,
+              accountingDone: a.accountingDone,
+              isRemoved: a.isRemoved || false
+            }))
+          });
 
           const allDone = allTasksForMonth.every(t => t.accountingDone);
 
+          // ========== LOG: allDone result ==========
+          logToConsole("DEBUG", "ALL_DONE_RESULT", {
+            allDone,
+            explanation: allDone
+              ? "ALL tasks done → setting monthData.accountingDone = true"
+              : "NOT all tasks done → monthData.accountingDone stays unchanged"
+          });
+
+          // ✅ CHANGE 2: Removed else block — only update when ALL tasks are done
           if (allDone) {
             monthData.accountingDone = true;
             monthData.accountingDoneAt = new Date();
             monthData.accountingDoneBy = employee.employeeId;
-          } else {
-            monthData.accountingDone = false;
-            monthData.accountingDoneAt = null;
-            monthData.accountingDoneBy = null;
           }
 
-          // Update the map
+          // ========== LOG: monthData AFTER allDone check ==========
+          logToConsole("DEBUG", "MONTH_DATA_AFTER_ALLDONE_CHECK", {
+            accountingDone_AFTER: monthData.accountingDone,
+            accountingDoneAt_AFTER: monthData.accountingDoneAt
+          });
+
           if (!client.documents.get(yearKey)) {
             client.documents.set(yearKey, new Map());
           }
           client.documents.get(yearKey).set(monthKey, monthData);
+        } else {
+          // ========== LOG: monthData not found ==========
+          logToConsole("WARN", "MONTH_DATA_NOT_FOUND_IN_DOCUMENTS", {
+            yearKey,
+            monthKey,
+            hasDocuments: !!client.documents,
+            hasYear: !!(client.documents && client.documents.get(yearKey)),
+            hasMonth: !!(client.documents && client.documents.get(yearKey) && client.documents.get(yearKey).get(monthKey))
+          });
         }
 
         await client.save();
 
-        logToConsole("DEBUG", "CLIENT_ASSIGNMENT_UPDATED", {
-          clientId,
-          year,
-          month,
-          task,
-          accountingDone
+        logToConsole("DEBUG", "CLIENT_ASSIGNMENT_UPDATED_SUCCESSFULLY", {
+          clientId, year, month, task, accountingDone
+        });
+
+      } else {
+        // ========== LOG: Client assignment not found ==========
+        logToConsole("WARN", "CLIENT_ASSIGNMENT_NOT_FOUND_SKIPPING_UPDATE", {
+          searchedFor: { year, month, employeeId: employee.employeeId, task },
+          allClientAssignments: client.employeeAssignments
+            .filter(a => a.year === parseInt(year) && a.month === parseInt(month))
+            .map(a => ({
+              task: a.task,
+              employeeId: a.employeeId,
+              isRemoved: a.isRemoved || false,
+              accountingDone: a.accountingDone
+            }))
         });
       }
+    } else {
+      logToConsole("WARN", "CLIENT_NOT_FOUND_IN_DB", { clientId });
     }
 
-    // Create activity log for accounting status change
     try {
       await ActivityLog.create({
         userName: employee.name,
         role: "EMPLOYEE",
         employeeId: employee.employeeId,
-        clientId: clientId,
+        clientId,
         action: accountingDone ? "ACCOUNTING_MARKED_DONE" : "ACCOUNTING_MARKED_PENDING",
         details: `Accounting ${accountingDone ? 'marked as done' : 'marked as pending'} for client ${clientId}, ${month}/${year}, task: ${task}`,
-        metadata: {
-          clientId,
-          year,
-          month,
-          task,
-          accountingDone,
-          changeTime: new Date().toISOString()
-        }
-      });
-
-      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-        action: accountingDone ? "ACCOUNTING_MARKED_DONE" : "ACCOUNTING_MARKED_PENDING",
-        employeeId: employee.employeeId,
-        clientId: clientId,
-        task,
-        accountingDone
+        metadata: { clientId, year, month, task, accountingDone, changeTime: new Date().toISOString() }
       });
     } catch (logError) {
-      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
-        error: logError.message,
-        employeeId: employee.employeeId
-      });
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", { error: logError.message });
     }
 
     logToConsole("SUCCESS", "ACCOUNTING_STATUS_UPDATED", {
-      clientId,
-      year,
-      month,
-      task,
+      clientId, year, month, task,
       employeeId: employee.employeeId,
       accountingDone,
       timestamp: new Date().toISOString()
@@ -2375,12 +2438,12 @@ router.get("/all-clients-payment-status", async (req, res) => {
     for (let i = 0; i < 6; i++) {
       let year = currentYear;
       let month = currentMonth - i;
-      
+
       if (month <= 0) {
         month += 12;
         year -= 1;
       }
-      
+
       last6Months.push({
         year,
         month,
@@ -2394,7 +2457,7 @@ router.get("/all-clients-payment-status", async (req, res) => {
 
     // Build query for clients
     const query = {};
-    
+
     // Add search functionality (case-insensitive)
     if (search && search.trim()) {
       const searchRegex = new RegExp(search.trim(), 'i');
@@ -2420,24 +2483,24 @@ router.get("/all-clients-payment-status", async (req, res) => {
     const response = clients.map(client => {
       // Initialize payment status object for last 6 months
       const paymentStatus = {};
-      
+
       // For each of the last 6 months, check payment status
       last6Months.forEach(({ year, month, key }) => {
         const yearKey = String(year);
         const monthKey = String(month);
-        
+
         let isPaid = false;
-        
+
         // Check if client has documents for this year/month
-        if (client.documents && 
-            client.documents[yearKey] && 
-            client.documents[yearKey][monthKey]) {
-          
+        if (client.documents &&
+          client.documents[yearKey] &&
+          client.documents[yearKey][monthKey]) {
+
           const monthData = client.documents[yearKey][monthKey];
           // Get payment status (default to false if not set)
           isPaid = monthData.paymentStatus === true;
         }
-        
+
         // Store in YYYY-M format for easy frontend use
         paymentStatus[key] = isPaid;
       });
