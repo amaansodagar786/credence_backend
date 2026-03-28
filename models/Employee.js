@@ -105,6 +105,68 @@ const viewedFileSchema = new mongoose.Schema(
   { _id: false }
 );
 
+/**
+ * NEW: Employee Audited Files Tracking
+ * Tracks which files an employee has marked as audited
+ * Separate from viewedFiles for audit trail
+ */
+const auditedFileSchema = new mongoose.Schema(
+  {
+    clientId: {
+      type: String,
+      required: true
+    },
+    year: {
+      type: Number,
+      required: true
+    },
+    month: {
+      type: Number,
+      required: true
+    },
+    categoryType: {
+      type: String,
+      required: true,
+      enum: ['sales', 'purchase', 'bank', 'other']
+    },
+    categoryName: {
+      type: String
+      // Required only for 'other' category type
+    },
+    fileName: {
+      type: String,
+      required: true
+    },
+    fileUrl: {
+      type: String
+    },
+    auditedAt: {
+      type: Date,
+      default: Date.now
+    },
+    lastCheckedAt: {
+      type: Date,
+      default: Date.now
+    },
+    // For detecting if file was changed/replaced
+    fileHash: {
+      type: String
+    },
+    // Additional metadata for easy querying
+    task: {
+      type: String,
+      enum: [
+        'Bookkeeping',
+        'VAT Filing Computation',
+        'VAT Filing',
+        'Financial Statement Generation',
+        'Audit'
+      ]
+    }
+  },
+  { _id: false }
+);
+
 const employeeSchema = new mongoose.Schema(
   {
     employeeId: { type: String, unique: true },
@@ -122,10 +184,16 @@ const employeeSchema = new mongoose.Schema(
     assignedClients: [assignedClientSchema],
 
     /**
-     * NEW: Files viewed/checked by this employee
+     * Files viewed/checked by this employee
      * Each employee tracks their own file review progress
      */
-    viewedFiles: [viewedFileSchema]
+    viewedFiles: [viewedFileSchema],
+
+    /**
+     * NEW: Files audited by this employee
+     * Separate from viewedFiles for audit tracking
+     */
+    auditedFiles: [auditedFileSchema]
   },
   { timestamps: true }
 );
@@ -134,5 +202,10 @@ const employeeSchema = new mongoose.Schema(
 employeeSchema.index({ 'viewedFiles.clientId': 1, 'viewedFiles.year': 1, 'viewedFiles.month': 1 });
 employeeSchema.index({ 'viewedFiles.fileName': 1 });
 employeeSchema.index({ employeeId: 1, 'viewedFiles.clientId': 1 });
+
+// Create indexes for faster queries on auditedFiles
+employeeSchema.index({ 'auditedFiles.clientId': 1, 'auditedFiles.year': 1, 'auditedFiles.month': 1 });
+employeeSchema.index({ 'auditedFiles.fileName': 1 });
+employeeSchema.index({ employeeId: 1, 'auditedFiles.clientId': 1 });
 
 module.exports = mongoose.model("Employee", employeeSchema);

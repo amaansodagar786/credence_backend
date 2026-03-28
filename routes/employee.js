@@ -2383,6 +2383,362 @@ router.post("/toggle-file-viewed", async (req, res) => {
 
 
 
+/* ===============================
+   CHECK IF FILE IS AUDITED BY EMPLOYEE (NEW)
+================================ */
+router.get("/check-file-audited", async (req, res) => {
+  try {
+    const {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName
+    } = req.query;
+
+    // Console log
+    logToConsole("INFO", "CHECK_FILE_AUDITED_REQUEST", {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName,
+      ip: req.ip
+    });
+
+    // Validation
+    if (!clientId || !year || !month || !categoryType || !fileName) {
+      return res.status(400).json({
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName"
+      });
+    }
+
+    // Get employee from token
+    const token = req.cookies?.employeeToken;
+    if (!token) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const employee = await Employee.findOne({
+      employeeId: decoded.employeeId
+    });
+
+    if (!employee) {
+      return res.status(404).json({ message: "Employee not found" });
+    }
+
+    // Check if file exists in auditedFiles
+    const auditedFile = employee.auditedFiles.find(f =>
+      f.clientId === clientId &&
+      f.year === parseInt(year) &&
+      f.month === parseInt(month) &&
+      f.categoryType === categoryType &&
+      f.fileName === fileName &&
+      (!categoryName || f.categoryName === categoryName)
+    );
+
+    logToConsole("DEBUG", "FILE_AUDITED_STATUS", {
+      employeeId: employee.employeeId,
+      clientId,
+      fileName,
+      isAudited: !!auditedFile,
+      auditedAt: auditedFile?.auditedAt
+    });
+
+    res.json({
+      isAudited: !!auditedFile,
+      auditedAt: auditedFile?.auditedAt,
+      lastCheckedAt: auditedFile?.lastCheckedAt
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "CHECK_FILE_AUDITED_ERROR", {
+      error: error.message,
+      query: req.query,
+      ip: req.ip
+    });
+
+    if (error.name === 'JsonWebTokenError') {
+      res.clearCookie("employeeToken");
+      return res.status(401).json({ message: "Invalid token", clearedCookie: true });
+    }
+
+    res.status(500).json({
+      message: "Error checking file audited status",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/* ===============================
+   MARK FILE AS AUDITED/UN-AUDITED (TOGGLE) (NEW)
+================================ */
+router.post("/toggle-file-audited", async (req, res) => {
+  try {
+    const {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName,
+      fileUrl,
+      task
+    } = req.body;
+
+    // Console log
+    logToConsole("INFO", "TOGGLE_FILE_AUDITED_REQUEST", {
+      clientId,
+      year,
+      month,
+      categoryType,
+      categoryName,
+      fileName,
+      fileUrl: !!fileUrl,
+      task,
+      ip: req.ip
+    });
+
+    // Validation
+    if (!clientId || !year || !month || !categoryType || !fileName) {
+      return res.status(400).json({
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName"
+      });
+    }
+
+    // Get employee from token
+    const token = req.cookies?.employeeToken;
+    if (!token) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const employee = await Employee.findOne({
+      employeeId: decoded.employeeId
+    });
+
+    if (!employee) {
+      return res.status(404).json({ message: "Employee not found" });
+    }
+
+    // Check if already audited
+    const existingIndex = employee.auditedFiles.findIndex(f =>
+      f.clientId === clientId &&
+      f.year === parseInt(year) &&
+      f.month === parseInt(month) &&
+      f.categoryType === categoryType &&
+      f.fileName === fileName &&
+      (!categoryName || f.categoryName === categoryName)
+    );
+
+    let action = "";
+    let auditedFile = null;
+
+    if (existingIndex !== -1) {
+      // Remove from audited files (mark as not audited)
+      employee.auditedFiles.splice(existingIndex, 1);
+      action = "REMOVED";
+
+      logToConsole("DEBUG", "FILE_REMOVED_FROM_AUDITED", {
+        employeeId: employee.employeeId,
+        clientId,
+        fileName,
+        action: "unaudited"
+      });
+    } else {
+      // Add to audited files
+      auditedFile = {
+        clientId,
+        year: parseInt(year),
+        month: parseInt(month),
+        categoryType,
+        fileName,
+        fileUrl,
+        auditedAt: new Date(),
+        lastCheckedAt: new Date()
+      };
+
+      // Add categoryName for 'other' category
+      if (categoryType === 'other' && categoryName) {
+        auditedFile.categoryName = categoryName;
+      }
+
+      // Add task if provided
+      if (task) {
+        auditedFile.task = task;
+      }
+
+      employee.auditedFiles.push(auditedFile);
+      action = "ADDED";
+
+      logToConsole("DEBUG", "FILE_ADDED_TO_AUDITED", {
+        employeeId: employee.employeeId,
+        clientId,
+        fileName,
+        action: "audited"
+      });
+    }
+
+    await employee.save();
+
+    // Create activity log for audit toggle
+    try {
+      await ActivityLog.create({
+        userName: employee.name,
+        role: "EMPLOYEE",
+        employeeId: employee.employeeId,
+        clientId,
+        action: action === "ADDED" ? "FILE_MARKED_AUDITED" : "FILE_MARKED_UNAUDITED",
+        details: `Employee ${action === "ADDED" ? 'marked' : 'unmarked'} file "${fileName}" as audited for client ${clientId}`,
+        metadata: {
+          clientId,
+          year,
+          month,
+          categoryType,
+          categoryName,
+          fileName,
+          action,
+          timestamp: new Date().toISOString()
+        }
+      });
+    } catch (logError) {
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED_TOGGLE_AUDIT", {
+        error: logError.message
+      });
+    }
+
+    logToConsole("SUCCESS", "FILE_AUDITED_TOGGLED", {
+      employeeId: employee.employeeId,
+      clientId,
+      fileName,
+      action,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      message: action === "ADDED" ? "File marked as audited" : "File marked as not audited",
+      isAudited: action === "ADDED",
+      action,
+      auditedAt: auditedFile?.auditedAt
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "TOGGLE_FILE_AUDITED_ERROR", {
+      error: error.message,
+      body: req.body,
+      ip: req.ip
+    });
+
+    if (error.name === 'JsonWebTokenError') {
+      res.clearCookie("employeeToken");
+      return res.status(401).json({ message: "Invalid token", clearedCookie: true });
+    }
+
+    res.status(500).json({
+      message: "Error toggling file audited status",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/* ===============================
+   GET ALL AUDITED FILES FOR AN ASSIGNMENT (OPTIONAL - HELPER ROUTE)
+================================ */
+router.get("/assignment-audited-files", async (req, res) => {
+  try {
+    const { clientId, year, month } = req.query;
+
+    logToConsole("INFO", "GET_ASSIGNMENT_AUDITED_FILES_REQUEST", {
+      clientId,
+      year,
+      month,
+      ip: req.ip
+    });
+
+    if (!clientId || !year || !month) {
+      return res.status(400).json({
+        message: "Missing required parameters: clientId, year, month"
+      });
+    }
+
+    const token = req.cookies?.employeeToken;
+    if (!token) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const employee = await Employee.findOne({
+      employeeId: decoded.employeeId
+    });
+
+    if (!employee) {
+      return res.status(404).json({ message: "Employee not found" });
+    }
+
+    // Get all audited files for this assignment
+    const auditedFiles = employee.auditedFiles.filter(f =>
+      f.clientId === clientId &&
+      f.year === parseInt(year) &&
+      f.month === parseInt(month)
+    );
+
+    // Create a map for quick lookup
+    const auditedMap = {};
+    auditedFiles.forEach(file => {
+      const key = `${file.categoryType}-${file.categoryName || 'main'}-${file.fileName}`;
+      auditedMap[key] = file;
+    });
+
+    logToConsole("DEBUG", "ASSIGNMENT_AUDITED_FILES", {
+      employeeId: employee.employeeId,
+      clientId,
+      year,
+      month,
+      totalAudited: auditedFiles.length
+    });
+
+    res.json({
+      success: true,
+      auditedFiles: auditedFiles,
+      auditedMap: auditedMap,
+      totalAudited: auditedFiles.length
+    });
+
+  } catch (error) {
+    logToConsole("ERROR", "GET_ASSIGNMENT_AUDITED_FILES_ERROR", {
+      error: error.message,
+      query: req.query,
+      ip: req.ip
+    });
+
+    if (error.name === 'JsonWebTokenError') {
+      res.clearCookie("employeeToken");
+      return res.status(401).json({ message: "Invalid token", clearedCookie: true });
+    }
+
+    res.status(500).json({
+      message: "Error fetching audited files",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ===============================
    GET ALL CLIENTS WITH LAST 6 MONTHS PAYMENT STATUS (FOR EMPLOYEE)
