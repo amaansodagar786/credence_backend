@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const Client = require('../models/Client');
+const ClientMonthlyData = require('../models/ClientMonthlyData');
 const nodemailer = require('nodemailer');
 
 // ===============================
@@ -102,6 +103,7 @@ const sendAdminEmail = async (stats, startTime, errors, clientLists) => {
                                 <span class="client-id"> (${client.clientId})</span>
                             </span>
                             <span class="badge badge-success">Locked</span>
+                            <span class="badge badge-info">${client.source}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -118,13 +120,12 @@ const sendAdminEmail = async (stats, startTime, errors, clientLists) => {
                                 <span class="client-id"> (${client.clientId})</span>
                             </span>
                             <span class="badge badge-warning">Already Locked</span>
+                            <span class="badge badge-info">${client.source}</span>
                         </div>
                     `).join('')}
                 </div>
-                ` : ''} 
+                ` : ''}
 
-               
-                
                 ${errors && errors.length > 0 ? `
                 <div class="errors-section">
                     <h4>⚠️ Errors (${errors.length})</h4>
@@ -206,18 +207,39 @@ const calculateMonthActiveStatus = (client, targetYear, targetMonth) => {
 };
 
 // ===============================
-// GET OR CREATE MONTH DATA
+// UPDATED: GET OR CREATE MONTH DATA (CHECKS BOTH COLLECTIONS)
 // ===============================
-const getOrCreateMonthData = (client, year, month) => {
-    const y = String(year);
-    const m = String(month);
+const getOrCreateMonthDataInBoth = async (client, year, month) => {
+    const targetYear = parseInt(year);
+    const targetMonth = parseInt(month);
+    let monthData = null;
+    let source = null;
+
+    // ===== 1. FIRST: Check NEW ClientMonthlyData collection =====
+    try {
+        const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
+        if (newDoc && newDoc.months) {
+            const foundMonthIndex = newDoc.months.findIndex(m => m.year === targetYear && m.month === targetMonth);
+            if (foundMonthIndex !== -1) {
+                monthData = newDoc.months[foundMonthIndex];
+                source = 'new';
+                return { monthData, source, newDoc, monthIndex: foundMonthIndex };
+            }
+        }
+    } catch (err) {
+        logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION_FOR_LOCK", { error: err.message, clientId: client.clientId });
+    }
+
+    // ===== 2. SECOND: Check OLD client.documents =====
+    const y = String(targetYear);
+    const m = String(targetMonth);
 
     if (!client.documents.has(y)) {
         client.documents.set(y, new Map());
     }
 
     if (!client.documents.get(y).has(m)) {
-        const monthActiveStatus = calculateMonthActiveStatus(client, year, month);
+        const monthActiveStatus = calculateMonthActiveStatus(client, targetYear, targetMonth);
 
         client.documents.get(y).set(m, {
             sales: { files: [], categoryNotes: [], isLocked: false, wasLockedOnce: false },
@@ -235,7 +257,111 @@ const getOrCreateMonthData = (client, year, month) => {
         });
     }
 
-    return client.documents.get(y).get(m);
+    monthData = client.documents.get(y).get(m);
+    source = 'old';
+
+    return { monthData, source, client, yearKey: y, monthKey: m };
+};
+
+// ===============================
+// UPDATED: LOCK MONTH DATA IN THE COLLECTION WHERE IT EXISTS
+// ===============================
+const lockMonthInCollection = async (client, year, month, monthData, source, context) => {
+    const targetYear = parseInt(year);
+    const targetMonth = parseInt(month);
+    const now = new Date();
+
+    if (source === 'old' && context.client) {
+        // Lock in OLD client.documents
+        const y = String(targetYear);
+        const m = String(targetMonth);
+
+        monthData.isLocked = true;
+        monthData.wasLockedOnce = true;
+        monthData.lockedAt = now;
+        monthData.lockedBy = "SYSTEM_CRON";
+        monthData.autoLockDate = now;
+
+        // Lock all categories
+        if (monthData.sales) {
+            monthData.sales.isLocked = true;
+            monthData.sales.wasLockedOnce = true;
+        }
+        if (monthData.purchase) {
+            monthData.purchase.isLocked = true;
+            monthData.purchase.wasLockedOnce = true;
+        }
+        if (monthData.bank) {
+            monthData.bank.isLocked = true;
+            monthData.bank.wasLockedOnce = true;
+        }
+        if (monthData.other && monthData.other.length > 0) {
+            monthData.other.forEach(cat => {
+                if (cat.document) {
+                    cat.document.isLocked = true;
+                    cat.document.wasLockedOnce = true;
+                }
+            });
+        }
+
+        // Add system note
+        if (!monthData.monthNotes) monthData.monthNotes = [];
+        monthData.monthNotes.push({
+            note: `Month automatically locked by system on 26th. Month status: ${monthData.monthActiveStatus}`,
+            addedBy: "SYSTEM_CRON",
+            addedAt: now
+        });
+
+        await context.client.save();
+        return { success: true, source: 'old' };
+
+    } else if (source === 'new' && context.newDoc) {
+        // Lock in NEW ClientMonthlyData collection
+        const monthIndex = context.monthIndex;
+
+        context.newDoc.months[monthIndex].isLocked = true;
+        context.newDoc.months[monthIndex].wasLockedOnce = true;
+        context.newDoc.months[monthIndex].lockedAt = now;
+        context.newDoc.months[monthIndex].lockedBy = "SYSTEM_CRON";
+        context.newDoc.months[monthIndex].autoLockDate = now;
+
+        // Lock all categories
+        if (context.newDoc.months[monthIndex].sales) {
+            context.newDoc.months[monthIndex].sales.isLocked = true;
+            context.newDoc.months[monthIndex].sales.wasLockedOnce = true;
+        }
+        if (context.newDoc.months[monthIndex].purchase) {
+            context.newDoc.months[monthIndex].purchase.isLocked = true;
+            context.newDoc.months[monthIndex].purchase.wasLockedOnce = true;
+        }
+        if (context.newDoc.months[monthIndex].bank) {
+            context.newDoc.months[monthIndex].bank.isLocked = true;
+            context.newDoc.months[monthIndex].bank.wasLockedOnce = true;
+        }
+        if (context.newDoc.months[monthIndex].other && context.newDoc.months[monthIndex].other.length > 0) {
+            context.newDoc.months[monthIndex].other.forEach(cat => {
+                if (cat.document) {
+                    cat.document.isLocked = true;
+                    cat.document.wasLockedOnce = true;
+                }
+            });
+        }
+
+        // Add system note
+        if (!context.newDoc.months[monthIndex].monthNotes) {
+            context.newDoc.months[monthIndex].monthNotes = [];
+        }
+        context.newDoc.months[monthIndex].monthNotes.push({
+            note: `Month automatically locked by system on 26th. Month status: ${context.newDoc.months[monthIndex].monthActiveStatus || 'active'}`,
+            addedBy: "SYSTEM_CRON",
+            addedAt: now
+        });
+
+        await context.newDoc.save();
+        return { success: true, source: 'new' };
+    }
+
+    return { success: false, source: null };
 };
 
 // ===============================
@@ -270,7 +396,7 @@ const logToConsole = (type, operation, data) => {
 };
 
 // ===============================
-// MAIN LOCK FUNCTION
+// UPDATED: MAIN LOCK FUNCTION (WORKS WITH BOTH COLLECTIONS)
 // ===============================
 const lockPreviousMonthForAllClients = async () => {
     const startTime = Date.now();
@@ -300,24 +426,22 @@ const lockPreviousMonthForAllClients = async () => {
         // Client lists for email
         const lockedClients = [];
         const alreadyLockedClients = [];
-        const inactiveClients = [];
 
         for (const client of clients) {
             try {
-                const monthData = getOrCreateMonthData(client, year, month);
+                // Get month data from BOTH collections
+                const result = await getOrCreateMonthDataInBoth(client, year, month);
+                const { monthData, source, newDoc, client: oldClient, monthIndex, yearKey, monthKey } = result;
 
                 // Track inactive months
                 if (monthData.monthActiveStatus === 'inactive') {
                     inactiveMonthCount++;
-                    inactiveClients.push({
-                        name: client.name,
-                        clientId: client.clientId
-                    });
                     logToConsole("INFO", "AUTO_LOCK_INACTIVE_MONTH", {
                         clientId: client.clientId,
                         clientName: client.name,
                         month: `${monthName} ${year}`,
-                        status: 'inactive - client was deactivated during this period'
+                        status: 'inactive - client was deactivated during this period',
+                        source: source || 'old'
                     });
                 }
 
@@ -326,68 +450,36 @@ const lockPreviousMonthForAllClients = async () => {
                     alreadyLockedCount++;
                     alreadyLockedClients.push({
                         name: client.name,
-                        clientId: client.clientId
+                        clientId: client.clientId,
+                        source: source || 'old'
                     });
                     continue;
                 }
 
-                // LOCK THE MONTH
-                monthData.isLocked = true;
-                monthData.wasLockedOnce = true;
-                monthData.lockedAt = new Date();
-                monthData.lockedBy = "SYSTEM_CRON";
-                monthData.autoLockDate = new Date();
+                // LOCK THE MONTH in the appropriate collection
+                const lockResult = await lockMonthInCollection(
+                    client, year, month, monthData, source,
+                    { client: oldClient, newDoc, monthIndex, yearKey, monthKey }
+                );
 
-                // Lock all categories
-                if (monthData.sales) {
-                    monthData.sales.isLocked = true;
-                    monthData.sales.wasLockedOnce = true;
-                }
-
-                if (monthData.purchase) {
-                    monthData.purchase.isLocked = true;
-                    monthData.purchase.wasLockedOnce = true;
-                }
-
-                if (monthData.bank) {
-                    monthData.bank.isLocked = true;
-                    monthData.bank.wasLockedOnce = true;
-                }
-
-                if (monthData.other && monthData.other.length > 0) {
-                    monthData.other.forEach(cat => {
-                        if (cat.document) {
-                            cat.document.isLocked = true;
-                            cat.document.wasLockedOnce = true;
-                        }
+                if (lockResult.success) {
+                    lockedCount++;
+                    lockedClients.push({
+                        name: client.name,
+                        clientId: client.clientId,
+                        source: lockResult.source
                     });
+
+                    logToConsole("SUCCESS", "AUTO_LOCK_SUCCESS", {
+                        clientId: client.clientId,
+                        clientName: client.name,
+                        month: `${monthName} ${year}`,
+                        monthStatus: monthData.monthActiveStatus,
+                        source: lockResult.source
+                    });
+                } else {
+                    throw new Error(`Failed to lock month in ${source || 'unknown'} collection`);
                 }
-
-                // Add system note
-                if (!monthData.monthNotes) {
-                    monthData.monthNotes = [];
-                }
-
-                monthData.monthNotes.push({
-                    note: `Month automatically locked by system on 26th. Month status: ${monthData.monthActiveStatus}`,
-                    addedBy: "SYSTEM_CRON",
-                    addedAt: new Date()
-                });
-
-                await client.save();
-
-                lockedCount++;
-                lockedClients.push({
-                    name: client.name,
-                    clientId: client.clientId
-                });
-
-                logToConsole("SUCCESS", "AUTO_LOCK_SUCCESS", {
-                    clientId: client.clientId,
-                    clientName: client.name,
-                    month: `${monthName} ${year}`,
-                    monthStatus: monthData.monthActiveStatus
-                });
 
             } catch (clientError) {
                 errorCount++;
@@ -417,8 +509,7 @@ const lockPreviousMonthForAllClients = async () => {
 
         const clientLists = {
             lockedClients,
-            alreadyLockedClients,
-            inactiveClients
+            alreadyLockedClients
         };
 
         logToConsole("SUCCESS", "AUTO_LOCK_CRON_COMPLETED", {
@@ -464,8 +555,7 @@ const lockPreviousMonthForAllClients = async () => {
                 month: getPreviousMonth()
             }, startTime, [{ clientId: 'SYSTEM', clientName: 'SYSTEM', error: error.message }], {
                 lockedClients: [],
-                alreadyLockedClients: [],
-                inactiveClients: []
+                alreadyLockedClients: []
             });
         } catch (emailError) {
             logToConsole("ERROR", "FAILED_TO_SEND_ERROR_EMAIL", {

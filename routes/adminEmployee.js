@@ -11,6 +11,8 @@ const adminOnly = require("../middleware/adminMiddleware");
 
 const Client = require("../models/Client");
 const RemovedAssignment = require("../models/RemovedAssignment");
+// Add this with other requires at the top of employeeRoutes.js
+const EmployeeAssignment = require("../models/EmployeeAssignment");
 
 const router = express.Router();
 
@@ -391,8 +393,10 @@ router.get("/all-clients", auth, async (req, res) => {
     }
 });
 
+
 /* ===============================
    ASSIGN CLIENT TO EMPLOYEE (UPDATED FOR MULTIPLE TASKS)
+   NOW CHECKS DOCUMENTS FROM BOTH OLD AND NEW COLLECTIONS
 ================================ */
 router.post("/assign-client", auth, async (req, res) => {
     const { clientId, employeeId, year, month, tasks } = req.body;
@@ -486,38 +490,17 @@ router.post("/assign-client", auth, async (req, res) => {
         }
 
         // ===== CHECK IF CLIENT HAS DOCUMENTS FOR SELECTED MONTH =====
+        // CHECK BOTH OLD AND NEW COLLECTIONS
         let hasDocuments = false;
         const yearKey = numericYear.toString();
         const monthKey = numericMonth.toString();
 
-        // Debug: Check what type of structure we have
-        logToConsole("DEBUG", "DOCUMENT_STRUCTURE_CHECK", {
-            clientId,
-            hasDocumentsField: !!client.documents,
-            documentsType: client.documents ? client.documents.constructor.name : 'none',
-            isMap: client.documents instanceof Map,
-            mapSize: client.documents instanceof Map ? client.documents.size : 'N/A',
-            adminId: req.user.adminId
-        });
-
-        // ===== CHECK MAP STRUCTURE (YOUR ACTUAL STRUCTURE) =====
+        // 1. CHECK OLD client.documents (Map structure)
         if (client.documents && client.documents instanceof Map) {
-            // Get the year Map
             const yearMap = client.documents.get(yearKey);
-
             if (yearMap && yearMap instanceof Map) {
-                // Get the month data
                 const monthData = yearMap.get(monthKey);
-
                 if (monthData) {
-                    logToConsole("DEBUG", "FOUND_MONTH_DATA_IN_MAP", {
-                        yearKey,
-                        monthKey,
-                        monthDataExists: !!monthData,
-                        adminId: req.user.adminId
-                    });
-
-                    // Check standard categories
                     const standardCategories = ['sales', 'purchase', 'bank'];
                     for (const category of standardCategories) {
                         if (monthData[category] &&
@@ -525,16 +508,9 @@ router.post("/assign-client", auth, async (req, res) => {
                             Array.isArray(monthData[category].files) &&
                             monthData[category].files.length > 0) {
                             hasDocuments = true;
-                            logToConsole("DEBUG", "FOUND_FILES_IN_CATEGORY", {
-                                category,
-                                fileCount: monthData[category].files.length,
-                                adminId: req.user.adminId
-                            });
                             break;
                         }
                     }
-
-                    // Check other categories if no standard files found
                     if (!hasDocuments && monthData.other && Array.isArray(monthData.other)) {
                         for (const otherCat of monthData.other) {
                             if (otherCat.document &&
@@ -542,76 +518,50 @@ router.post("/assign-client", auth, async (req, res) => {
                                 Array.isArray(otherCat.document.files) &&
                                 otherCat.document.files.length > 0) {
                                 hasDocuments = true;
-                                logToConsole("DEBUG", "FOUND_FILES_IN_OTHER_CATEGORY", {
-                                    categoryName: otherCat.categoryName,
-                                    fileCount: otherCat.document.files.length,
-                                    adminId: req.user.adminId
-                                });
                                 break;
                             }
                         }
                     }
-                } else {
-                    logToConsole("DEBUG", "NO_MONTH_DATA_IN_MAP", {
-                        yearKey,
-                        monthKey,
-                        monthDataExists: false,
-                        adminId: req.user.adminId
-                    });
                 }
-            } else {
-                logToConsole("DEBUG", "NO_YEAR_MAP_IN_DOCUMENTS", {
-                    yearKey,
-                    yearMapExists: !!yearMap,
-                    yearMapIsMap: yearMap instanceof Map,
-                    adminId: req.user.adminId
-                });
             }
         }
-        // ===== CHECK PLAIN OBJECT STRUCTURE (BACKUP CHECK) =====
-        else if (client.documents && typeof client.documents === 'object' && !(client.documents instanceof Map)) {
-            // Check if documents is a plain object with year keys
-            if (client.documents[yearKey] && client.documents[yearKey][monthKey]) {
-                const monthData = client.documents[yearKey][monthKey];
 
-                // Check standard categories
-                const standardCategories = ['sales', 'purchase', 'bank'];
-                for (const category of standardCategories) {
-                    if (monthData[category] &&
-                        monthData[category].files &&
-                        Array.isArray(monthData[category].files) &&
-                        monthData[category].files.length > 0) {
-                        hasDocuments = true;
-                        break;
-                    }
-                }
+        // 2. IF NOT FOUND IN OLD, CHECK NEW ClientMonthlyData collection
+        if (!hasDocuments) {
+            try {
+                const ClientMonthlyData = require("../models/ClientMonthlyData");
+                const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
 
-                // Check other categories
-                if (!hasDocuments && monthData.other && Array.isArray(monthData.other)) {
-                    for (const otherCat of monthData.other) {
-                        if (otherCat.document &&
-                            otherCat.document.files &&
-                            Array.isArray(otherCat.document.files) &&
-                            otherCat.document.files.length > 0) {
+                if (newDoc && newDoc.months && Array.isArray(newDoc.months)) {
+                    const monthData = newDoc.months.find(m => m.year === numericYear && m.month === numericMonth);
+                    if (monthData) {
+                        // Check sales files
+                        if (monthData.sales && monthData.sales.files && monthData.sales.files.length > 0) {
                             hasDocuments = true;
-                            break;
+                        }
+                        // Check purchase files
+                        else if (monthData.purchase && monthData.purchase.files && monthData.purchase.files.length > 0) {
+                            hasDocuments = true;
+                        }
+                        // Check bank files
+                        else if (monthData.bank && monthData.bank.files && monthData.bank.files.length > 0) {
+                            hasDocuments = true;
+                        }
+                        // Check other categories
+                        else if (monthData.other && Array.isArray(monthData.other)) {
+                            for (const otherCat of monthData.other) {
+                                if (otherCat.document && otherCat.document.files && otherCat.document.files.length > 0) {
+                                    hasDocuments = true;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
+            } catch (newDocError) {
+                logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION", { error: newDocError.message });
             }
         }
-
-        // Log final document check result
-        logToConsole("DEBUG", "DOCUMENT_CHECK_FINAL_RESULT", {
-            clientId,
-            year: numericYear,
-            month: numericMonth,
-            hasDocuments,
-            documentsExist: !!client.documents,
-            structureType: client.documents ?
-                (client.documents instanceof Map ? 'Map' : 'Object') : 'None',
-            adminId: req.user.adminId
-        });
 
         if (!hasDocuments) {
             logToConsole("WARN", "NO_DOCUMENTS_FOR_MONTH", {
@@ -632,7 +582,7 @@ router.post("/assign-client", auth, async (req, res) => {
         const assignableTasks = [];
 
         for (const task of tasks) {
-            // Check if task already assigned to this client-month
+            // Check in CLIENT first
             const taskAlreadyAssigned = client.employeeAssignments.some(
                 (a) => a.year === numericYear &&
                     a.month === numericMonth &&
@@ -640,14 +590,16 @@ router.post("/assign-client", auth, async (req, res) => {
                     !a.isRemoved
             );
 
-            // Check if employee already has this task
-            const employeeAlreadyHasTask = employee.assignedClients.some(
+            // Check in NEW COLLECTION (EmployeeAssignment)
+            const EmployeeAssignment = require("../models/EmployeeAssignment");
+            const newDoc = await EmployeeAssignment.findOne({ employeeId: employee.employeeId });
+            const employeeAlreadyHasTask = newDoc?.assignedClients?.some(
                 (ac) => ac.clientId === clientId &&
                     ac.year === numericYear &&
                     ac.month === numericMonth &&
                     ac.task === task &&
                     !ac.isRemoved
-            );
+            ) || false;
 
             if (taskAlreadyAssigned || employeeAlreadyHasTask) {
                 alreadyAssignedTasks.push(task);
@@ -669,41 +621,12 @@ router.post("/assign-client", auth, async (req, res) => {
             });
         }
 
-        if (alreadyAssignedTasks.length > 0) {
-            logToConsole("WARN", "SOME_TASKS_ALREADY_ASSIGNED", {
-                clientId,
-                year: numericYear,
-                month: numericMonth,
-                alreadyAssignedTasks,
-                assignableTasks,
-                adminId: req.user.adminId
-            });
-        }
-
         const existingAssignments = client.employeeAssignments.filter(
-            a => a.year === numericYear &&
-                a.month === numericMonth &&
-                !a.isRemoved
+            a => a.year === numericYear && a.month === numericMonth && !a.isRemoved
         );
-
-        logToConsole("DEBUG", "VALIDATION_PASSED", {
-            clientId,
-            employeeId,
-            year: numericYear,
-            month: numericMonth,
-            assignableTasks,
-            alreadyAssignedTasks,
-            existingTasks: existingAssignments.map(a => a.task),
-            hasDocuments: true,
-            adminId: req.user.adminId
-        });
 
         // ===== PREPARE ASSIGNMENT OBJECTS FOR EACH TASK =====
         const assignmentDate = new Date();
-        const successfulAssignments = [];
-        const failedAssignments = [];
-
-        // Start with client assignments array
         const clientAssignments = [];
         const employeeAssignments = [];
 
@@ -720,7 +643,6 @@ router.post("/assign-client", auth, async (req, res) => {
                 accountingDone: false,
                 isRemoved: false
             };
-
             const employeeAssignment = {
                 clientId,
                 clientName: client.name,
@@ -733,69 +655,65 @@ router.post("/assign-client", auth, async (req, res) => {
                 accountingDone: false,
                 isRemoved: false
             };
-
             clientAssignments.push(clientAssignment);
             employeeAssignments.push(employeeAssignment);
         }
 
-        // ===== SAVE ALL TO CLIENT FIRST =====
+        // ===== SAVE TO CLIENT FIRST =====
         client.employeeAssignments.push(...clientAssignments);
         await client.save();
 
-        logToConsole("INFO", "CLIENT_TASKS_ASSIGNMENT_SAVED", {
-            clientId: client.clientId,
-            clientName: client.name,
-            employeeId,
-            employeeName: employee.name,
-            year: numericYear,
-            month: numericMonth,
-            tasksAssigned: assignableTasks,
-            totalTasksNow: client.employeeAssignments.filter(a =>
-                a.year === numericYear && a.month === numericMonth && !a.isRemoved
-            ).length,
-            adminId: req.user.adminId
-        });
-
+        // ===== [ONLY] SAVE TO NEW COLLECTION (NOT to Employee.assignedClients) =====
         try {
-            // ===== SAVE ALL TO EMPLOYEE =====
-            employee.assignedClients.push(...employeeAssignments);
-            await employee.save();
+            const EmployeeAssignment = require("../models/EmployeeAssignment");
+            let newDoc = await EmployeeAssignment.findOne({ employeeId: employee.employeeId });
 
-            logToConsole("INFO", "EMPLOYEE_TASKS_ASSIGNMENT_SAVED", {
-                employeeId: employee.employeeId,
-                employeeName: employee.name,
-                clientId,
-                clientName: client.name,
-                year: numericYear,
-                month: numericMonth,
-                tasksAssigned: assignableTasks,
-                adminId: req.user.adminId
-            });
-
-            successfulAssignments.push(...assignableTasks);
-        } catch (employeeSaveError) {
-            // ===== ROLLBACK CLIENT UPDATE (REMOVE ONLY THE NEWLY ADDED TASKS) =====
-            for (let i = 0; i < assignableTasks.length; i++) {
-                client.employeeAssignments.pop();
+            if (!newDoc) {
+                newDoc = new EmployeeAssignment({
+                    employeeId: employee.employeeId,
+                    employeeName: employee.name,
+                    employeeEmail: employee.email,
+                    assignedClients: []
+                });
             }
-            await client.save();
 
-            logToConsole("ERROR", "EMPLOYEE_SAVE_FAILED_ROLLBACK_DONE", {
-                clientId,
-                employeeId,
-                error: employeeSaveError.message,
+            // Update name/email
+            newDoc.employeeName = employee.name;
+            newDoc.employeeEmail = employee.email;
+
+            // Add new assignments
+            for (const empAssign of employeeAssignments) {
+                const existingIndex = newDoc.assignedClients.findIndex(
+                    a => a.clientId === empAssign.clientId &&
+                        a.year === empAssign.year &&
+                        a.month === empAssign.month &&
+                        a.task === empAssign.task
+                );
+                if (existingIndex !== -1) {
+                    newDoc.assignedClients[existingIndex] = { ...newDoc.assignedClients[existingIndex], ...empAssign };
+                } else {
+                    newDoc.assignedClients.push(empAssign);
+                }
+            }
+
+            await newDoc.save();
+            logToConsole("INFO", "SAVED_TO_NEW_COLLECTION_ONLY", {
+                employeeId: employee.employeeId,
                 tasks: assignableTasks,
-                adminId: req.user.adminId
+                message: "NOT saved to Employee.assignedClients (old array)"
             });
-
+        } catch (newCollectionError) {
+            logToConsole("ERROR", "NEW_COLLECTION_SAVE_FAILED", {
+                error: newCollectionError.message,
+                employeeId: employee.employeeId
+            });
             return res.status(500).json({
-                message: "Assignment failed, rollback completed",
-                error: process.env.NODE_ENV === "development" ? employeeSaveError.message : undefined,
-                failedTasks: assignableTasks
+                message: "Assignment failed. Could not save to new collection.",
+                error: process.env.NODE_ENV === "development" ? newCollectionError.message : undefined
             });
         }
 
-        // ===== ACTIVITY LOG (SINGLE LOG FOR BULK ASSIGNMENT) =====
+        // ===== ACTIVITY LOG =====
         try {
             await ActivityLog.create({
                 userName: req.user.name,
@@ -806,7 +724,7 @@ router.post("/assign-client", auth, async (req, res) => {
                 clientId,
                 clientName: client.name,
                 action: "TASKS_ASSIGNED_BULK",
-                details: `Tasks [${assignableTasks.join(', ')}] assigned to employee "${employee.name}" for client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')}) - Documents verified`,
+                details: `Tasks [${assignableTasks.join(', ')}] assigned to employee "${employee.name}" for client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')}) - Saved to new collection only`,
                 dateTime: new Date(),
                 metadata: {
                     tasks: assignableTasks,
@@ -814,78 +732,36 @@ router.post("/assign-client", auth, async (req, res) => {
                     month: numericMonth,
                     totalTasksAssigned: existingAssignments.length + assignableTasks.length,
                     documentsVerified: true,
-                    alreadyAssignedTasks: alreadyAssignedTasks.length > 0 ? alreadyAssignedTasks : undefined
+                    alreadyAssignedTasks: alreadyAssignedTasks.length > 0 ? alreadyAssignedTasks : undefined,
+                    storageLocation: "EmployeeAssignment collection (new)"
                 }
             });
-
-            logToConsole("INFO", "BULK_TASK_ASSIGNMENT_ACTIVITY_LOG_CREATED", {
-                action: "TASKS_ASSIGNED_BULK",
-                clientId,
-                employeeId,
-                tasks: assignableTasks,
-                adminId: req.user.adminId
-            });
         } catch (logError) {
-            logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
-                error: logError.message,
-                adminId: req.user.adminId
-            });
+            logToConsole("ERROR", "ACTIVITY_LOG_FAILED", { error: logError.message });
         }
 
-        // ===== SEND SINGLE NOTIFICATION EMAIL WITH ALL TASKS =====
+        // ===== SEND EMAIL =====
         try {
             const taskListHtml = assignableTasks.map(task => `<li><b>${task}</b></li>`).join('');
-
             await sendEmail(
                 employee.email,
                 `${assignableTasks.length} New Task${assignableTasks.length > 1 ? 's' : ''} Assigned`,
                 `
           <p>Hello ${employee.name},</p>
           <p>You have been assigned ${assignableTasks.length} new task${assignableTasks.length > 1 ? 's' : ''}.</p>
-          
           <h3>Tasks Assigned:</h3>
-          <ul>
-            ${taskListHtml}
-          </ul>
-          
+          <ul>${taskListHtml}</ul>
           <p><b>Client:</b> ${client.name}</p>
-          <p><b>Client ID:</b> ${clientId}</p>
           <p><b>Period:</b> ${numericYear}-${numericMonth.toString().padStart(2, '0')}</p>
           <p><b>Assigned By:</b> ${req.user.name}</p>
-          
           <p>Please check your dashboard and complete the assigned tasks.</p>
-          <p><small>Note: Client documents have been verified for this period.</small></p>
-          
-          ${alreadyAssignedTasks.length > 0 ? `
-          <p><small style="color: #666;">Note: These tasks were already assigned and were skipped: ${alreadyAssignedTasks.join(', ')}</small></p>
-          ` : ''}
+          ${alreadyAssignedTasks.length > 0 ? `<p><small>Note: These tasks were already assigned and were skipped: ${alreadyAssignedTasks.join(', ')}</small></p>` : ''}
         `
             );
-
-            logToConsole("INFO", "BULK_TASK_ASSIGNMENT_EMAIL_SENT", {
-                employeeEmail: employee.email,
-                tasks: assignableTasks,
-                adminId: req.user.adminId
-            });
         } catch (emailError) {
-            logToConsole("WARN", "BULK_TASK_ASSIGNMENT_EMAIL_FAILED", {
-                error: emailError.message,
-                adminId: req.user.adminId
-            });
+            logToConsole("WARN", "EMAIL_FAILED", { error: emailError.message });
         }
 
-        logToConsole("SUCCESS", "TASKS_ASSIGNED_SUCCESSFULLY", {
-            clientId,
-            employeeId,
-            tasksAssigned: assignableTasks,
-            tasksSkipped: alreadyAssignedTasks,
-            timestamp: assignmentDate.toISOString(),
-            assignedTasksCount: existingAssignments.length + assignableTasks.length,
-            documentsVerified: true,
-            adminId: req.user.adminId
-        });
-
-        // Prepare response message
         let responseMessage = `${assignableTasks.length} task${assignableTasks.length > 1 ? 's' : ''} assigned successfully`;
         if (alreadyAssignedTasks.length > 0) {
             responseMessage += `. ${alreadyAssignedTasks.length} task${alreadyAssignedTasks.length > 1 ? 's were' : ' was'} already assigned and skipped.`;
@@ -904,7 +780,8 @@ router.post("/assign-client", auth, async (req, res) => {
                 tasksSkipped: alreadyAssignedTasks,
                 assignedAt: assignmentDate,
                 totalTasksForMonth: existingAssignments.length + assignableTasks.length,
-                documentsVerified: true
+                documentsVerified: true,
+                storageLocation: "EmployeeAssignment collection (new)"
             }
         });
     } catch (error) {
@@ -914,13 +791,13 @@ router.post("/assign-client", auth, async (req, res) => {
             requestBody: req.body,
             adminId: req.user.adminId
         });
-
         res.status(500).json({
             message: "Error assigning tasks",
             error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }
 });
+
 
 // Helper function for month name
 function getMonthName(month) {
@@ -932,7 +809,8 @@ function getMonthName(month) {
 }
 
 /* ===============================
-   CHECK IF CLIENT HAS DOCUMENTS FOR MONTH (FIXED)
+   CHECK IF CLIENT HAS DOCUMENTS FOR MONTH
+   NOW CHECKS BOTH OLD AND NEW COLLECTIONS
 ================================ */
 router.get("/check-client-documents/:clientId", auth, async (req, res) => {
     try {
@@ -971,61 +849,16 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
             return res.status(404).json({ message: "Client not found" });
         }
 
-        // Check if client has documents structure (FIXED FOR MAPS)
-        if (!client.documents ||
-            (client.documents instanceof Map && client.documents.size === 0) ||
-            (typeof client.documents === 'object' && !(client.documents instanceof Map) && Object.keys(client.documents).length === 0)) {
-
-            logToConsole("INFO", "NO_DOCUMENTS_STRUCTURE_FOUND", {
-                clientId,
-                adminId: req.user.adminId
-            });
-
-            // Create activity log for checking documents
-            await ActivityLog.create({
-                userName: req.user.name,
-                role: "ADMIN",
-                adminId: req.user.adminId,
-                clientId,
-                clientName: client.name,
-                action: "CLIENT_DOCUMENTS_CHECKED",
-                details: `Admin checked documents for client "${client.name}" - No document structure found for ${numericYear}-${numericMonth.toString().padStart(2, '0')}`,
-                dateTime: new Date()  // FIXED: Use Date object instead of String
-            });
-
-            logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-                action: "CLIENT_DOCUMENTS_CHECKED",
-                clientId,
-                adminId: req.user.adminId
-            });
-
-            return res.json({
-                hasDocuments: false,
-                message: "Client has no document structure",
-                details: {
-                    clientId,
-                    clientName: client.name,
-                    year: numericYear,
-                    month: numericMonth,
-                    documentsExist: false
-                }
-            });
-        }
-
         let hasAnyDocuments = false;
         const documentCategories = [];
         const yearKey = numericYear.toString();
         const monthKey = numericMonth.toString();
 
-        // ===== CHECK MAP STRUCTURE (YOUR ACTUAL STRUCTURE) =====
-        if (client.documents instanceof Map) {
-            // Get the year Map
+        // ===== 1. CHECK OLD client.documents (Map structure) =====
+        if (client.documents && client.documents instanceof Map) {
             const yearMap = client.documents.get(yearKey);
-
             if (yearMap && yearMap instanceof Map) {
-                // Get the month data
                 const monthData = yearMap.get(monthKey);
-
                 if (monthData) {
                     // Check sales category
                     if (monthData.sales && monthData.sales.files && monthData.sales.files.length > 0) {
@@ -1034,7 +867,8 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
                             category: "sales",
                             fileCount: monthData.sales.files.length,
                             isLocked: monthData.sales.isLocked || false,
-                            structure: "map-year-month-category"
+                            structure: "map-year-month-category",
+                            source: "old"
                         });
                     }
 
@@ -1045,7 +879,8 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
                             category: "purchase",
                             fileCount: monthData.purchase.files.length,
                             isLocked: monthData.purchase.isLocked || false,
-                            structure: "map-year-month-category"
+                            structure: "map-year-month-category",
+                            source: "old"
                         });
                     }
 
@@ -1056,7 +891,8 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
                             category: "bank",
                             fileCount: monthData.bank.files.length,
                             isLocked: monthData.bank.isLocked || false,
-                            structure: "map-year-month-category"
+                            structure: "map-year-month-category",
+                            source: "old"
                         });
                     }
 
@@ -1069,7 +905,8 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
                                     category: `other: ${category.categoryName}`,
                                     fileCount: category.document.files.length,
                                     isLocked: category.document.isLocked || false,
-                                    structure: "map-year-month-category"
+                                    structure: "map-year-month-category",
+                                    source: "old"
                                 });
                             }
                         }
@@ -1077,59 +914,72 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
                 }
             }
         }
-        // ===== CHECK PLAIN OBJECT STRUCTURE =====
-        else if (client.documents && typeof client.documents === 'object' && !(client.documents instanceof Map)) {
-            // Structure: documents -> year -> month -> category
-            if (client.documents[yearKey] && client.documents[yearKey][monthKey]) {
-                const monthData = client.documents[yearKey][monthKey];
 
-                // Check sales category
-                if (monthData.sales && monthData.sales.files && monthData.sales.files.length > 0) {
-                    hasAnyDocuments = true;
-                    documentCategories.push({
-                        category: "sales",
-                        fileCount: monthData.sales.files.length,
-                        isLocked: monthData.sales.isLocked || false,
-                        structure: "object-year-month-category"
-                    });
-                }
+        // ===== 2. IF NOT FOUND IN OLD, CHECK NEW ClientMonthlyData collection =====
+        if (!hasAnyDocuments) {
+            try {
+                const ClientMonthlyData = require("../models/ClientMonthlyData");
+                const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
 
-                // Check purchase category
-                if (monthData.purchase && monthData.purchase.files && monthData.purchase.files.length > 0) {
-                    hasAnyDocuments = true;
-                    documentCategories.push({
-                        category: "purchase",
-                        fileCount: monthData.purchase.files.length,
-                        isLocked: monthData.purchase.isLocked || false,
-                        structure: "object-year-month-category"
-                    });
-                }
+                if (newDoc && newDoc.months && Array.isArray(newDoc.months)) {
+                    const monthData = newDoc.months.find(m => m.year === numericYear && m.month === numericMonth);
 
-                // Check bank category
-                if (monthData.bank && monthData.bank.files && monthData.bank.files.length > 0) {
-                    hasAnyDocuments = true;
-                    documentCategories.push({
-                        category: "bank",
-                        fileCount: monthData.bank.files.length,
-                        isLocked: monthData.bank.isLocked || false,
-                        structure: "object-year-month-category"
-                    });
-                }
-
-                // Check other categories
-                if (monthData.other && Array.isArray(monthData.other)) {
-                    for (const category of monthData.other) {
-                        if (category.document && category.document.files && category.document.files.length > 0) {
+                    if (monthData) {
+                        // Check sales category
+                        if (monthData.sales && monthData.sales.files && monthData.sales.files.length > 0) {
                             hasAnyDocuments = true;
                             documentCategories.push({
-                                category: `other: ${category.categoryName}`,
-                                fileCount: category.document.files.length,
-                                isLocked: category.document.isLocked || false,
-                                structure: "object-year-month-category"
+                                category: "sales",
+                                fileCount: monthData.sales.files.length,
+                                isLocked: monthData.sales.isLocked || false,
+                                structure: "new-collection-array",
+                                source: "new"
                             });
+                        }
+
+                        // Check purchase category
+                        if (monthData.purchase && monthData.purchase.files && monthData.purchase.files.length > 0) {
+                            hasAnyDocuments = true;
+                            documentCategories.push({
+                                category: "purchase",
+                                fileCount: monthData.purchase.files.length,
+                                isLocked: monthData.purchase.isLocked || false,
+                                structure: "new-collection-array",
+                                source: "new"
+                            });
+                        }
+
+                        // Check bank category
+                        if (monthData.bank && monthData.bank.files && monthData.bank.files.length > 0) {
+                            hasAnyDocuments = true;
+                            documentCategories.push({
+                                category: "bank",
+                                fileCount: monthData.bank.files.length,
+                                isLocked: monthData.bank.isLocked || false,
+                                structure: "new-collection-array",
+                                source: "new"
+                            });
+                        }
+
+                        // Check other categories
+                        if (monthData.other && Array.isArray(monthData.other)) {
+                            for (const category of monthData.other) {
+                                if (category.document && category.document.files && category.document.files.length > 0) {
+                                    hasAnyDocuments = true;
+                                    documentCategories.push({
+                                        category: `other: ${category.categoryName}`,
+                                        fileCount: category.document.files.length,
+                                        isLocked: category.document.isLocked || false,
+                                        structure: "new-collection-array",
+                                        source: "new"
+                                    });
+                                }
+                            }
                         }
                     }
                 }
+            } catch (newDocError) {
+                logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION", { error: newDocError.message });
             }
         }
 
@@ -1147,7 +997,7 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
                 documentCategories,
                 totalFiles: documentCategories.reduce((sum, cat) => sum + cat.fileCount, 0),
                 categoriesWithFiles: documentCategories.length,
-                structureType: client.documents instanceof Map ? 'Map' : 'Object'
+                structureType: client.documents instanceof Map ? 'Map + New Collection' : 'Object + New Collection'
             }
         };
 
@@ -1160,7 +1010,7 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
             clientName: client.name,
             action: "CLIENT_DOCUMENTS_CHECKED",
             details: `Admin checked documents for client "${client.name}" - ${hasAnyDocuments ? 'Documents found' : 'No documents'} for ${numericYear}-${numericMonth.toString().padStart(2, '0')}`,
-            dateTime: new Date(),  // FIXED: Use Date object instead of String
+            dateTime: new Date(),
             metadata: {
                 hasDocuments: hasAnyDocuments,
                 year: numericYear,
@@ -1174,15 +1024,6 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
             clientId,
             hasDocuments: hasAnyDocuments,
             categoriesCount: documentCategories.length,
-            structureFound: documentCategories[0]?.structure || "none",
-            structureType: client.documents instanceof Map ? 'Map' : 'Object',
-            adminId: req.user.adminId
-        });
-
-        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-            action: "CLIENT_DOCUMENTS_CHECKED",
-            clientId,
-            hasDocuments: hasAnyDocuments,
             adminId: req.user.adminId
         });
 
@@ -1202,13 +1043,14 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
     }
 });
 
+
 /* ===============================
    REMOVE ASSIGNMENT (UPDATED FOR TASK-SPECIFIC REMOVAL)
+   NOW WITH DUAL UPDATE TO NEW COLLECTION
 ================================ */
 router.delete("/remove-assignment", auth, async (req, res) => {
     const { clientId, employeeId, year, month, task } = req.body;
 
-    // ===== VALIDATION =====
     if (!clientId || !employeeId || !year || !month || !task) {
         logToConsole("WARN", "REMOVE_ASSIGNMENT_MISSING_FIELDS", {
             ...req.body,
@@ -1233,254 +1075,136 @@ router.delete("/remove-assignment", auth, async (req, res) => {
         const numericYear = parseInt(year);
         const numericMonth = parseInt(month);
 
-        // ===== FETCH CLIENT AND EMPLOYEE =====
         const client = await Client.findOne({ clientId });
         if (!client) {
-            logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_REMOVAL", {
-                clientId,
-                adminId: req.user.adminId
-            });
+            logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_REMOVAL", { clientId, adminId: req.user.adminId });
             return res.status(404).json({ message: "Client not found" });
         }
 
         const employee = await Employee.findOne({ employeeId });
         if (!employee) {
-            logToConsole("WARN", "EMPLOYEE_NOT_FOUND_FOR_REMOVAL", {
-                employeeId,
-                adminId: req.user.adminId
-            });
+            logToConsole("WARN", "EMPLOYEE_NOT_FOUND_FOR_REMOVAL", { employeeId, adminId: req.user.adminId });
             return res.status(404).json({ message: "Employee not found" });
         }
 
-        // ===== FIND SPECIFIC TASK ASSIGNMENT IN CLIENT =====
         const clientAssignment = client.employeeAssignments.find(
-            a => a.year === numericYear &&
-                a.month === numericMonth &&
-                a.employeeId === employeeId &&
-                a.task === task &&
-                !a.isRemoved
+            a => a.year === numericYear && a.month === numericMonth && a.employeeId === employeeId && a.task === task && !a.isRemoved
         );
 
         if (!clientAssignment) {
-            logToConsole("WARN", "TASK_ASSIGNMENT_NOT_FOUND_IN_CLIENT", {
-                clientId,
-                employeeId,
-                year: numericYear,
-                month: numericMonth,
-                task,
-                adminId: req.user.adminId
-            });
-            return res.status(404).json({
-                message: `Task "${task}" assignment not found for specified employee`
-            });
+            logToConsole("WARN", "TASK_ASSIGNMENT_NOT_FOUND_IN_CLIENT", { clientId, employeeId, year: numericYear, month: numericMonth, task, adminId: req.user.adminId });
+            return res.status(404).json({ message: `Task "${task}" assignment not found for specified employee` });
         }
 
-        // ===== CHECK IF ACCOUNTING IS DONE =====
         if (clientAssignment.accountingDone) {
-            logToConsole("WARN", "CANNOT_REMOVE_DONE_TASK", {
-                clientId,
-                employeeId,
-                task,
-                accountingDone: true,
-                accountingDoneAt: clientAssignment.accountingDoneAt,
-                adminId: req.user.adminId
-            });
-            return res.status(400).json({
-                message: `Cannot remove "${task}" assignment because it's already marked as DONE`
-            });
+            logToConsole("WARN", "CANNOT_REMOVE_DONE_TASK", { clientId, employeeId, task, adminId: req.user.adminId });
+            return res.status(400).json({ message: `Cannot remove "${task}" assignment because it's already marked as DONE` });
         }
 
-        // ===== FIND SPECIFIC TASK ASSIGNMENT IN EMPLOYEE =====
         const employeeAssignment = employee.assignedClients.find(
-            a => a.clientId === clientId &&
-                a.year === numericYear &&
-                a.month === numericMonth &&
-                a.task === task &&
-                !a.isRemoved
+            a => a.clientId === clientId && a.year === numericYear && a.month === numericMonth && a.task === task && !a.isRemoved
         );
 
         if (!employeeAssignment) {
-            logToConsole("WARN", "TASK_ASSIGNMENT_NOT_FOUND_IN_EMPLOYEE", {
-                clientId,
-                employeeId,
-                year: numericYear,
-                month: numericMonth,
-                task,
-                adminId: req.user.adminId
-            });
-            return res.status(404).json({
-                message: `Task "${task}" assignment not found in employee records`
-            });
+            logToConsole("WARN", "TASK_ASSIGNMENT_NOT_FOUND_IN_EMPLOYEE", { clientId, employeeId, year: numericYear, month: numericMonth, task, adminId: req.user.adminId });
+            return res.status(404).json({ message: `Task "${task}" assignment not found in employee records` });
         }
 
-        // ===== SAVE TO REMOVED ASSIGNMENTS HISTORY =====
+        // Save to history
         try {
             const removalDate = new Date();
             const originallyAssignedAt = clientAssignment.assignedAt;
-            const durationDays = originallyAssignedAt ?
-                Math.floor((removalDate - originallyAssignedAt) / (1000 * 60 * 60 * 24)) : null;
-
+            const durationDays = originallyAssignedAt ? Math.floor((removalDate - originallyAssignedAt) / (1000 * 60 * 60 * 24)) : null;
             await RemovedAssignment.create({
-                clientId,
-                clientName: client.name,
-                employeeId,
-                employeeName: employee.name,
-                year: numericYear,
-                month: numericMonth,
-                task: task,
-                originallyAssignedAt: clientAssignment.assignedAt,
-                originallyAssignedBy: clientAssignment.assignedBy,
-                adminName: clientAssignment.adminName,
-                removedAt: removalDate,
-                removedBy: req.user.adminId,
-                removerName: req.user.name,
-                removalReason: `Admin removed "${task}" assignment`,
-                wasAccountingDone: clientAssignment.accountingDone,
-                durationDays,
+                clientId, clientName: client.name, employeeId, employeeName: employee.name,
+                year: numericYear, month: numericMonth, task: task,
+                originallyAssignedAt: clientAssignment.assignedAt, originallyAssignedBy: clientAssignment.assignedBy,
+                adminName: clientAssignment.adminName, removedAt: removalDate, removedBy: req.user.adminId,
+                removerName: req.user.name, removalReason: `Admin removed "${task}" assignment`,
+                wasAccountingDone: clientAssignment.accountingDone, durationDays,
                 notes: `Task "${task}" removed by admin ${req.user.name}`
             });
-
-            logToConsole("INFO", "REMOVED_TASK_ASSIGNMENT_HISTORY_SAVED", {
-                clientId,
-                employeeId,
-                year: numericYear,
-                month: numericMonth,
-                task,
-                adminId: req.user.adminId
-            });
         } catch (historyError) {
-            logToConsole("ERROR", "REMOVED_TASK_ASSIGNMENT_HISTORY_FAILED", {
-                error: historyError.message,
-                adminId: req.user.adminId
-            });
+            logToConsole("ERROR", "REMOVED_TASK_ASSIGNMENT_HISTORY_FAILED", { error: historyError.message });
         }
 
-        // ===== MARK AS REMOVED IN CLIENT (SPECIFIC TASK ONLY) =====
+        // Mark as removed in CLIENT
         clientAssignment.isRemoved = true;
         clientAssignment.removedAt = new Date();
         clientAssignment.removedBy = req.user.adminId;
         clientAssignment.removalReason = `Admin removed "${task}" assignment`;
-
         await client.save();
 
-        // ===== MARK AS REMOVED IN EMPLOYEE (SPECIFIC TASK ONLY) =====
+        // Mark as removed in EMPLOYEE (OLD COLLECTION)
         employeeAssignment.isRemoved = true;
         employeeAssignment.removedAt = new Date();
         employeeAssignment.removedBy = req.user.adminId;
         employeeAssignment.removalReason = `Admin removed "${task}" assignment`;
-
         await employee.save();
 
-        logToConsole("SUCCESS", "TASK_ASSIGNMENT_REMOVED_SUCCESSFULLY", {
-            clientId,
-            clientName: client.name,
-            employeeId,
-            employeeName: employee.name,
-            year: numericYear,
-            month: numericMonth,
-            task,
-            removedBy: req.user.name,
-            remainingTasks: client.employeeAssignments.filter(a =>
-                a.year === numericYear && a.month === numericMonth && !a.isRemoved
-            ).length,
-            adminId: req.user.adminId
-        });
-
-        // ===== ACTIVITY LOG =====
+        // ===== [NEW] ALSO UPDATE NEW COLLECTION =====
         try {
-            await ActivityLog.create({
-                userName: req.user.name,
-                role: "ADMIN",
-                adminId: req.user.adminId,
-                employeeId,
-                employeeName: employee.name,
-                clientId,
-                clientName: client.name,
-                action: "TASK_ASSIGNMENT_REMOVED",
-                details: `Task "${task}" assignment removed: Employee "${employee.name}" from client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')})`,
-                dateTime: new Date(),  // FIXED: Use Date object instead of String
-                metadata: {
-                    task,
-                    year: numericYear,
-                    month: numericMonth,
-                    wasAccountingDone: false
+            const EmployeeAssignment = require("../models/EmployeeAssignment");
+            await EmployeeAssignment.updateOne(
+                { employeeId: employee.employeeId },
+                {
+                    $set: {
+                        "assignedClients.$[elem].isRemoved": true,
+                        "assignedClients.$[elem].removedAt": new Date(),
+                        "assignedClients.$[elem].removedBy": req.user.adminId,
+                        "assignedClients.$[elem].removalReason": `Admin removed "${task}" assignment`
+                    }
+                },
+                {
+                    arrayFilters: [{
+                        "elem.clientId": clientId,
+                        "elem.year": numericYear,
+                        "elem.month": numericMonth,
+                        "elem.task": task
+                    }]
                 }
-            });
-
-            logToConsole("INFO", "TASK_REMOVAL_ACTIVITY_LOG_CREATED", {
-                action: "TASK_ASSIGNMENT_REMOVED",
-                clientId,
-                employeeId,
-                task,
-                adminId: req.user.adminId
-            });
-        } catch (logError) {
-            logToConsole("ERROR", "TASK_REMOVAL_ACTIVITY_LOG_FAILED", {
-                error: logError.message,
-                adminId: req.user.adminId
-            });
+            );
+            logToConsole("INFO", "NEW_COLLECTION_UPDATE_SUCCESS", { employeeId: employee.employeeId, task });
+        } catch (newErr) {
+            logToConsole("WARN", "NEW_COLLECTION_UPDATE_FAILED", { error: newErr.message, employeeId: employee.employeeId });
         }
 
-        // ===== SEND NOTIFICATION EMAIL =====
-        try {
-            await sendEmail(
-                employee.email,
-                `Task Assignment Removed: ${task}`,
-                `
-          <p>Hello ${employee.name},</p>
-          <p>Your task assignment has been removed by admin.</p>
-          <p><b>Task:</b> ${task}</p>
-          <p><b>Client:</b> ${client.name}</p>
-          <p><b>Period:</b> ${numericYear}-${numericMonth.toString().padStart(2, '0')}</p>
-          <p><b>Removed By:</b> ${req.user.name}</p>
-          <p><b>Removed At:</b> ${new Date().toLocaleString("en-IN")}</p>
-          <p>This task assignment will no longer appear in your active tasks.</p>
-          <p><small>Note: Other tasks for this client-month may still be assigned to you or other employees.</small></p>
-        `
-            );
+        // Activity log
+        await ActivityLog.create({
+            userName: req.user.name, role: "ADMIN", adminId: req.user.adminId,
+            employeeId, employeeName: employee.name, clientId, clientName: client.name,
+            action: "TASK_ASSIGNMENT_REMOVED",
+            details: `Task "${task}" assignment removed: Employee "${employee.name}" from client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')})`,
+            dateTime: new Date(), metadata: { task, year: numericYear, month: numericMonth, wasAccountingDone: false }
+        });
 
-            logToConsole("INFO", "TASK_REMOVAL_EMAIL_SENT", {
-                employeeEmail: employee.email,
-                task,
-                adminId: req.user.adminId
-            });
+        // Send email
+        try {
+            await sendEmail(employee.email, `Task Assignment Removed: ${task}`, `
+                <p>Hello ${employee.name},</p>
+                <p>Your task assignment has been removed by admin.</p>
+                <p><b>Task:</b> ${task}</p>
+                <p><b>Client:</b> ${client.name}</p>
+                <p><b>Period:</b> ${numericYear}-${numericMonth.toString().padStart(2, '0')}</p>
+                <p><b>Removed By:</b> ${req.user.name}</p>
+                <p><b>Removed At:</b> ${new Date().toLocaleString("en-IN")}</p>
+            `);
         } catch (emailError) {
-            logToConsole("WARN", "TASK_REMOVAL_EMAIL_FAILED", {
-                error: emailError.message,
-                adminId: req.user.adminId
-            });
+            logToConsole("WARN", "EMAIL_FAILED", { error: emailError.message });
         }
 
         res.json({
             message: `Task "${task}" assignment removed successfully`,
             data: {
-                clientId,
-                clientName: client.name,
-                employeeId,
-                employeeName: employee.name,
-                year: numericYear,
-                month: numericMonth,
-                task,
-                removedAt: new Date(),
-                removedBy: req.user.name,
-                remainingTasksForMonth: client.employeeAssignments.filter(a =>
-                    a.year === numericYear && a.month === numericMonth && !a.isRemoved
-                ).length
+                clientId, clientName: client.name, employeeId, employeeName: employee.name,
+                year: numericYear, month: numericMonth, task,
+                removedAt: new Date(), removedBy: req.user.name,
+                remainingTasksForMonth: client.employeeAssignments.filter(a => a.year === numericYear && a.month === numericMonth && !a.isRemoved).length
             }
         });
-
     } catch (error) {
-        logToConsole("ERROR", "REMOVE_TASK_ASSIGNMENT_FAILED", {
-            error: error.message,
-            stack: error.stack,
-            adminId: req.user?.adminId,
-            requestBody: req.body
-        });
-
-        res.status(500).json({
-            message: "Error removing task assignment",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined
-        });
+        logToConsole("ERROR", "REMOVE_TASK_ASSIGNMENT_FAILED", { error: error.message, stack: error.stack, adminId: req.user?.adminId, requestBody: req.body });
+        res.status(500).json({ message: "Error removing task assignment", error: process.env.NODE_ENV === "development" ? error.message : undefined });
     }
 });
 
@@ -1558,15 +1282,7 @@ router.get("/client-tasks-status/:clientId", auth, async (req, res) => {
             return res.status(404).json({ message: "Client not found" });
         }
 
-        // DEBUG: Check client data structure
-        console.log("📊 CLIENT_DATA_STRUCTURE:", {
-            clientId: client.clientId,
-            clientName: client.name,
-            hasEmployeeAssignments: !!client.employeeAssignments,
-            assignmentsType: Array.isArray(client.employeeAssignments) ? 'array' : typeof client.employeeAssignments,
-            assignmentsCount: client.employeeAssignments?.length || 0,
-            assignmentsData: client.employeeAssignments?.slice(0, 5) || 'none'
-        });
+
 
         // SAFELY GET ASSIGNMENTS (FIXED NULL CHECK)
         const assignments = (client.employeeAssignments || []).filter(a => {
@@ -2015,78 +1731,207 @@ router.get("/employee-tasks/:employeeId", auth, async (req, res) => {
 });
 
 /* ===============================
-   GET ALL REMOVED ASSIGNMENTS (Optional - for admin view)
+   REMOVE ASSIGNMENT (UPDATED FOR TASK-SPECIFIC REMOVAL)
+   NOW CHECKS BOTH COLLECTIONS
 ================================ */
-router.get("/removed-assignments", auth, async (req, res) => {
+router.delete("/remove-assignment", auth, async (req, res) => {
+    const { clientId, employeeId, year, month, task } = req.body;
+
+    if (!clientId || !employeeId || !year || !month || !task) {
+        logToConsole("WARN", "REMOVE_ASSIGNMENT_MISSING_FIELDS", {
+            ...req.body,
+            adminId: req.user.adminId
+        });
+        return res.status(400).json({
+            message: "Missing required fields: clientId, employeeId, year, month, task"
+        });
+    }
+
     try {
-        logToConsole("INFO", "GET_REMOVED_ASSIGNMENTS_REQUEST", {
+        logToConsole("INFO", "REMOVE_TASK_ASSIGNMENT_REQUEST", {
             adminId: req.user.adminId,
-            adminName: req.user.name
+            adminName: req.user.name,
+            clientId,
+            employeeId,
+            year,
+            month,
+            task
         });
 
-        const { page = 1, limit = 50, clientId, employeeId, year, month } = req.query;
+        const numericYear = parseInt(year);
+        const numericMonth = parseInt(month);
 
-        const query = {};
-        if (clientId) query.clientId = clientId;
-        if (employeeId) query.employeeId = employeeId;
-        if (year) query.year = parseInt(year);
-        if (month) query.month = parseInt(month);
+        // ===== FETCH CLIENT =====
+        const client = await Client.findOne({ clientId });
+        if (!client) {
+            logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_REMOVAL", { clientId, adminId: req.user.adminId });
+            return res.status(404).json({ message: "Client not found" });
+        }
 
-        const removedAssignments = await RemovedAssignment.find(query)
-            .sort({ removedAt: -1 })
-            .skip((page - 1) * limit)
-            .limit(parseInt(limit));
+        // ===== FETCH EMPLOYEE =====
+        const employee = await Employee.findOne({ employeeId });
+        if (!employee) {
+            logToConsole("WARN", "EMPLOYEE_NOT_FOUND_FOR_REMOVAL", { employeeId, adminId: req.user.adminId });
+            return res.status(404).json({ message: "Employee not found" });
+        }
 
-        const total = await RemovedAssignment.countDocuments(query);
+        const EmployeeAssignment = require("../models/EmployeeAssignment");
+        let newDoc = await EmployeeAssignment.findOne({ employeeId: employee.employeeId });
 
-        logToConsole("INFO", "REMOVED_ASSIGNMENTS_FETCHED", {
-            count: removedAssignments.length,
-            total,
-            page,
-            limit,
-            adminId: req.user.adminId
-        });
+        let assignmentFound = false;
+        let removedFromNew = false;
+        let removedFromOld = false;
 
-        // Create activity log for viewing removed assignments
-        await ActivityLog.create({
-            userName: req.user.name,
-            role: "ADMIN",
-            adminId: req.user.adminId,
-            action: "REMOVED_ASSIGNMENTS_VIEWED",
-            details: `Admin viewed removed assignments - Page: ${page}, Limit: ${limit}, Total: ${total}`,
-            dateTime: new Date(),  // FIXED: Use Date object instead of String
-            metadata: {
-                page,
-                limit,
-                total,
-                filters: { clientId, employeeId, year, month }
+        // ===== FIRST: Try to remove from NEW COLLECTION =====
+        if (newDoc) {
+            const newAssignmentIndex = newDoc.assignedClients.findIndex(
+                a => a.clientId === clientId &&
+                    a.year === numericYear &&
+                    a.month === numericMonth &&
+                    a.task === task &&
+                    !a.isRemoved
+            );
+
+            if (newAssignmentIndex !== -1) {
+                // Check if accounting is done
+                if (newDoc.assignedClients[newAssignmentIndex].accountingDone) {
+                    logToConsole("WARN", "CANNOT_REMOVE_DONE_TASK_FROM_NEW", {
+                        clientId, employeeId, task,
+                        accountingDone: true
+                    });
+                    return res.status(400).json({
+                        message: `Cannot remove "${task}" assignment because it's already marked as DONE`
+                    });
+                }
+
+                newDoc.assignedClients[newAssignmentIndex].isRemoved = true;
+                newDoc.assignedClients[newAssignmentIndex].removedAt = new Date();
+                newDoc.assignedClients[newAssignmentIndex].removedBy = req.user.adminId;
+                newDoc.assignedClients[newAssignmentIndex].removalReason = `Admin removed "${task}" assignment`;
+                await newDoc.save();
+                assignmentFound = true;
+                removedFromNew = true;
+                logToConsole("INFO", "REMOVED_FROM_NEW_COLLECTION", { employeeId, task });
             }
+        }
+
+        // ===== SECOND: Try to remove from OLD COLLECTION =====
+        const oldAssignmentIndex = employee.assignedClients.findIndex(
+            a => a.clientId === clientId &&
+                a.year === numericYear &&
+                a.month === numericMonth &&
+                a.task === task &&
+                !a.isRemoved
+        );
+
+        if (oldAssignmentIndex !== -1) {
+            if (employee.assignedClients[oldAssignmentIndex].accountingDone) {
+                logToConsole("WARN", "CANNOT_REMOVE_DONE_TASK_FROM_OLD", {
+                    clientId, employeeId, task,
+                    accountingDone: true
+                });
+                if (!removedFromNew) {
+                    return res.status(400).json({
+                        message: `Cannot remove "${task}" assignment because it's already marked as DONE`
+                    });
+                }
+            } else {
+                employee.assignedClients[oldAssignmentIndex].isRemoved = true;
+                employee.assignedClients[oldAssignmentIndex].removedAt = new Date();
+                employee.assignedClients[oldAssignmentIndex].removedBy = req.user.adminId;
+                employee.assignedClients[oldAssignmentIndex].removalReason = `Admin removed "${task}" assignment`;
+                await employee.save();
+                assignmentFound = true;
+                removedFromOld = true;
+                logToConsole("INFO", "REMOVED_FROM_OLD_COLLECTION", { employeeId, task });
+            }
+        }
+
+        if (!assignmentFound) {
+            logToConsole("WARN", "TASK_ASSIGNMENT_NOT_FOUND_IN_EITHER", {
+                clientId, employeeId, year: numericYear, month: numericMonth, task
+            });
+            return res.status(404).json({
+                message: `Task "${task}" assignment not found for specified employee`
+            });
+        }
+
+        // ===== ALSO REMOVE FROM CLIENT =====
+        const clientAssignmentIndex = client.employeeAssignments.findIndex(
+            a => a.year === numericYear &&
+                a.month === numericMonth &&
+                a.employeeId === employeeId &&
+                a.task === task &&
+                !a.isRemoved
+        );
+
+        if (clientAssignmentIndex !== -1) {
+            client.employeeAssignments[clientAssignmentIndex].isRemoved = true;
+            client.employeeAssignments[clientAssignmentIndex].removedAt = new Date();
+            client.employeeAssignments[clientAssignmentIndex].removedBy = req.user.adminId;
+            client.employeeAssignments[clientAssignmentIndex].removalReason = `Admin removed "${task}" assignment`;
+            await client.save();
+            logToConsole("INFO", "REMOVED_FROM_CLIENT", { clientId, task });
+        }
+
+        // ===== SAVE TO REMOVED ASSIGNMENTS HISTORY =====
+        try {
+            await RemovedAssignment.create({
+                clientId, clientName: client.name, employeeId, employeeName: employee.name,
+                year: numericYear, month: numericMonth, task: task,
+                originallyAssignedAt: new Date(),
+                originallyAssignedBy: req.user.adminId,
+                adminName: req.user.name,
+                removedAt: new Date(),
+                removedBy: req.user.adminId,
+                removerName: req.user.name,
+                removalReason: `Admin removed "${task}" assignment`,
+                wasAccountingDone: false,
+                notes: `Task "${task}" removed by admin ${req.user.name}`
+            });
+        } catch (historyError) {
+            logToConsole("ERROR", "REMOVED_TASK_ASSIGNMENT_HISTORY_FAILED", { error: historyError.message });
+        }
+
+        // ===== ACTIVITY LOG =====
+        await ActivityLog.create({
+            userName: req.user.name, role: "ADMIN", adminId: req.user.adminId,
+            employeeId, employeeName: employee.name, clientId, clientName: client.name,
+            action: "TASK_ASSIGNMENT_REMOVED",
+            details: `Task "${task}" assignment removed: Employee "${employee.name}" from client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')})`,
+            dateTime: new Date(),
+            metadata: { task, year: numericYear, month: numericMonth, removedFromNew, removedFromOld }
         });
 
-        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-            action: "REMOVED_ASSIGNMENTS_VIEWED",
-            adminId: req.user.adminId
-        });
+        // ===== SEND EMAIL =====
+        try {
+            await sendEmail(employee.email, `Task Assignment Removed: ${task}`, `
+                <p>Hello ${employee.name},</p>
+                <p>Your task assignment has been removed by admin.</p>
+                <p><b>Task:</b> ${task}</p>
+                <p><b>Client:</b> ${client.name}</p>
+                <p><b>Period:</b> ${numericYear}-${numericMonth.toString().padStart(2, '0')}</p>
+                <p><b>Removed By:</b> ${req.user.name}</p>
+            `);
+        } catch (emailError) {
+            logToConsole("WARN", "EMAIL_FAILED", { error: emailError.message });
+        }
 
         res.json({
-            success: true,
-            data: removedAssignments,
-            pagination: {
-                page: parseInt(page),
-                limit: parseInt(limit),
-                total,
-                pages: Math.ceil(total / limit)
+            message: `Task "${task}" assignment removed successfully`,
+            data: {
+                clientId, clientName: client.name, employeeId, employeeName: employee.name,
+                year: numericYear, month: numericMonth, task,
+                removedAt: new Date(), removedBy: req.user.name,
+                removedFrom: removedFromNew ? "new_collection" : (removedFromOld ? "old_collection" : "none")
             }
         });
     } catch (error) {
-        logToConsole("ERROR", "GET_REMOVED_ASSIGNMENTS_FAILED", {
-            error: error.message,
-            stack: error.stack,
-            adminId: req.user.adminId
+        logToConsole("ERROR", "REMOVE_TASK_ASSIGNMENT_FAILED", {
+            error: error.message, stack: error.stack, adminId: req.user?.adminId, requestBody: req.body
         });
-
         res.status(500).json({
-            message: "Error fetching removed assignments",
+            message: "Error removing task assignment",
             error: process.env.NODE_ENV === "development" ? error.message : undefined
         });
     }

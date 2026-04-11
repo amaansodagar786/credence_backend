@@ -77,7 +77,9 @@ const financialStatementRequestSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// COMPOUND INDEX for overlapping date queries
+// ============= OPTIMIZED INDEXES =============
+
+// 1. COMPOUND INDEX for overlapping date queries (MOST IMPORTANT)
 financialStatementRequestSchema.index({
     clientId: 1,
     fromDate: 1,
@@ -85,9 +87,30 @@ financialStatementRequestSchema.index({
     status: 1
 });
 
-// Index for quick status queries
-financialStatementRequestSchema.index({ status: 1 });
+// 2. Index for quick status queries (used in filters)
+financialStatementRequestSchema.index({ status: 1, requestedAt: -1 });
+
+// 3. Index for searching by client email
+financialStatementRequestSchema.index({ clientEmail: 1 });
+
+// 4. Index for searching by client name
+financialStatementRequestSchema.index({ clientName: 1 });
+
+// 5. Index for date range searches
 financialStatementRequestSchema.index({ requestedAt: -1 });
+
+// 6. Text index for search functionality (if needed)
+financialStatementRequestSchema.index({
+    clientName: 'text',
+    clientEmail: 'text',
+    requestId: 'text'
+}, {
+    weights: {
+        clientName: 10,
+        clientEmail: 5,
+        requestId: 3
+    }
+});
 
 const FinancialStatementRequest = mongoose.model('FinancialStatementRequest', financialStatementRequestSchema);
 

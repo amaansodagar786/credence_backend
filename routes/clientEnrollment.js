@@ -1288,6 +1288,96 @@ const lockPastMonthsForClient = (currentYear, currentMonth) => {
   return documents;
 };
 
+
+
+
+/* ==============================================
+   HELPER FUNCTION TO CREATE MONTHS DATA FOR NEW COLLECTION
+   Returns months array for ClientMonthlyData collection
+============================================== */
+const createMonthsDataForNewClient = (currentYear, currentMonth) => {
+  const monthsArray = [];
+
+  // Create locked months for all past months (Jan to last month)
+  for (let month = 1; month < currentMonth; month++) {
+    monthsArray.push({
+      year: currentYear,
+      month: month,
+      sales: {
+        files: [],
+        isLocked: true,
+        lockedAt: new Date(),
+        lockedBy: "system-auto-lock",
+        categoryNotes: [{
+          note: `Month automatically locked (past month)`,
+          addedBy: "system",
+          addedAt: new Date(),
+          viewedBy: []
+        }],
+        wasLockedOnce: true
+      },
+      purchase: {
+        files: [],
+        isLocked: true,
+        lockedAt: new Date(),
+        lockedBy: "system-auto-lock",
+        categoryNotes: [{
+          note: `Month automatically locked (past month)`,
+          addedBy: "system",
+          addedAt: new Date(),
+          viewedBy: []
+        }],
+        wasLockedOnce: true
+      },
+      bank: {
+        files: [],
+        isLocked: true,
+        lockedAt: new Date(),
+        lockedBy: "system-auto-lock",
+        categoryNotes: [{
+          note: `Month automatically locked (past month)`,
+          addedBy: "system",
+          addedAt: new Date(),
+          viewedBy: []
+        }],
+        wasLockedOnce: true
+      },
+      other: [],
+      isLocked: true,
+      wasLockedOnce: true,
+      lockedAt: new Date(),
+      lockedBy: "system-auto-lock",
+      monthNotes: [{
+        note: `Complete month locked automatically (past month)`,
+        addedBy: "system",
+        addedAt: new Date(),
+        viewedBy: []
+      }],
+      accountingDone: false,
+      monthActiveStatus: "active"
+    });
+  }
+
+  // Create current month (unlocked)
+  monthsArray.push({
+    year: currentYear,
+    month: currentMonth,
+    sales: { files: [], isLocked: false, categoryNotes: [], wasLockedOnce: false },
+    purchase: { files: [], isLocked: false, categoryNotes: [], wasLockedOnce: false },
+    bank: { files: [], isLocked: false, categoryNotes: [], wasLockedOnce: false },
+    other: [],
+    isLocked: false,
+    wasLockedOnce: false,
+    monthNotes: [],
+    accountingDone: false,
+    monthActiveStatus: "active"
+  });
+
+  return monthsArray;
+};
+
+
+
 router.post("/action", auth, async (req, res) => {
   try {
     const { enrollId, action, rejectionReason } = req.body;
@@ -1463,7 +1553,7 @@ router.post("/action", auth, async (req, res) => {
     }
 
     // ============================================
-    // 3. APPROVE ENROLLMENT
+    // 3. APPROVE ENROLLMENT (UPDATED FOR NEW COLLECTION)
     // ============================================
     if (action === "APPROVE") {
       const existingClient = await Client.findOne({ email: enrollment.email });
@@ -1486,19 +1576,21 @@ router.post("/action", auth, async (req, res) => {
       const plainPassword = `${enrollment.firstName.trim()}@1234`;
       const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
-      // Auto-lock past months
+      // Auto-lock past months - create data for NEW collection
       const now = new Date();
       const currentYear = now.getFullYear();
       const currentMonth = now.getMonth() + 1;
 
-      logToConsole("INFO", "AUTO-LOCKING PAST MONTHS", {
+      logToConsole("INFO", "AUTO-LOCKING PAST MONTHS FOR NEW CLIENT", {
         currentYear,
         currentMonth,
         monthsToLock: currentMonth > 1 ? `January to ${currentMonth - 1}` : "No months to lock"
       });
 
-      const documents = lockPastMonthsForClient(currentYear, currentMonth);
+      // Create months data for NEW collection
+      const monthsData = createMonthsDataForNewClient(currentYear, currentMonth);
 
+      // Client gets EMPTY documents (no old structure)
       const clientData = {
         clientId,
         name: `${enrollment.firstName} ${enrollment.lastName}`,
@@ -1522,7 +1614,7 @@ router.post("/action", auth, async (req, res) => {
         currentPlan: enrollment.planSelected,
         enrollmentId: enrollment.enrollId,
         enrollmentDate: new Date(),
-        documents: documents,
+        documents: new Map(), // 👈 EMPTY Map - no old structure
         employeeAssignments: []
       };
 
@@ -1534,6 +1626,7 @@ router.post("/action", auth, async (req, res) => {
         autoLockedMonths: currentMonth > 1 ? `Months 1-${currentMonth - 1} locked` : "No months locked"
       });
 
+      // Create client account
       const client = await Client.create(clientData);
       logToConsole("INFO", "CLIENT_CREATED", {
         clientId: client.clientId,
@@ -1541,6 +1634,29 @@ router.post("/action", auth, async (req, res) => {
         adminId: req.user.adminId
       });
 
+      // ===== CREATE ENTRY IN NEW ClientMonthlyData COLLECTION =====
+      try {
+        const ClientMonthlyData = require("../models/ClientMonthlyData");
+        await ClientMonthlyData.create({
+          clientId: client.clientId,
+          clientName: client.name,
+          clientEmail: client.email,
+          months: monthsData  // 👈 Store locked months in NEW collection
+        });
+        logToConsole("INFO", "CLIENT_MONTHLY_DATA_CREATED", {
+          clientId: client.clientId,
+          monthsCount: monthsData.length,
+          lockedMonths: monthsData.filter(m => m.isLocked).length
+        });
+      } catch (monthlyDataError) {
+        logToConsole("ERROR", "CLIENT_MONTHLY_DATA_CREATION_FAILED", {
+          clientId: client.clientId,
+          error: monthlyDataError.message
+        });
+        // Don't fail client creation if this fails
+      }
+
+      // Update enrollment status
       enrollment.status = "APPROVED";
       enrollment.reviewedBy = req.user.adminId;
       enrollment.reviewedAt = new Date();
@@ -1555,9 +1671,6 @@ router.post("/action", auth, async (req, res) => {
 
       // ============================================
       // FETCH ACTIVE AGREEMENT PDF
-      // Used for: (1) consent record audit trail
-      //           (2) email attachment to client
-      // AWS URL stored in DB only — never sent to client
       // ============================================
       let pdfAttachment = null;
       let activePdfUrl = "";
@@ -1565,10 +1678,7 @@ router.post("/action", auth, async (req, res) => {
       try {
         const activePdf = await AgreementPdf.findOne({ isActive: true }).lean();
         if (activePdf) {
-          // Save URL for consent record (internal audit only)
           activePdfUrl = activePdf.fileUrl;
-
-          // Fetch as buffer for email attachment
           const fileResponse = await fetch(activePdf.fileUrl);
           const arrayBuffer = await fileResponse.arrayBuffer();
           const buffer = Buffer.from(arrayBuffer);
@@ -1586,24 +1696,18 @@ router.post("/action", auth, async (req, res) => {
         }
       } catch (pdfErr) {
         logToConsole("WARN", "AGREEMENT_PDF_FETCH_FAILED", { error: pdfErr.message });
-        // Don't fail approval if PDF fetch fails
       }
 
       // ============================================
       // CREATE CLIENT CONSENT RECORD
-      // Date, time, IP all taken from enrollment
-      // (when user originally submitted the form)
-      // agreementPdfUrl stored for audit — never exposed to client
       // ============================================
       try {
         const enrollmentDate = new Date(enrollment.createdAt);
-
         const consentDate = enrollmentDate.toLocaleDateString("en-GB", {
           day: "numeric",
           month: "long",
           year: "numeric"
         });
-
         const consentTime = enrollmentDate.toLocaleTimeString("en-IN", {
           hour: "2-digit",
           minute: "2-digit",
@@ -1622,7 +1726,7 @@ router.post("/action", auth, async (req, res) => {
               acceptAgreement: true,
               date: consentDate,
               time: consentTime,
-              agreementPdfUrl: activePdfUrl, // internal audit only, never sent to client
+              agreementPdfUrl: activePdfUrl,
               recordedAt: enrollmentDate
             }
           ]
@@ -1631,27 +1735,20 @@ router.post("/action", auth, async (req, res) => {
         logToConsole("INFO", "CLIENT_CONSENT_CREATED", {
           clientId,
           enrollId: enrollment.enrollId,
-          ipAddress: enrollment.ipAddress,
-          consentDate,
-          consentTime,
-          agreementPdfUrlStored: !!activePdfUrl
+          ipAddress: enrollment.ipAddress
         });
-
       } catch (consentErr) {
         logToConsole("ERROR", "CLIENT_CONSENT_CREATION_FAILED", {
           clientId,
           error: consentErr.message,
           enrollId: enrollment.enrollId
         });
-        // Don't fail approval if consent record creation fails
       }
 
       // ============================================
-      // SEND WELCOME EMAIL TO CLIENT (WITH PDF ATTACHED)
+      // SEND WELCOME EMAIL TO CLIENT
       // ============================================
       try {
-        logToConsole("DEBUG", "SENDING_WELCOME_EMAIL", { to: enrollment.email, clientId });
-
         const portalUrl = "https://jladgroup.fi/login";
         const attachments = pdfAttachment ? [pdfAttachment] : [];
 
@@ -1666,7 +1763,7 @@ router.post("/action", auth, async (req, res) => {
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <title>Account Approval Confirmation</title>
               <style>
-                body { font-family: 'Arial', 'Helvetica Neue', Helvetica, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; }
+                body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; }
                 .header { background: #111111; color: #ffffff; padding: 30px 20px; text-align: center; }
                 .header h1 { margin: 0; font-size: 26px; color: #7cd64b; }
                 .content { padding: 35px; background: #ffffff; }
@@ -1675,7 +1772,6 @@ router.post("/action", auth, async (req, res) => {
                 .important-box { background: #fff8e1; border-left: 4px solid #ffc107; padding: 20px; margin: 25px 0; border-radius: 0 8px 8px 0; }
                 .pdf-box { background: #f8f9fa; border: 1px solid #e9ecef; padding: 20px; margin: 25px 0; border-radius: 8px; border-left: 4px solid #7cd64b; }
                 .footer { background: #111111; color: #ffffff; padding: 25px; text-align: center; }
-                .contact-info { margin-top: 25px; padding-top: 25px; border-top: 1px solid #dee2e6; }
                 .login-button { display: inline-block; padding: 14px 32px; background: #7cd64b; color: #000000; text-decoration: none; border-radius: 4px; font-weight: 700; font-size: 16px; margin: 15px 0; }
                 .section-title { color: #2c3e50; border-bottom: 2px solid #7cd64b; padding-bottom: 10px; margin-bottom: 20px; font-size: 18px; }
                 .highlight { background: #7cd64b; color: #000000; padding: 3px 6px; border-radius: 3px; font-weight: 600; }
@@ -1688,7 +1784,7 @@ router.post("/action", auth, async (req, res) => {
             <body>
               <div class="header">
                 <h1>Credence Enterprise Accounting Services</h1>
-                <p style="margin-top: 5px; opacity: 0.9; font-size: 16px;">Professional Accounting | VAT Compliance | Business Advisory</p>
+                <p style="margin-top: 5px; opacity: 0.9;">Professional Accounting | VAT Compliance | Business Advisory</p>
               </div>
 
               <div class="content">
@@ -1700,18 +1796,9 @@ router.post("/action", auth, async (req, res) => {
                   <h3 class="section-title">🔐 Your Portal Access Credentials</h3>
                   <p><strong>Client Portal URL:</strong> <a href="${portalUrl}" style="color: #7cd64b; text-decoration: none;">${portalUrl}</a></p>
                   <table>
-                    <tr>
-                      <th>Email Address</th>
-                      <td>${enrollment.email}</td>
-                    </tr>
-                    <tr>
-                      <th>Temporary Password</th>
-                      <td><strong>${plainPassword}</strong></td>
-                    </tr>
-                    <tr>
-                      <th>Client ID</th>
-                      <td>${clientId}</td>
-                    </tr>
+                    <tr><th>Email Address</th><td>${enrollment.email}</td></tr>
+                    <tr><th>Temporary Password</th><td><strong>${plainPassword}</strong></td></tr>
+                    <tr><th>Client ID</th><td>${clientId}</td></tr>
                   </table>
                   <div style="text-align: center; margin-top: 20px;">
                     <a href="${portalUrl}" class="login-button">Login to Client Portal</a>
@@ -1724,30 +1811,12 @@ router.post("/action", auth, async (req, res) => {
                 <div class="client-info">
                   <h3 class="section-title">📋 Your Account Details</h3>
                   <table>
-                    <tr>
-                      <th>Application Approved On</th>
-                      <td>${currentDate} at ${currentTime} EET/EEST</td>
-                    </tr>
-                    <tr>
-                      <th>Approved By</th>
-                      <td>${req.user.name || "Administrator"}</td>
-                    </tr>
-                    <tr>
-                      <th>Business Name</th>
-                      <td>${enrollment.businessName || "Not specified"}</td>
-                    </tr>
-                    <tr>
-                      <th>Selected Plan</th>
-                      <td><strong>${enrollment.planSelected}</strong></td>
-                    </tr>
-                    <tr>
-                      <th>VAT Period</th>
-                      <td>${enrollment.vatPeriod || "Not specified"}</td>
-                    </tr>
-                    <tr>
-                      <th>Enrollment ID</th>
-                      <td>${enrollment.enrollId}</td>
-                    </tr>
+                    <tr><th>Application Approved On</th><td>${currentDate} at ${currentTime} EET/EEST</td></tr>
+                    <tr><th>Approved By</th><td>${req.user.name || "Administrator"}</td></tr>
+                    <tr><th>Business Name</th><td>${enrollment.businessName || "Not specified"}</td></tr>
+                    <tr><th>Selected Plan</th><td><strong>${enrollment.planSelected}</strong></td></tr>
+                    <tr><th>VAT Period</th><td>${enrollment.vatPeriod || "Not specified"}</td></tr>
+                    <tr><th>Enrollment ID</th><td>${enrollment.enrollId}</td></tr>
                   </table>
                 </div>
 
@@ -1781,18 +1850,11 @@ router.post("/action", auth, async (req, res) => {
               </div>
 
               <div class="footer">
-                <p style="font-size: 18px; margin-bottom: 10px;"><strong>Credence Enterprise Accounting Services</strong></p>
-                <p style="margin-bottom: 15px; opacity: 0.9;">Professional Accounting Solutions for Growing Businesses</p>
-                <p style="font-size: 14px; opacity: 0.8; margin-bottom: 5px;">
-                  VAT Compliance | Financial Reporting | Business Advisory | Tax Planning
-                </p>
+                <p><strong>Credence Enterprise Accounting Services</strong></p>
+                <p>Professional Accounting | VAT Compliance | Business Advisory</p>
                 <div class="dev-info">Developed by Vapautus Media Private Limited</div>
-                <p style="font-size: 12px; margin-top: 20px; opacity: 0.7;">
+                <p style="font-size: 12px; margin-top: 10px;">
                   © ${new Date().getFullYear()} Credence Enterprise Accounting Services. All rights reserved.<br>
-                  This is an automated email. Please do not reply directly to this message.<br>
-                  Email sent to: ${enrollment.email}
-                </p>
-                <p style="font-size: 12px; margin-top: 10px; color: #7cd64b;">
                   Please retain this email and the attached agreement for your records.
                 </p>
               </div>
@@ -1808,15 +1870,12 @@ router.post("/action", auth, async (req, res) => {
           enrollId: enrollment.enrollId,
           agreementPdfAttached: !!pdfAttachment
         });
-
       } catch (emailError) {
         logToConsole("ERROR", "WELCOME_EMAIL_FAILED", {
           email: enrollment.email,
           error: emailError.message,
-          stack: emailError.stack,
           enrollId: enrollment.enrollId
         });
-        // Don't fail the request if email fails
       }
 
       await ActivityLog.create({
@@ -1826,13 +1885,12 @@ router.post("/action", auth, async (req, res) => {
         enrollId,
         clientId,
         action: "CLIENT_APPROVED",
-        details: `Client approved and account created for ${enrollment.planSelected} plan. Auto-locked past months: ${currentMonth > 1 ? `Months 1-${currentMonth - 1}` : 'None'}`,
+        details: `Client approved and account created for ${enrollment.planSelected} plan. Data stored in new ClientMonthlyData collection.`,
         metadata: {
           clientName: clientData.name,
           planSelected: clientData.planSelected,
           email: clientData.email,
-          autoLockedMonths: currentMonth > 1 ? `January to ${new Date(currentYear, currentMonth - 2).toLocaleString('default', { month: 'long' })}` : 'None',
-          currentMonth: new Date(currentYear, currentMonth - 1).toLocaleString('default', { month: 'long' })
+          autoLockedMonths: currentMonth > 1 ? `January to ${new Date(currentYear, currentMonth - 2).toLocaleString('default', { month: 'long' })}` : 'None'
         }
       });
 
@@ -1858,7 +1916,8 @@ router.post("/action", auth, async (req, res) => {
           lockedMonths: currentMonth > 1 ? Array.from({ length: currentMonth - 1 }, (_, i) => i + 1) : [],
           currentMonth: currentMonth,
           currentYear: currentYear,
-          message: currentMonth > 1 ? `Months January to ${new Date(currentYear, currentMonth - 2).toLocaleString('default', { month: 'long' })} have been automatically locked` : "No past months to lock"
+          message: currentMonth > 1 ? `Months January to ${new Date(currentYear, currentMonth - 2).toLocaleString('default', { month: 'long' })} have been automatically locked` : "No past months to lock",
+          storageLocation: "ClientMonthlyData collection (new)"
         }
       });
     }

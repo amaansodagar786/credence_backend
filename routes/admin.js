@@ -7,6 +7,7 @@ const ActivityLog = require("../models/ActivityLog");
 const auth = require("../middleware/authMiddleware");
 const adminOnly = require("../middleware/adminMiddleware");
 const EmployeeTaskLog = require("../models/EmployeeTaskLog");
+const ClientMonthlyData = require("../models/ClientMonthlyData");
 
 const router = express.Router();
 
@@ -22,14 +23,13 @@ const logToConsole = (type, operation, data) => {
     data
   };
 
-  // Color-coded console output for better visibility
   const colors = {
-    INFO: '\x1b[36m',    // Cyan
-    SUCCESS: '\x1b[32m', // Green
-    WARN: '\x1b[33m',    // Yellow
-    ERROR: '\x1b[31m',   // Red
-    DEBUG: '\x1b[35m',   // Magenta
-    RESET: '\x1b[0m'     // Reset
+    INFO: '\x1b[36m',
+    SUCCESS: '\x1b[32m',
+    WARN: '\x1b[33m',
+    ERROR: '\x1b[31m',
+    DEBUG: '\x1b[35m',
+    RESET: '\x1b[0m'
   };
 
   const color = colors[type] || colors.RESET;
@@ -38,12 +38,85 @@ const logToConsole = (type, operation, data) => {
   return logEntry;
 };
 
+// Helper function to get month data from BOTH collections
+const getMonthDataFromBoth = async (clientId, year, month) => {
+  const numericYear = parseInt(year);
+  const numericMonth = parseInt(month);
+
+  // FIRST: Check NEW ClientMonthlyData collection
+  try {
+    const newDoc = await ClientMonthlyData.findOne({ clientId });
+    if (newDoc && newDoc.months) {
+      const foundMonth = newDoc.months.find(m => m.year === numericYear && m.month === numericMonth);
+      if (foundMonth) {
+        return { data: foundMonth, source: 'new', doc: newDoc, monthIndex: newDoc.months.findIndex(m => m.year === numericYear && m.month === numericMonth) };
+      }
+    }
+  } catch (err) {
+    logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION", { error: err.message });
+  }
+
+  return { data: null, source: null, doc: null, monthIndex: -1 };
+};
+
+// Helper function to save/update month data in the appropriate collection
+const saveMonthDataToBoth = async (clientId, year, month, monthData, existingSource, context) => {
+  const numericYear = parseInt(year);
+  const numericMonth = parseInt(month);
+
+  if (existingSource === 'old') {
+    // Update in OLD client.documents
+    if (context.client) {
+      const y = String(numericYear);
+      const m = String(numericMonth);
+      if (!context.client.documents.has(y)) {
+        context.client.documents.set(y, new Map());
+      }
+      context.client.documents.get(y).set(m, monthData);
+      await context.client.save();
+      logToConsole("INFO", "SAVED_TO_OLD_COLLECTION", { clientId, year, month });
+      return { savedTo: 'old' };
+    }
+  } else {
+    // Save to NEW collection
+    let doc = context.newDoc;
+    if (!doc) {
+      doc = await ClientMonthlyData.findOne({ clientId });
+      if (!doc) {
+        const client = await Client.findOne({ clientId });
+        doc = new ClientMonthlyData({
+          clientId: clientId,
+          clientName: client?.name || '',
+          clientEmail: client?.email || '',
+          months: []
+        });
+      }
+    }
+
+    const existingIndex = doc.months.findIndex(m => m.year === numericYear && m.month === numericMonth);
+
+    if (existingIndex !== -1) {
+      doc.months[existingIndex] = monthData;
+    } else {
+      doc.months.push(monthData);
+    }
+
+    doc.months.sort((a, b) => {
+      if (a.year !== b.year) return a.year - b.year;
+      return a.month - b.month;
+    });
+
+    await doc.save();
+    logToConsole("INFO", "SAVED_TO_NEW_COLLECTION", { clientId, year, month });
+    return { savedTo: 'new' };
+  }
+};
+
 /* ===============================
-   HELPER: SEND EMAIL TO CLIENT - FIXED
+   HELPER: SEND EMAIL TO CLIENT
 ================================ */
 const sendEmailToClient = async (client, actionType, additionalInfo = {}) => {
   try {
-    // Import email utility
     const sendEmail = require("../utils/sendEmail");
 
     if (!client.email) {
@@ -54,18 +127,9 @@ const sendEmailToClient = async (client, actionType, additionalInfo = {}) => {
       return { sent: false, reason: "No client email" };
     }
 
-    // CORRECTLY determine if it's lock or unlock
     const isLock = actionType === "MONTH_LOCKED" || actionType === "CATEGORY_LOCKED";
     const isMonth = actionType === "MONTH_LOCKED" || actionType === "MONTH_UNLOCKED";
 
-    console.log("🔍 EMAIL DEBUG:", {
-      actionType,
-      isLock,
-      isMonth,
-      additionalInfo
-    });
-
-    // Create subject line - FIXED
     let subject = "";
     let categoryName = additionalInfo.categoryName || additionalInfo.categoryType || "";
 
@@ -75,7 +139,6 @@ const sendEmailToClient = async (client, actionType, additionalInfo = {}) => {
       subject = `${isLock ? "🔒 Locked" : "🔓 Unlocked"}: ${categoryName} - ${client.name}`;
     }
 
-    // Simple email content - FIXED
     const emailHtml = `
       <!DOCTYPE html>
       <html>
@@ -107,23 +170,19 @@ const sendEmailToClient = async (client, actionType, additionalInfo = {}) => {
           </div>
           <div class="content">
             <p>Dear ${client.name},</p>
-            
             <div class="action-box">
               <p><strong>Status:</strong> ${isLock ? 'Locked' : 'Unlocked'}</p>
               ${additionalInfo.month ? `<p><strong>Period:</strong> ${additionalInfo.month}/${additionalInfo.year}</p>` : ''}
               ${categoryName ? `<p><strong>Category:</strong> ${categoryName}</p>` : ''}
               <p><strong>Date:</strong> ${new Date().toLocaleString("en-IN")}</p>
             </div>
-            
             <p>
               ${isLock
         ? 'Your documents have been locked and are now being processed by our accounting team.'
         : 'Your documents have been unlocked. You can now upload new files or make changes.'
       }
             </p>
-            
             <p>Thank you for using our Credence Enterprise Accounting Services.</p>
-            
             <div class="footer">
               <p>This is an automated notification from Credence Enterprise Accounting Services.</p>
             </div>
@@ -154,10 +213,8 @@ const sendEmailToClient = async (client, actionType, additionalInfo = {}) => {
   }
 };
 
-// Old log function for compatibility (saves to ActivityLog AND logs to console)
 const log = async (name, adminId, action, details) => {
   try {
-    // Save to ActivityLog collection
     await ActivityLog.create({
       userName: name,
       role: "ADMIN",
@@ -167,7 +224,6 @@ const log = async (name, adminId, action, details) => {
       dateTime: new Date()
     });
 
-    // Also log to console
     logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
       userName: name,
       adminId: adminId,
@@ -191,7 +247,6 @@ router.post("/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // Console log: Admin registration attempt
     logToConsole("INFO", "ADMIN_REGISTER_REQUEST", {
       email,
       ip: req.ip,
@@ -205,7 +260,6 @@ router.post("/register", async (req, res) => {
         password: !!password
       });
 
-      // Save warning to ActivityLog
       await log("SYSTEM", "SYSTEM", "ADMIN_REGISTER_VALIDATION_FAILED", `Missing fields for admin register: ${email}`);
 
       return res.status(400).json({ message: "All fields are required" });
@@ -215,29 +269,24 @@ router.post("/register", async (req, res) => {
     if (exists) {
       logToConsole("WARN", "ADMIN_ALREADY_EXISTS", { email });
 
-      // Save warning to ActivityLog
       await log("SYSTEM", "SYSTEM", "ADMIN_REGISTER_DUPLICATE", `Admin already exists: ${email}`);
 
       return res.status(400).json({ message: "Admin exists" });
     }
 
-    // Console log: Creating admin
     logToConsole("INFO", "CREATING_ADMIN_ACCOUNT", { name, email });
 
     const hashed = await bcrypt.hash(password, 10);
     const admin = await Admin.create({ name, email, password: hashed });
 
-    // Console log: Admin created
     logToConsole("SUCCESS", "ADMIN_CREATED_SUCCESSFULLY", {
       adminId: admin._id,
       name: admin.name,
       email: admin.email
     });
 
-    // Save success to ActivityLog
     await log(name, admin.adminId || admin._id.toString(), "ADMIN_REGISTER", `Admin ${email} registered successfully`);
 
-    // Console log: Registration complete
     logToConsole("SUCCESS", "ADMIN_REGISTRATION_COMPLETE", {
       name,
       email,
@@ -247,7 +296,6 @@ router.post("/register", async (req, res) => {
     res.json({ message: "Admin registered" });
 
   } catch (error) {
-    // Console log: Registration error
     logToConsole("ERROR", "ADMIN_REGISTER_ERROR", {
       error: error.message,
       stack: error.stack,
@@ -256,7 +304,6 @@ router.post("/register", async (req, res) => {
       body: req.body
     });
 
-    // Save error to ActivityLog
     await log("SYSTEM", "SYSTEM", "ADMIN_REGISTER_ERROR", `Error registering admin: ${error.message}`);
 
     res.status(500).json({
@@ -274,7 +321,6 @@ router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Console log: Admin login attempt
     logToConsole("INFO", "ADMIN_LOGIN_REQUEST", {
       email,
       ip: req.ip,
@@ -287,7 +333,6 @@ router.post("/login", async (req, res) => {
         password: !!password
       });
 
-      // Save warning to ActivityLog
       await log("SYSTEM", "SYSTEM", "ADMIN_LOGIN_VALIDATION_FAILED", `Missing credentials for admin login: ${email}`);
 
       return res.status(400).json({ message: "Email and password are required" });
@@ -297,22 +342,19 @@ router.post("/login", async (req, res) => {
     if (!admin) {
       logToConsole("WARN", "ADMIN_NOT_FOUND", { email });
 
-      // Save warning to ActivityLog
       await log("SYSTEM", "SYSTEM", "ADMIN_LOGIN_NOT_FOUND", `Admin not found: ${email}`);
 
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    // ===== DEBUG: Check what's actually in admin document =====
     console.log("DEBUG ADMIN DATA:", {
       _id: admin._id,
-      adminId: admin.adminId, // This should be "a22c72f6-9f23-4200-ba88-941290e300dc"
+      adminId: admin.adminId,
       hasAdminIdField: !!admin.adminId,
       name: admin.name,
       email: admin.email
     });
 
-    // Console log: Admin found
     logToConsole("DEBUG", "ADMIN_FOUND", {
       _id: admin._id,
       adminId: admin.adminId,
@@ -326,20 +368,16 @@ router.post("/login", async (req, res) => {
         adminId: admin._id
       });
 
-      // Save warning to ActivityLog
       await log(admin.name, admin.adminId || admin._id.toString(), "ADMIN_LOGIN_FAILED", `Invalid password attempt for admin: ${email}`);
 
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    // Console log: Password match successful
     logToConsole("SUCCESS", "ADMIN_PASSWORD_MATCH", {
       adminId: admin._id,
       name: admin.name
     });
 
-    // ===== FIXED JWT GENERATION =====
-    // Use admin.adminId if it exists, otherwise fallback to admin._id
     const tokenAdminId = admin.adminId || admin._id.toString();
 
     console.log("JWT PAYLOAD WILL CONTAIN:", {
@@ -351,20 +389,18 @@ router.post("/login", async (req, res) => {
 
     const token = jwt.sign(
       {
-        adminId: tokenAdminId, // This should be the UUID
+        adminId: tokenAdminId,
         name: admin.name,
         role: "ADMIN",
-        email: admin.email // Add email for extra verification
+        email: admin.email
       },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
-    // ===== DEBUG: Verify what's in the token =====
     const decodedToken = jwt.decode(token);
     console.log("ACTUAL JWT DECODED:", decodedToken);
 
-    // Console log: JWT token created
     logToConsole("DEBUG", "ADMIN_JWT_TOKEN_CREATED", {
       adminIdInToken: decodedToken.adminId,
       adminIdFromDB: admin.adminId,
@@ -380,19 +416,16 @@ router.post("/login", async (req, res) => {
       maxAge: 24 * 60 * 60 * 1000
     });
 
-    // Console log: Cookie set
     logToConsole("INFO", "ADMIN_COOKIE_SET", {
       adminId: admin._id,
       cookieName: "accessToken"
     });
 
-    // Save success to ActivityLog
     await log(admin.name, admin.adminId || admin._id.toString(), "ADMIN_LOGIN", "Admin logged in successfully");
 
-    // Console log: Login successful
     logToConsole("SUCCESS", "ADMIN_LOGIN_SUCCESS", {
       adminId: admin._id,
-      adminUUID: admin.adminId, // Add UUID to log
+      adminUUID: admin.adminId,
       name: admin.name,
       email: admin.email,
       timestamp: new Date().toISOString()
@@ -403,12 +436,11 @@ router.post("/login", async (req, res) => {
       admin: {
         name: admin.name,
         email: admin.email,
-        adminId: admin.adminId || admin._id // Send both to frontend for debugging
+        adminId: admin.adminId || admin._id
       }
     });
 
   } catch (error) {
-    // Console log: Login error
     logToConsole("ERROR", "ADMIN_LOGIN_ERROR", {
       error: error.message,
       stack: error.stack,
@@ -417,7 +449,6 @@ router.post("/login", async (req, res) => {
       email: req.body?.email
     });
 
-    // Save error to ActivityLog
     await log("SYSTEM", "SYSTEM", "ADMIN_LOGIN_ERROR", `Error during admin login: ${error.message}`);
 
     res.status(500).json({
@@ -429,7 +460,7 @@ router.post("/login", async (req, res) => {
 });
 
 /* ===============================
-   CHECK ADMIN LOGIN (GET CURRENT USER)
+   CHECK ADMIN LOGIN
 ================================ */
 router.get("/me", auth, async (req, res) => {
   try {
@@ -439,7 +470,6 @@ router.get("/me", auth, async (req, res) => {
     console.log("req.user.id:", req.user?.id);
     console.log("req.user type:", typeof req.user?.adminId);
 
-    // Console log: Admin auth check request
     logToConsole("INFO", "ADMIN_AUTH_CHECK_REQUEST", {
       adminId: req.user?.adminId,
       adminName: req.user?.name,
@@ -454,10 +484,8 @@ router.get("/me", auth, async (req, res) => {
         adminName: req.user.name
       });
 
-      // Save error to ActivityLog
       await log("SYSTEM", req.user?.adminId || "SYSTEM", "ADMIN_NOT_FOUND_IN_DB", `Admin not found in database: ${req.user.adminId}`);
 
-      // Clear invalid cookie
       res.clearCookie("accessToken");
 
       return res.status(404).json({
@@ -466,20 +494,17 @@ router.get("/me", auth, async (req, res) => {
       });
     }
 
-    // Console log: Admin data fetched
     logToConsole("SUCCESS", "ADMIN_DATA_FETCHED", {
       adminId: admin._id,
       name: admin.name,
       email: admin.email
     });
 
-    // Save success to ActivityLog
     await log(admin.name, admin.adminId || admin._id.toString(), "ADMIN_AUTH_CHECK", "Admin authentication checked successfully");
 
     res.json(admin);
 
   } catch (error) {
-    // Console log: Auth check error
     logToConsole("ERROR", "ADMIN_ME_ENDPOINT_ERROR", {
       error: error.message,
       stack: error.stack,
@@ -488,7 +513,6 @@ router.get("/me", auth, async (req, res) => {
       adminId: req.user?.adminId
     });
 
-    // Save error to ActivityLog
     await log("SYSTEM", req.user?.adminId || "SYSTEM", "ADMIN_AUTH_CHECK_ERROR", `Error checking admin authentication: ${error.message}`);
 
     res.status(500).json({
@@ -541,76 +565,10 @@ router.post("/logout", async (req, res) => {
 });
 
 /* ===============================
-   GET ALL EMPLOYEE TASK LOGS (ADMIN ONLY)
-================================ */
-router.get("/task-logs", auth, async (req, res) => {
-  try {
-    // Console log: Admin task logs request
-    logToConsole("INFO", "ADMIN_TASK_LOGS_REQUEST", {
-      adminId: req.user.adminId,
-      adminName: req.user.name,
-      ip: req.ip
-    });
-
-    // Console log: Fetching task logs
-    logToConsole("INFO", "FETCHING_EMPLOYEE_TASK_LOGS", {
-      adminId: req.user.adminId
-    });
-
-    const logs = await EmployeeTaskLog.find()
-      .sort({ createdAt: -1 });
-
-    // Console log: Task logs fetched
-    logToConsole("SUCCESS", "TASK_LOGS_FETCHED_SUCCESSFULLY", {
-      adminId: req.user.adminId,
-      totalLogs: logs.length,
-      completedLogs: logs.filter(l => l.status === "COMPLETED").length,
-      inProgressLogs: logs.filter(l => l.status === "IN_PROGRESS").length,
-      uniqueEmployees: [...new Set(logs.map(l => l.employeeId))].length
-    });
-
-    // Save success to ActivityLog
-    await log(req.user.name, req.user.adminId, "FETCHED_EMPLOYEE_TASK_LOGS", `Fetched ${logs.length} employee task logs`);
-
-    // Console log: Response sent
-    logToConsole("SUCCESS", "TASK_LOGS_RESPONSE_SENT", {
-      adminId: req.user.adminId,
-      totalLogs: logs.length,
-      timestamp: new Date().toISOString()
-    });
-
-    res.json({
-      total: logs.length,
-      logs
-    });
-
-  } catch (error) {
-    // Console log: Task logs error
-    logToConsole("ERROR", "ADMIN_TASK_LOGS_ERROR", {
-      error: error.message,
-      stack: error.stack,
-      ip: req.ip,
-      endpoint: "/task-logs",
-      adminId: req.user?.adminId
-    });
-
-    // Save error to ActivityLog
-    await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "TASK_LOGS_FETCH_ERROR", `Error fetching employee task logs: ${error.message}`);
-
-    res.status(500).json({
-      message: "Error fetching employee task logs",
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-/* ===============================
    GET ALL CLIENTS
 ================================ */
 router.get("/clients", auth, async (req, res) => {
   try {
-    // Console log: Admin clients request
     logToConsole("INFO", "ADMIN_CLIENTS_REQUEST", {
       adminId: req.user.adminId,
       adminName: req.user.name,
@@ -618,17 +576,16 @@ router.get("/clients", auth, async (req, res) => {
       userAgent: req.get('User-Agent')
     });
 
-    // Console log: Fetching all clients
     logToConsole("INFO", "FETCHING_ALL_CLIENTS", {
       adminId: req.user.adminId,
       adminName: req.user.name
     });
 
+    // ✅ ONLY CHANGE: Added "planSelected" to the select fields
     const clients = await Client.find()
-      .select("clientId name email phone isActive createdAt")
+      .select("clientId name email phone isActive createdAt planSelected")
       .sort({ createdAt: -1 });
 
-    // Console log: Clients fetched successfully
     logToConsole("SUCCESS", "CLIENTS_FETCHED_SUCCESSFULLY", {
       adminId: req.user.adminId,
       totalClients: clients.length,
@@ -636,10 +593,8 @@ router.get("/clients", auth, async (req, res) => {
       inactiveClients: clients.filter(c => !c.isActive).length
     });
 
-    // Save success to ActivityLog
     await log(req.user.name, req.user.adminId, "FETCHED_ALL_CLIENTS", `Fetched ${clients.length} clients`);
 
-    // Console log: Response sent
     logToConsole("SUCCESS", "CLIENTS_RESPONSE_SENT", {
       adminId: req.user.adminId,
       totalClients: clients.length,
@@ -649,7 +604,6 @@ router.get("/clients", auth, async (req, res) => {
     res.json(clients);
 
   } catch (error) {
-    // Console log: Get clients error
     logToConsole("ERROR", "GET_ALL_CLIENTS_ERROR", {
       error: error.message,
       stack: error.stack,
@@ -659,7 +613,6 @@ router.get("/clients", auth, async (req, res) => {
       adminName: req.user?.name
     });
 
-    // Save error to ActivityLog
     await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "CLIENTS_FETCH_ERROR", `Error fetching clients: ${error.message}`);
 
     res.status(500).json({
@@ -671,13 +624,13 @@ router.get("/clients", auth, async (req, res) => {
 });
 
 /* ===============================
-   GET SINGLE CLIENT (MONTH DATA) - UPDATED FOR MULTIPLE FILES & MULTIPLE EMPLOYEES
+   GET SINGLE CLIENT (MONTH DATA) - UPDATED FOR BOTH COLLECTIONS
+   NOW MERGES OLD client.documents AND NEW ClientMonthlyData
 ================================ */
 router.get("/clients/:clientId", auth, async (req, res) => {
   try {
     const { clientId } = req.params;
 
-    // Console log: Single client request
     logToConsole("INFO", "SINGLE_CLIENT_REQUEST", {
       adminId: req.user.adminId,
       adminName: req.user.name,
@@ -685,7 +638,6 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       ip: req.ip
     });
 
-    // Find client
     const client = await Client.findOne({ clientId });
 
     if (!client) {
@@ -694,18 +646,63 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       return res.status(404).json({ message: "Client not found", clientId });
     }
 
-    // Convert client to plain object to modify - THIS IS IMPORTANT!
     let clientData = client.toObject();
 
-    console.log("🔍 DEBUG: Original client data documents:",
-      clientData.documents ? Object.keys(clientData.documents) : "No documents");
+    console.log("🔍 DEBUG: Original client data documents:", clientData.documents ? Object.keys(clientData.documents) : "No documents");
 
-    // ===================================================
-    // 1. GET ALL EMPLOYEE IDs FROM NOTES (Same as before)
-    // ===================================================
+    // ===== GET NEW COLLECTION DATA =====
+    const newDoc = await ClientMonthlyData.findOne({ clientId });
+
+    // ===== MERGE OLD AND NEW DOCUMENTS =====
+    let mergedDocuments = {};
+
+    // Step 1: Convert OLD Map to object
+    if (clientData.documents) {
+      if (clientData.documents instanceof Map) {
+        for (const [yearKey, yearMap] of clientData.documents.entries()) {
+          if (yearMap instanceof Map) {
+            const monthObj = {};
+            for (const [monthKey, monthData] of yearMap.entries()) {
+              monthObj[monthKey] = monthData;
+            }
+            mergedDocuments[yearKey] = monthObj;
+          } else {
+            mergedDocuments[yearKey] = yearMap;
+          }
+        }
+      } else if (typeof clientData.documents === 'object') {
+        mergedDocuments = JSON.parse(JSON.stringify(clientData.documents));
+      }
+    }
+
+    // Step 2: Merge NEW collection data (overrides OLD if same month exists)
+    if (newDoc && newDoc.months && Array.isArray(newDoc.months)) {
+      for (const monthData of newDoc.months) {
+        const yearKey = monthData.year.toString();
+        const monthKey = monthData.month.toString();
+
+        if (!mergedDocuments[yearKey]) {
+          mergedDocuments[yearKey] = {};
+        }
+
+        // Preserve the year and month in the data for frontend
+        const monthDataCopy = JSON.parse(JSON.stringify(monthData));
+        monthDataCopy.year = monthData.year;
+        monthDataCopy.month = monthData.month;
+
+        mergedDocuments[yearKey][monthKey] = monthDataCopy;
+        console.log(`🔍 DEBUG: Merged NEW month ${yearKey}-${monthKey} from new collection`);
+      }
+    }
+
+    // Step 3: Replace clientData.documents with merged data
+    clientData.documents = mergedDocuments;
+
+    console.log("🔍 DEBUG: After merge - years found:", Object.keys(mergedDocuments).length);
+
+    // Rest of the function for employee name fetching etc.
     const employeeIds = new Set();
 
-    // Helper function to collect employeeIds from notes
     const collectEmployeeIds = (notesArray) => {
       if (!notesArray || !Array.isArray(notesArray)) return;
       notesArray.forEach(note => {
@@ -718,53 +715,22 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       });
     };
 
-    // Traverse through the ENTIRE documents structure to collect ALL employeeIds
     if (clientData.documents) {
-      // Convert Map to object if needed
-      if (clientData.documents instanceof Map) {
-        const documentsObj = {};
-        for (const [yearKey, yearMap] of clientData.documents.entries()) {
-          if (yearMap instanceof Map) {
-            const monthObj = {};
-            for (const [monthKey, monthData] of yearMap.entries()) {
-              monthObj[monthKey] = monthData;
-            }
-            documentsObj[yearKey] = monthObj;
-          } else {
-            documentsObj[yearKey] = yearMap;
-          }
-        }
-        clientData.documents = documentsObj;
-      }
-
-      console.log("🔍 DEBUG: Converted documents structure:",
-        Object.keys(clientData.documents).length, "years found");
-
-      // Iterate through all years
       for (const yearKey in clientData.documents) {
         const yearData = clientData.documents[yearKey];
-
-        // Iterate through all months
         for (const monthKey in yearData) {
           const monthData = yearData[monthKey];
 
-          console.log(`🔍 DEBUG: Processing ${yearKey}-${monthKey}:`,
-            monthData ? "Has data" : "No data");
+          console.log(`🔍 DEBUG: Processing ${yearKey}-${monthKey}:`, monthData ? "Has data" : "No data");
 
-          // Process main categories: sales, purchase, bank
           ['sales', 'purchase', 'bank'].forEach(category => {
             if (monthData[category]) {
               const categoryData = monthData[category];
-
-              // 1. Collect employeeIds from category-level notes (client notes)
               if (categoryData.categoryNotes && Array.isArray(categoryData.categoryNotes)) {
                 collectEmployeeIds(categoryData.categoryNotes);
               }
-
-              // 2. Process each file in the category
               if (categoryData.files && Array.isArray(categoryData.files)) {
                 categoryData.files.forEach(file => {
-                  // Collect employeeIds from file-level notes (employee notes)
                   if (file.notes && Array.isArray(file.notes)) {
                     collectEmployeeIds(file.notes);
                   }
@@ -773,21 +739,15 @@ router.get("/clients/:clientId", auth, async (req, res) => {
             }
           });
 
-          // Process 'other' categories
           if (monthData.other && Array.isArray(monthData.other)) {
             monthData.other.forEach(otherCategory => {
               if (otherCategory.document) {
                 const otherDoc = otherCategory.document;
-
-                // 1. Collect employeeIds from other category-level notes
                 if (otherDoc.categoryNotes && Array.isArray(otherDoc.categoryNotes)) {
                   collectEmployeeIds(otherDoc.categoryNotes);
                 }
-
-                // 2. Process each file in other category
                 if (otherDoc.files && Array.isArray(otherDoc.files)) {
                   otherDoc.files.forEach(file => {
-                    // Collect employeeIds from file-level notes
                     if (file.notes && Array.isArray(file.notes)) {
                       collectEmployeeIds(file.notes);
                     }
@@ -802,9 +762,6 @@ router.get("/clients/:clientId", auth, async (req, res) => {
 
     console.log("🔍 DEBUG: Found employeeIds from notes:", Array.from(employeeIds));
 
-    // ===================================================
-    // 2. FETCH EMPLOYEE NAMES FOR NOTES (Same as before)
-    // ===================================================
     const employeeIdArray = Array.from(employeeIds);
     let employeeMap = new Map();
 
@@ -837,60 +794,43 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       }
     }
 
-    // Helper function to populate employee names in notes
     const populateEmployeeNames = (notesArray) => {
       if (!notesArray || !Array.isArray(notesArray)) return;
 
       notesArray.forEach(note => {
-        // First try to get name from employeeId
         if (note.employeeId && employeeMap.has(note.employeeId)) {
           note.employeeName = employeeMap.get(note.employeeId).name;
         }
-        // If no employeeName found, check addedBy (might be employeeId)
         else if (!note.employeeName && note.addedBy) {
-          // Check if addedBy is an employeeId UUID
           if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(note.addedBy)) {
             if (employeeMap.has(note.addedBy)) {
               note.employeeName = employeeMap.get(note.addedBy).name;
             }
           }
-          // If addedBy is already a name, keep it
           else if (typeof note.addedBy === 'string' && note.addedBy.trim().length > 0) {
             note.employeeName = note.addedBy;
           }
         }
 
-        // Ensure we have at least some display name
         if (!note.employeeName) {
           note.employeeName = note.addedBy || 'Unknown Employee';
         }
       });
     };
 
-    // Traverse AGAIN to populate employee names in ALL notes
     if (clientData.documents) {
-      // Iterate through all years
       for (const yearKey in clientData.documents) {
         const yearData = clientData.documents[yearKey];
-
-        // Iterate through all months
         for (const monthKey in yearData) {
           const monthData = yearData[monthKey];
-
-          // Process main categories
           ['sales', 'purchase', 'bank'].forEach(category => {
             if (monthData[category]) {
               const categoryData = monthData[category];
-
-              // 1. Populate employee names in category-level notes (client notes)
               if (categoryData.categoryNotes && Array.isArray(categoryData.categoryNotes)) {
                 populateEmployeeNames(categoryData.categoryNotes);
               }
-
-              // 2. Process each file in the category
               if (categoryData.files && Array.isArray(categoryData.files)) {
                 categoryData.files.forEach(file => {
-                  // Populate employee names in file-level notes
                   if (file.notes && Array.isArray(file.notes)) {
                     populateEmployeeNames(file.notes);
                   }
@@ -898,22 +838,15 @@ router.get("/clients/:clientId", auth, async (req, res) => {
               }
             }
           });
-
-          // Process 'other' categories
           if (monthData.other && Array.isArray(monthData.other)) {
             monthData.other.forEach(otherCategory => {
               if (otherCategory.document) {
                 const otherDoc = otherCategory.document;
-
-                // 1. Populate employee names in other category-level notes
                 if (otherDoc.categoryNotes && Array.isArray(otherDoc.categoryNotes)) {
                   populateEmployeeNames(otherDoc.categoryNotes);
                 }
-
-                // 2. Process each file in other category
                 if (otherDoc.files && Array.isArray(otherDoc.files)) {
                   otherDoc.files.forEach(file => {
-                    // Populate employee names in file-level notes
                     if (file.notes && Array.isArray(file.notes)) {
                       populateEmployeeNames(file.notes);
                     }
@@ -926,17 +859,12 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       }
     }
 
-    // ===================================================
-    // 3. PROCESS EMPLOYEE ASSIGNMENTS - UPDATED FOR MULTIPLE EMPLOYEES
-    // ===================================================
     console.log("🔍 DEBUG: Processing employee assignments...");
 
-    // ✅ CHANGE: Get ALL employee assignments
     const allAssignments = clientData.employeeAssignments || [];
     console.log("🔍 DEBUG: Total assignments found:", allAssignments.length);
 
     if (allAssignments.length > 0) {
-      // Get unique employeeIds from assignments
       const assignmentEmployeeIds = allAssignments
         .filter(assignment => assignment.employeeId && !assignment.isRemoved)
         .map(assignment => assignment.employeeId);
@@ -953,8 +881,7 @@ router.get("/clients/:clientId", auth, async (req, res) => {
             { employeeId: 1, name: 1, phone: 1 }
           );
 
-          console.log("🔍 DEBUG: Fetched assignment employees:",
-            assignmentEmployees.map(e => ({ id: e.employeeId, name: e.name })));
+          console.log("🔍 DEBUG: Fetched assignment employees:", assignmentEmployees.map(e => ({ id: e.employeeId, name: e.name })));
 
           const assignmentEmployeeMap = new Map();
           assignmentEmployees.forEach(emp => {
@@ -964,61 +891,49 @@ router.get("/clients/:clientId", auth, async (req, res) => {
             });
           });
 
-          // ✅ CHANGE: Enrich ALL assignments with employee details
           clientData.employeeAssignments = allAssignments
-            .filter(assignment => !assignment.isRemoved) // Only active assignments
+            .filter(assignment => !assignment.isRemoved)
             .map(assignment => {
               const empInfo = assignmentEmployeeMap.get(assignment.employeeId);
               return {
                 ...assignment,
                 employeeName: empInfo?.name || "Unknown Employee",
                 employeePhone: empInfo?.phone || "N/A",
-                // Convert dates to string for easier frontend handling
                 assignedAt: assignment.assignedAt ? assignment.assignedAt.toISOString() : null,
                 accountingDoneAt: assignment.accountingDoneAt ? assignment.accountingDoneAt.toISOString() : null
               };
             });
 
-          console.log("🔍 DEBUG: Enriched assignments:",
-            clientData.employeeAssignments.map(a => ({
-              year: a.year,
-              month: a.month,
-              task: a.task,
-              employeeName: a.employeeName,
-              accountingDone: a.accountingDone
-            })));
+          console.log("🔍 DEBUG: Enriched assignments:", clientData.employeeAssignments.map(a => ({
+            year: a.year,
+            month: a.month,
+            task: a.task,
+            employeeName: a.employeeName,
+            accountingDone: a.accountingDone
+          })));
 
         } catch (empError) {
           logToConsole("WARN", "ASSIGNMENT_EMPLOYEE_FETCH_ERROR", {
             error: empError.message
           });
-
-          // Fallback: Keep assignments as is
           clientData.employeeAssignments = allAssignments.filter(a => !a.isRemoved);
         }
       } else {
-        // No valid employeeIds found
         clientData.employeeAssignments = allAssignments.filter(a => !a.isRemoved);
       }
     } else {
       clientData.employeeAssignments = [];
     }
 
-    // ===================================================
-    // 4. ORGANIZE ASSIGNMENTS BY MONTH (NEW STRUCTURE)
-    // ===================================================
     console.log("🔍 DEBUG: Organizing assignments by month...");
 
-    // Create a map of assignments by month
     const assignmentsByMonth = {};
 
     clientData.employeeAssignments.forEach(assignment => {
       const monthKey = `${assignment.year}-${assignment.month}`;
-
       if (!assignmentsByMonth[monthKey]) {
         assignmentsByMonth[monthKey] = [];
       }
-
       assignmentsByMonth[monthKey].push({
         task: assignment.task || "Not specified",
         employeeId: assignment.employeeId,
@@ -1035,9 +950,6 @@ router.get("/clients/:clientId", auth, async (req, res) => {
 
     console.log("🔍 DEBUG: Assignments by month:", assignmentsByMonth);
 
-    // ===================================================
-    // 5. LOG SUCCESS
-    // ===================================================
     logToConsole("SUCCESS", "CLIENT_DATA_WITH_MULTIPLE_EMPLOYEE_ASSIGNMENTS", {
       clientId,
       clientName: clientData.name,
@@ -1047,63 +959,39 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       employeeNamesPopulated: employeeMap.size
     });
 
-    // ===================================================
-    // 6. SAVE TO ACTIVITY LOG
-    // ===================================================
     await log(req.user.name, req.user.adminId, "VIEWED_CLIENT_DETAILS",
       `Viewed details for client: ${clientData.name} with ${clientData.employeeAssignments.length} employee assignments`);
 
-    // ===================================================
-    // 7. CREATE FINAL RESPONSE OBJECT
-    // ===================================================
     const responseData = {
-      // IDENTIFICATION
       _id: clientData._id,
       clientId: clientData.clientId,
-
-      // PERSONAL INFO
       name: clientData.name,
       email: clientData.email,
       phone: clientData.phone,
       address: clientData.address,
       firstName: clientData.firstName,
       lastName: clientData.lastName,
-
-      // BUSINESS INFO
       businessName: clientData.businessName,
       businessAddress: clientData.businessAddress,
       businessNature: clientData.businessNature,
       registerTrade: clientData.registerTrade,
-
-      // FINANCIAL INFO
       bankAccount: clientData.bankAccount,
       bicCode: clientData.bicCode,
       vatPeriod: clientData.vatPeriod,
       planSelected: clientData.planSelected,
-
-      // LEGAL INFO
       visaType: clientData.visaType,
       hasStrongId: clientData.hasStrongId,
-
-      // STATUS & ENROLLMENT
       isActive: clientData.isActive,
       enrollmentId: clientData.enrollmentId,
       enrollmentDate: clientData.enrollmentDate,
-
-      // DOCUMENTS & ASSIGNMENTS
       documents: clientData.documents || {},
       employeeAssignments: clientData.employeeAssignments,
       assignmentsByMonth: assignmentsByMonth,
-
-      // TIMESTAMPS
       createdAt: clientData.createdAt,
       updatedAt: clientData.updatedAt,
       __v: clientData.__v
     };
 
-    // ===================================================
-    // 8. SEND RESPONSE
-    // ===================================================
     res.json({
       success: true,
       client: responseData,
@@ -1115,12 +1003,13 @@ router.get("/clients/:clientId", auth, async (req, res) => {
           fileLevelNotes: true,
           categoryLevelNotes: true,
           monthLevelNotes: false
-        }
+        },
+        documentsMerged: true,
+        newCollectionDataFound: !!newDoc
       }
     });
 
   } catch (error) {
-    // Console log: Error
     logToConsole("ERROR", "GET_SINGLE_CLIENT_ERROR", {
       error: error.message,
       stack: error.stack,
@@ -1128,7 +1017,6 @@ router.get("/clients/:clientId", auth, async (req, res) => {
       adminId: req.user?.adminId
     });
 
-    // Save error to ActivityLog
     await log(req.user?.name || "SYSTEM", req.user?.adminId || "SYSTEM", "CLIENT_DETAILS_ERROR",
       `Error fetching client details: ${error.message}`);
 
@@ -1141,14 +1029,13 @@ router.get("/clients/:clientId", auth, async (req, res) => {
 });
 
 /* ===============================
-   LOCK / UNLOCK ENTIRE MONTH (UPDATED WITH ENROLLMENT VALIDATION)
+   LOCK / UNLOCK ENTIRE MONTH - UPDATED FOR BOTH COLLECTIONS
 ================================ */
 router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
   try {
     const { clientId } = req.params;
     const { year, month, lock } = req.body;
 
-    // Console log: Month lock request
     logToConsole("INFO", "MONTH_LOCK_REQUEST", {
       adminId: req.user.adminId,
       adminName: req.user.name,
@@ -1159,7 +1046,6 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       ip: req.ip
     });
 
-    // Validate required fields
     if (!year || !month || typeof lock !== 'boolean') {
       logToConsole("WARN", "INVALID_MONTH_LOCK_DATA", {
         clientId,
@@ -1201,17 +1087,13 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       });
     }
 
-    // ============================================
-    // ENROLLMENT DATE VALIDATION - PREVENT UNLOCKING PAST MONTHS
-    // ============================================
-    if (lock === false) { // Only check when trying to UNLOCK
+    // Enrollment date validation
+    if (lock === false) {
       const enrollDate = new Date(client.enrollmentDate);
       const enrollYear = enrollDate.getFullYear();
-      const enrollMonth = enrollDate.getMonth() + 1; // JavaScript months are 0-based
+      const enrollMonth = enrollDate.getMonth() + 1;
 
-      // Check if target month is BEFORE enrollment month
-      const isPreEnrollment = (year < enrollYear) ||
-        (year === enrollYear && month < enrollMonth);
+      const isPreEnrollment = (year < enrollYear) || (year === enrollYear && month < enrollMonth);
 
       if (isPreEnrollment) {
         const targetMonthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
@@ -1251,32 +1133,37 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       clientName: client.name,
       year,
       month,
-      lockAction: lock ? "LOCK" : "UNLOCK",
-      previousLockStatus: client.documents?.get(String(year))?.get(String(month))?.isLocked || false
+      lockAction: lock ? "LOCK" : "UNLOCK"
     });
 
-    const yearKey = String(year);
-    const monthKey = String(month);
+    // ===== CHECK WHERE THE MONTH DATA EXISTS =====
+    const newMonthResult = await getMonthDataFromBoth(clientId, year, month);
+    let monthData = null;
+    let source = null;
+    let context = { client, newDoc: newMonthResult.doc };
 
-    // Initialize year and month if not exists
-    if (!client.documents.has(yearKey)) {
-      client.documents.set(yearKey, new Map());
-      logToConsole("DEBUG", "CREATED_NEW_YEAR_ENTRY", {
-        clientId,
-        year: yearKey
-      });
+    if (newMonthResult.data) {
+      monthData = newMonthResult.data;
+      source = newMonthResult.source;
+      context.newDoc = newMonthResult.doc;
+      logToConsole("DEBUG", "MONTH_FOUND_IN_NEW_COLLECTION", { clientId, year, month });
+    } else {
+      // Check OLD collection
+      const yearKey = String(year);
+      const monthKey = String(month);
+      if (client.documents.has(yearKey) && client.documents.get(yearKey).has(monthKey)) {
+        monthData = client.documents.get(yearKey).get(monthKey);
+        source = 'old';
+        logToConsole("DEBUG", "MONTH_FOUND_IN_OLD_COLLECTION", { clientId, year, month });
+      }
     }
 
-    if (!client.documents.get(yearKey).has(monthKey)) {
-      client.documents.get(yearKey).set(monthKey, {});
-      logToConsole("DEBUG", "CREATED_NEW_MONTH_ENTRY", {
-        clientId,
-        year: yearKey,
-        month: monthKey
-      });
+    if (!monthData) {
+      // Create new month data if doesn't exist
+      monthData = {};
+      source = null;
+      logToConsole("DEBUG", "CREATING_NEW_MONTH_DATA", { clientId, year, month });
     }
-
-    const monthData = client.documents.get(yearKey).get(monthKey);
 
     // Track which files were locked/unlocked
     const fileLockStatus = {
@@ -1286,7 +1173,6 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       otherCategories: []
     };
 
-    // CASCADE LOCK/UNLOCK TO ALL FILES
     const mainDocTypes = ['sales', 'purchase', 'bank'];
 
     mainDocTypes.forEach(docType => {
@@ -1298,7 +1184,6 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       }
     });
 
-    // Other categories
     if (monthData.other && Array.isArray(monthData.other)) {
       monthData.other.forEach((otherCategory, index) => {
         if (otherCategory.document) {
@@ -1310,14 +1195,12 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
       });
     }
 
-    // Set month-level lock status
     monthData.isLocked = lock;
     monthData.lockedAt = lock ? new Date() : null;
     monthData.lockedBy = lock ? req.user.name : null;
 
-    // Save the updated data
-    client.documents.get(yearKey).set(monthKey, monthData);
-    await client.save();
+    // Save to appropriate collection
+    await saveMonthDataToBoth(clientId, year, month, monthData, source, context);
 
     // Send email to client
     try {
@@ -1386,14 +1269,13 @@ router.post("/clients/:clientId/month-lock", auth, async (req, res) => {
 });
 
 /* ===============================
-   LOCK / UNLOCK FILE - UPDATED WITH ENROLLMENT VALIDATION
+   LOCK / UNLOCK FILE - UPDATED FOR BOTH COLLECTIONS
 ================================ */
 router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
   try {
     const { clientId } = req.params;
     const { year, month, type, categoryName, lock } = req.body;
 
-    // Validate required fields
     if (!year || !month || !type || typeof lock !== 'boolean') {
       return res.status(400).json({
         success: false,
@@ -1418,17 +1300,12 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
       });
     }
 
-    // ============================================
-    // ENROLLMENT DATE VALIDATION - PREVENT UNLOCKING PAST MONTHS
-    // ============================================
-    if (lock === false) { // Only check when trying to UNLOCK
+    if (lock === false) {
       const enrollDate = new Date(client.enrollmentDate);
       const enrollYear = enrollDate.getFullYear();
       const enrollMonth = enrollDate.getMonth() + 1;
 
-      // Check if target month is BEFORE enrollment month
-      const isPreEnrollment = (year < enrollYear) ||
-        (year === enrollYear && month < enrollMonth);
+      const isPreEnrollment = (year < enrollYear) || (year === enrollYear && month < enrollMonth);
 
       if (isPreEnrollment) {
         const targetMonthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
@@ -1465,21 +1342,33 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
       }
     }
 
-    const yearKey = String(year);
-    const monthKey = String(month);
+    // ===== CHECK WHERE THE MONTH DATA EXISTS =====
+    const newMonthResult = await getMonthDataFromBoth(clientId, year, month);
+    let monthData = null;
+    let source = null;
+    let context = { client, newDoc: newMonthResult.doc };
 
-    // Initialize year and month if not exists
-    if (!client.documents.has(yearKey)) {
-      client.documents.set(yearKey, new Map());
+    if (newMonthResult.data) {
+      monthData = newMonthResult.data;
+      source = newMonthResult.source;
+      context.newDoc = newMonthResult.doc;
+      logToConsole("DEBUG", "MONTH_FOUND_IN_NEW_COLLECTION", { clientId, year, month });
+    } else {
+      const yearKey = String(year);
+      const monthKey = String(month);
+      if (client.documents.has(yearKey) && client.documents.get(yearKey).has(monthKey)) {
+        monthData = client.documents.get(yearKey).get(monthKey);
+        source = 'old';
+        logToConsole("DEBUG", "MONTH_FOUND_IN_OLD_COLLECTION", { clientId, year, month });
+      }
     }
 
-    if (!client.documents.get(yearKey).has(monthKey)) {
-      client.documents.get(yearKey).set(monthKey, {});
+    if (!monthData) {
+      monthData = {};
+      source = null;
     }
 
-    const monthData = client.documents.get(yearKey).get(monthKey);
-
-    // Handle file locking for different types
+    // Handle file locking
     if (type === "other") {
       if (!monthData.other) {
         monthData.other = [];
@@ -1527,9 +1416,8 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
       monthData[type].lockedBy = lock ? req.user.name : null;
     }
 
-    // Save the updated data
-    client.documents.get(yearKey).set(monthKey, monthData);
-    await client.save();
+    // Save to appropriate collection
+    await saveMonthDataToBoth(clientId, year, month, monthData, source, context);
 
     // Send email to client
     try {
@@ -1544,13 +1432,13 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
       });
     }
 
-    const actionType = lock ? "LOCKED_FILE" : "UNLOCKED_FILE";
+    const actionTypeLog = lock ? "LOCKED_FILE" : "UNLOCKED_FILE";
     const categoryDisplay = type === "other" ? categoryName : type;
     const actionDetails = lock ?
       `Locked file ${categoryDisplay} for client ${client.name} (${month}/${year})` :
       `Unlocked file ${categoryDisplay} for client ${client.name} (${month}/${year})`;
 
-    await log(req.user.name, req.user.adminId, actionType, actionDetails);
+    await log(req.user.name, req.user.adminId, actionTypeLog, actionDetails);
 
     res.json({
       success: true,
@@ -1579,17 +1467,14 @@ router.post("/clients/file-lock/:clientId", auth, async (req, res) => {
   }
 });
 
-
-
 /* ===============================
-   GET PAYMENT STATUS FOR A MONTH
+   GET PAYMENT STATUS FOR A MONTH - UPDATED FOR BOTH COLLECTIONS
 ================================ */
 router.get("/clients/:clientId/payment-status", auth, async (req, res) => {
   try {
     const { clientId } = req.params;
     const { year, month } = req.query;
 
-    // Validate required fields
     if (!year || !month) {
       return res.status(400).json({
         success: false,
@@ -1613,19 +1498,30 @@ router.get("/clients/:clientId/payment-status", auth, async (req, res) => {
       });
     }
 
-    const yearKey = String(year);
-    const monthKey = String(month);
+    // ===== CHECK BOTH COLLECTIONS =====
+    const newMonthResult = await getMonthDataFromBoth(clientId, year, month);
+    let monthData = null;
 
-    // Check if month exists
-    if (!client.documents.has(yearKey) || !client.documents.get(yearKey).has(monthKey)) {
-      return res.status(404).json({
-        success: false,
-        message: "Month data not found for this client",
-        paymentStatus: false // Default
-      });
+    if (newMonthResult.data) {
+      monthData = newMonthResult.data;
+      logToConsole("DEBUG", "PAYMENT_STATUS_FROM_NEW_COLLECTION", { clientId, year, month });
+    } else {
+      const yearKey = String(year);
+      const monthKey = String(month);
+      if (client.documents.has(yearKey) && client.documents.get(yearKey).has(monthKey)) {
+        monthData = client.documents.get(yearKey).get(monthKey);
+        logToConsole("DEBUG", "PAYMENT_STATUS_FROM_OLD_COLLECTION", { clientId, year, month });
+      }
     }
 
-    const monthData = client.documents.get(yearKey).get(monthKey);
+    if (!monthData) {
+      return res.json({
+        success: true,
+        paymentStatus: false,
+        paymentHistory: [],
+        message: "No month data found for this period"
+      });
+    }
 
     logToConsole("SUCCESS", "GET_PAYMENT_STATUS_SUCCESS", {
       clientId,
@@ -1659,14 +1555,13 @@ router.get("/clients/:clientId/payment-status", auth, async (req, res) => {
 });
 
 /* ===============================
-   UPDATE PAYMENT STATUS FOR A MONTH (TOGGLE)
+   UPDATE PAYMENT STATUS FOR A MONTH - UPDATED FOR BOTH COLLECTIONS
 ================================ */
 router.post("/clients/:clientId/payment-status", auth, async (req, res) => {
   try {
     const { clientId } = req.params;
     const { year, month, status, notes } = req.body;
 
-    // Validate required fields
     if (!year || !month || typeof status !== 'boolean') {
       return res.status(400).json({
         success: false,
@@ -1693,31 +1588,36 @@ router.post("/clients/:clientId/payment-status", auth, async (req, res) => {
       });
     }
 
-    const yearKey = String(year);
-    const monthKey = String(month);
+    // ===== CHECK WHERE THE MONTH DATA EXISTS =====
+    const newMonthResult = await getMonthDataFromBoth(clientId, year, month);
+    let monthData = null;
+    let source = null;
+    let context = { client, newDoc: newMonthResult.doc };
 
-    // Initialize year and month if they don't exist
-    if (!client.documents.has(yearKey)) {
-      client.documents.set(yearKey, new Map());
-      logToConsole("DEBUG", "CREATED_NEW_YEAR_ENTRY", { year: yearKey });
+    if (newMonthResult.data) {
+      monthData = newMonthResult.data;
+      source = newMonthResult.source;
+      context.newDoc = newMonthResult.doc;
+      logToConsole("DEBUG", "PAYMENT_UPDATE_IN_NEW_COLLECTION", { clientId, year, month });
+    } else {
+      const yearKey = String(year);
+      const monthKey = String(month);
+      if (!client.documents.has(yearKey)) {
+        client.documents.set(yearKey, new Map());
+      }
+      if (!client.documents.get(yearKey).has(monthKey)) {
+        client.documents.get(yearKey).set(monthKey, {
+          paymentStatus: false,
+          paymentHistory: []
+        });
+      }
+      monthData = client.documents.get(yearKey).get(monthKey);
+      source = 'old';
+      logToConsole("DEBUG", "PAYMENT_UPDATE_IN_OLD_COLLECTION", { clientId, year, month });
     }
 
-    if (!client.documents.get(yearKey).has(monthKey)) {
-      // Create new month data with default values
-      const newMonthData = {
-        paymentStatus: false,
-        paymentHistory: []
-      };
-      client.documents.get(yearKey).set(monthKey, newMonthData);
-      logToConsole("DEBUG", "CREATED_NEW_MONTH_ENTRY", { year: yearKey, month: monthKey });
-    }
-
-    const monthData = client.documents.get(yearKey).get(monthKey);
-
-    // Get previous status
     const previousStatus = monthData.paymentStatus || false;
 
-    // Don't update if same status
     if (previousStatus === status) {
       return res.json({
         success: true,
@@ -1727,12 +1627,10 @@ router.post("/clients/:clientId/payment-status", auth, async (req, res) => {
       });
     }
 
-    // Initialize paymentHistory if it doesn't exist
     if (!monthData.paymentHistory) {
       monthData.paymentHistory = [];
     }
 
-    // Update payment status fields
     monthData.paymentStatus = status;
     monthData.paymentUpdatedAt = new Date();
     monthData.paymentUpdatedBy = req.user.adminId;
@@ -1742,7 +1640,6 @@ router.post("/clients/:clientId/payment-status", auth, async (req, res) => {
       monthData.paymentNotes = notes;
     }
 
-    // Add to payment history
     monthData.paymentHistory.push({
       status: status,
       changedAt: new Date(),
@@ -1751,16 +1648,13 @@ router.post("/clients/:clientId/payment-status", auth, async (req, res) => {
       notes: notes || `Changed from ${previousStatus ? 'PAID' : 'PENDING'} to ${status ? 'PAID' : 'PENDING'}`
     });
 
-    // Keep only last 50 history entries to prevent unlimited growth
     if (monthData.paymentHistory.length > 50) {
       monthData.paymentHistory = monthData.paymentHistory.slice(-50);
     }
 
-    // Save the updated data
-    client.documents.get(yearKey).set(monthKey, monthData);
-    await client.save();
+    // Save to appropriate collection
+    await saveMonthDataToBoth(clientId, year, month, monthData, source, context);
 
-    // Log to ActivityLog
     const actionDetails = status ?
       `Marked payment as PAID for ${client.name} - ${month}/${year}` :
       `Marked payment as PENDING for ${client.name} - ${month}/${year}`;
@@ -1810,7 +1704,7 @@ router.post("/clients/:clientId/payment-status", auth, async (req, res) => {
 });
 
 /* ===============================
-   GET PAYMENT HISTORY FOR A MONTH
+   GET PAYMENT HISTORY FOR A MONTH - UPDATED FOR BOTH COLLECTIONS
 ================================ */
 router.get("/clients/:clientId/payment-history", auth, async (req, res) => {
   try {
@@ -1833,18 +1727,30 @@ router.get("/clients/:clientId/payment-history", auth, async (req, res) => {
       });
     }
 
-    const yearKey = String(year);
-    const monthKey = String(month);
+    // ===== CHECK BOTH COLLECTIONS =====
+    const newMonthResult = await getMonthDataFromBoth(clientId, year, month);
+    let monthData = null;
 
-    if (!client.documents.has(yearKey) || !client.documents.get(yearKey).has(monthKey)) {
+    if (newMonthResult.data) {
+      monthData = newMonthResult.data;
+      logToConsole("DEBUG", "PAYMENT_HISTORY_FROM_NEW_COLLECTION", { clientId, year, month });
+    } else {
+      const yearKey = String(year);
+      const monthKey = String(month);
+      if (client.documents.has(yearKey) && client.documents.get(yearKey).has(monthKey)) {
+        monthData = client.documents.get(yearKey).get(monthKey);
+        logToConsole("DEBUG", "PAYMENT_HISTORY_FROM_OLD_COLLECTION", { clientId, year, month });
+      }
+    }
+
+    if (!monthData) {
       return res.json({
         success: true,
         paymentHistory: [],
+        currentStatus: false,
         message: "No payment history found for this month"
       });
     }
-
-    const monthData = client.documents.get(yearKey).get(monthKey);
 
     res.json({
       success: true,
@@ -1866,31 +1772,13 @@ router.get("/clients/:clientId/payment-history", auth, async (req, res) => {
   }
 });
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* ===============================
    ADMIN MANUAL TRIGGER PLAN CHANGE
-   (For testing or manual execution)
 ================================ */
 router.post("/trigger-plan-change", auth, async (req, res) => {
   try {
-    // Only allow admins
-
-
     const { processScheduledPlanChanges } = require('../utils/planChangeCron');
 
-    // Run the cron job manually
     await processScheduledPlanChanges();
 
     logToConsole("INFO", "MANUAL_PLAN_CHANGE_TRIGGERED", {

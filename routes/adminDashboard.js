@@ -140,6 +140,9 @@ const ALL_TASKS = [
     'Audit'
 ];
 
+/* ===============================
+   1. GET DASHBOARD OVERVIEW - UPDATED FOR BOTH COLLECTIONS
+================================ */
 router.get("/dashboard/overview", auth, async (req, res) => {
     try {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
@@ -159,7 +162,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         // 2. Active Employees Count (always total, not filtered by time)
         const activeEmployeesCount = await Employee.countDocuments({ isActive: true });
 
-        // 3. FIXED: Unassigned Clients Count (clients with MISSING TASKS across ALL months in filter)
+        // 3. Unassigned Clients Count (clients with MISSING TASKS across ALL months in filter)
         const allClients = await Client.find(
             { isActive: true },
             {
@@ -174,7 +177,6 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         allClients.forEach(client => {
             const assignments = client.employeeAssignments || [];
 
-            // Check each month in the date range
             dateRange.months.forEach(monthRange => {
                 const monthAssignments = assignments.filter(a =>
                     a.year === monthRange.year &&
@@ -193,7 +195,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
 
         const unassignedClientsCount = clientsWithMissingTasks.size;
 
-        // 4. FIXED: Idle Employees Count (employees with NO assignments in AT LEAST ONE month)
+        // 4. Idle Employees Count
         const allEmployees = await Employee.find(
             { isActive: true },
             {
@@ -208,7 +210,6 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         allEmployees.forEach(employee => {
             const assignments = employee.assignedClients || [];
 
-            // Check each month in the date range
             dateRange.months.forEach(monthRange => {
                 const monthAssignments = assignments.filter(a =>
                     a.year === monthRange.year &&
@@ -216,7 +217,6 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                     a.isRemoved === false
                 );
 
-                // If NO assignments in THIS month, employee is idle (for at least one month)
                 if (monthAssignments.length === 0) {
                     idleEmployeeIds.add(employee.employeeId);
                 }
@@ -225,7 +225,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
 
         const idleEmployeesCount = idleEmployeeIds.size;
 
-        // 5. FIXED: Clients with Incomplete Tasks (accountingDone = false across ALL months in filter)
+        // 5. Clients with Incomplete Tasks
         const clientsWithIncompleteTasksSet = new Set();
 
         allClients.forEach(client => {
@@ -252,7 +252,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
 
         const incompleteTasksCount = clientsWithIncompleteTasksSet.size;
 
-        // 6. Recent Notes Count (filtered by date range) - NO CHANGE
+        // 6. Recent Notes Count - UPDATED TO CHECK BOTH COLLECTIONS
         let recentNotesCount = 0;
 
         const allClientsWithDocs = await Client.find(
@@ -265,76 +265,90 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             }
         ).lean();
 
-        allClientsWithDocs.forEach(client => {
-            if (!client.documents) return;
+        // Helper function to count notes in month data
+        const countNotesInMonthData = (monthData) => {
+            if (!monthData) return 0;
+            let count = 0;
 
-            dateRange.months.forEach(monthRange => {
-                const yearKey = String(monthRange.year);
-                const monthKey = String(monthRange.month);
-                const monthData = client.documents?.[yearKey]?.[monthKey];
-                if (!monthData) return;
+            ['sales', 'purchase', 'bank'].forEach(category => {
+                const categoryData = monthData[category];
+                if (!categoryData) return;
 
-                ['sales', 'purchase', 'bank'].forEach(category => {
-                    const categoryData = monthData[category];
-                    if (!categoryData) return;
+                if (categoryData.categoryNotes && categoryData.categoryNotes.length > 0) {
+                    count += categoryData.categoryNotes.length;
+                }
 
-                    if (categoryData.categoryNotes && categoryData.categoryNotes.length > 0) {
-                        recentNotesCount += categoryData.categoryNotes.length;
-                    }
-
-                    if (categoryData.files && Array.isArray(categoryData.files)) {
-                        categoryData.files.forEach(file => {
-                            if (file.notes && file.notes.length > 0) {
-                                recentNotesCount += file.notes.length;
-                            }
-                        });
-                    }
-                });
-
-                if (monthData.other && Array.isArray(monthData.other)) {
-                    monthData.other.forEach(otherCategory => {
-                        if (otherCategory.document) {
-                            const otherDoc = otherCategory.document;
-
-                            if (otherDoc.categoryNotes && otherDoc.categoryNotes.length > 0) {
-                                recentNotesCount += otherDoc.categoryNotes.length;
-                            }
-
-                            if (otherDoc.files && Array.isArray(otherDoc.files)) {
-                                otherDoc.files.forEach(file => {
-                                    if (file.notes && file.notes.length > 0) {
-                                        recentNotesCount += file.notes.length;
-                                    }
-                                });
-                            }
+                if (categoryData.files && Array.isArray(categoryData.files)) {
+                    categoryData.files.forEach(file => {
+                        if (file.notes && file.notes.length > 0) {
+                            count += file.notes.length;
                         }
                     });
                 }
             });
-        });
 
-        // 7. PENDING FINANCIAL STATEMENT REQUESTS COUNT - BASED ON REQUEST DATE
+            if (monthData.other && Array.isArray(monthData.other)) {
+                monthData.other.forEach(otherCategory => {
+                    if (otherCategory.document) {
+                        const otherDoc = otherCategory.document;
+                        if (otherDoc.categoryNotes && otherDoc.categoryNotes.length > 0) {
+                            count += otherDoc.categoryNotes.length;
+                        }
+                        if (otherDoc.files && Array.isArray(otherDoc.files)) {
+                            otherDoc.files.forEach(file => {
+                                if (file.notes && file.notes.length > 0) {
+                                    count += file.notes.length;
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+
+            return count;
+        };
+
+        for (const client of allClientsWithDocs) {
+            // Check OLD collection
+            if (client.documents) {
+                for (const monthRange of dateRange.months) {
+                    const yearKey = String(monthRange.year);
+                    const monthKey = String(monthRange.month);
+                    const monthData = client.documents?.[yearKey]?.[monthKey];
+                    if (monthData) {
+                        recentNotesCount += countNotesInMonthData(monthData);
+                    }
+                }
+            }
+
+            // Check NEW collection
+            try {
+                const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
+                if (newDoc && newDoc.months) {
+                    for (const monthRange of dateRange.months) {
+                        const foundMonth = newDoc.months.find(m => m.year === monthRange.year && m.month === monthRange.month);
+                        if (foundMonth) {
+                            recentNotesCount += countNotesInMonthData(foundMonth);
+                        }
+                    }
+                }
+            } catch (err) {
+                logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION_FOR_NOTES", { error: err.message });
+            }
+        }
+
+        // 7. PENDING FINANCIAL STATEMENT REQUESTS COUNT
         let pendingFinancialRequestsCount = 0;
 
         if (dateRange.months.length > 0) {
             const startDate = dateRange.startDate;
             const endDate = dateRange.endDate;
 
-            // Count pending requests where requestedAt falls within the date range
             pendingFinancialRequestsCount = await FinancialStatementRequest.countDocuments({
                 status: 'pending',
                 requestedAt: {
-                    $gte: startDate,  // Requested on or after month start
-                    $lte: endDate      // Requested on or before month end
-                }
-            });
-
-            logToConsole("INFO", "PENDING_REQUESTS_COUNT", {
-                count: pendingFinancialRequestsCount,
-                basedOn: "requestedAt",
-                dateRange: {
-                    start: startDate.toISOString(),
-                    end: endDate.toISOString()
+                    $gte: startDate,
+                    $lte: endDate
                 }
             });
         } else {
@@ -343,10 +357,9 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             });
         }
 
-        // 8. COMPLETED TASKS COUNT - ADD THIS NEW SECTION
+        // 8. COMPLETED TASKS COUNT
         let completedTasksCount = 0;
 
-        // Get all active clients with their assignments
         const allClientsForCompleted = await Client.find(
             { isActive: true },
             {
@@ -355,7 +368,6 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             }
         ).lean();
 
-        // Count completed tasks (accountingDone = true) within date range
         allClientsForCompleted.forEach(client => {
             const assignments = client.employeeAssignments || [];
 
@@ -365,16 +377,11 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                     a.month === monthRange.month &&
                     a.isRemoved === false &&
                     a.accountingDone === true &&
-                    a.task // Ensure task exists
+                    a.task
                 );
 
                 completedTasksCount += completedInMonth.length;
             });
-        });
-
-        logToConsole("INFO", "COMPLETED_TASKS_COUNT", {
-            count: completedTasksCount,
-            monthsInRange: dateRange.months.length
         });
 
         // Add Activity Log
@@ -384,7 +391,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                 role: "ADMIN",
                 adminId: req.user.adminId,
                 action: "DASHBOARD_OVERVIEW_VIEWED",
-                details: `Viewed dashboard overview with filter: ${timeFilter}. Metrics: ${activeClientsCount} active clients, ${activeEmployeesCount} active employees, ${pendingFinancialRequestsCount} pending finance requests, ${completedTasksCount} completed tasks`,
+                details: `Viewed dashboard overview with filter: ${timeFilter}`,
                 dateTime: new Date(),
                 metadata: {
                     timeFilter,
@@ -400,11 +407,6 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                     completedTasksCount,
                     monthsInRange: dateRange.months.length
                 }
-            });
-
-            logToConsole("INFO", "DASHBOARD_OVERVIEW_ACTIVITY_LOG_CREATED", {
-                adminId: req.user.adminId,
-                action: "DASHBOARD_OVERVIEW_VIEWED"
             });
         } catch (logError) {
             logToConsole("ERROR", "DASHBOARD_OVERVIEW_ACTIVITY_LOG_FAILED", {
@@ -437,7 +439,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
                 incompleteTasks: incompleteTasksCount,
                 recentNotes: recentNotesCount,
                 pendingFinancialRequests: pendingFinancialRequestsCount,
-                completedTasks: completedTasksCount // ADDED THIS LINE
+                completedTasks: completedTasksCount
             },
             timeFilter: dateRange.timeFilter,
             currentMonth: dateRange.months[0] || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 },
@@ -1028,14 +1030,14 @@ router.get("/dashboard/incomplete-tasks", auth, async (req, res) => {
     }
 });
 
+
 /* ===============================
-   7. GET RECENT NOTES GROUPED BY CLIENT - NO CHANGE
+   7. GET RECENT NOTES GROUPED BY CLIENT - UPDATED FOR BOTH COLLECTIONS
 ================================ */
 router.get("/dashboard/recent-notes", auth, async (req, res) => {
     try {
         const { timeFilter = 'this_month', customStart, customEnd, limit = 10 } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
-        const currentMonth = dateRange.months[0] || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
 
         logToConsole("INFO", "RECENT_NOTES_REQUEST", {
             adminId: req.user.adminId,
@@ -1055,11 +1057,113 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
             }
         ).lean();
 
+        // Helper function to extract notes from month data
+        const extractNotesFromMonthData = (monthData, year, month, clientId, clientName, clientEmail) => {
+            const notes = [];
+
+            if (!monthData) return notes;
+
+            ['sales', 'purchase', 'bank'].forEach(category => {
+                const categoryData = monthData[category];
+                if (!categoryData) return;
+
+                if (categoryData.categoryNotes && categoryData.categoryNotes.length > 0) {
+                    categoryData.categoryNotes.forEach(note => {
+                        notes.push({
+                            ...note,
+                            category,
+                            note: note.note,
+                            addedBy: note.addedBy || "Client",
+                            type: "Client Note",
+                            source: "old",
+                            clientId,
+                            clientName,
+                            clientEmail,
+                            year,
+                            month
+                        });
+                    });
+                }
+
+                if (categoryData.files && Array.isArray(categoryData.files)) {
+                    categoryData.files.forEach(file => {
+                        if (file.notes && file.notes.length > 0) {
+                            file.notes.forEach(note => {
+                                notes.push({
+                                    ...note,
+                                    category,
+                                    fileName: file.fileName || "Unnamed file",
+                                    note: note.note,
+                                    addedBy: note.addedBy || "Employee",
+                                    type: "Employee Note",
+                                    source: "old",
+                                    clientId,
+                                    clientName,
+                                    clientEmail,
+                                    year,
+                                    month
+                                });
+                            });
+                        }
+                    });
+                }
+            });
+
+            if (monthData.other && Array.isArray(monthData.other)) {
+                monthData.other.forEach(otherCategory => {
+                    if (otherCategory.document) {
+                        const otherDoc = otherCategory.document;
+
+                        if (otherDoc.categoryNotes && otherDoc.categoryNotes.length > 0) {
+                            otherDoc.categoryNotes.forEach(note => {
+                                notes.push({
+                                    ...note,
+                                    category: otherCategory.categoryName,
+                                    note: note.note,
+                                    addedBy: note.addedBy || "Client",
+                                    type: "Client Note",
+                                    source: "old",
+                                    clientId,
+                                    clientName,
+                                    clientEmail,
+                                    year,
+                                    month
+                                });
+                            });
+                        }
+
+                        if (otherDoc.files && Array.isArray(otherDoc.files)) {
+                            otherDoc.files.forEach(file => {
+                                if (file.notes && file.notes.length > 0) {
+                                    file.notes.forEach(note => {
+                                        notes.push({
+                                            ...note,
+                                            category: otherCategory.categoryName,
+                                            fileName: file.fileName || "Unnamed file",
+                                            note: note.note,
+                                            addedBy: note.addedBy || "Employee",
+                                            type: "Employee Note",
+                                            source: "old",
+                                            clientId,
+                                            clientName,
+                                            clientEmail,
+                                            year,
+                                            month
+                                        });
+                                    });
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+
+            return notes;
+        };
+
         const notesByClient = [];
 
-        clients.forEach(client => {
-            if (!client.documents) return;
-
+        for (const client of clients) {
             let clientNotes = {
                 clientId: client.clientId,
                 clientName: client.name,
@@ -1069,92 +1173,53 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
                 categoryNotes: []
             };
 
-            dateRange.months.forEach(monthRange => {
-                const yearKey = String(monthRange.year);
-                const monthKey = String(monthRange.month);
-                const monthData = client.documents?.[yearKey]?.[monthKey];
-                if (!monthData) return;
-
-                ['sales', 'purchase', 'bank'].forEach(category => {
-                    const categoryData = monthData[category];
-                    if (!categoryData) return;
-
-                    if (categoryData.categoryNotes && categoryData.categoryNotes.length > 0) {
-                        categoryData.categoryNotes.forEach(note => {
-                            clientNotes.categoryNotes.push({
-                                category,
-                                note: note.note,
-                                addedBy: note.addedBy || "Client",
-                                addedAt: note.addedAt,
-                                type: "Client Note"
-                            });
+            // 1. Process OLD collection
+            if (client.documents) {
+                for (const monthRange of dateRange.months) {
+                    const yearKey = String(monthRange.year);
+                    const monthKey = String(monthRange.month);
+                    const monthData = client.documents?.[yearKey]?.[monthKey];
+                    if (monthData) {
+                        const notes = extractNotesFromMonthData(monthData, monthRange.year, monthRange.month, client.clientId, client.name, client.email);
+                        notes.forEach(note => {
+                            if (note.type === "Client Note") {
+                                clientNotes.categoryNotes.push(note);
+                            } else {
+                                clientNotes.fileNotes.push(note);
+                            }
                             clientNotes.totalNotes++;
                         });
                     }
-
-                    if (categoryData.files && Array.isArray(categoryData.files)) {
-                        categoryData.files.forEach(file => {
-                            if (file.notes && file.notes.length > 0) {
-                                file.notes.forEach(note => {
-                                    clientNotes.fileNotes.push({
-                                        category,
-                                        fileName: file.fileName || "Unnamed file",
-                                        note: note.note,
-                                        addedBy: note.addedBy || "Employee",
-                                        addedAt: note.addedAt,
-                                        type: "Employee Note"
-                                    });
-                                    clientNotes.totalNotes++;
-                                });
-                            }
-                        });
-                    }
-                });
-
-                if (monthData.other && Array.isArray(monthData.other)) {
-                    monthData.other.forEach(otherCategory => {
-                        if (otherCategory.document) {
-                            const otherDoc = otherCategory.document;
-
-                            if (otherDoc.categoryNotes && otherDoc.categoryNotes.length > 0) {
-                                otherDoc.categoryNotes.forEach(note => {
-                                    clientNotes.categoryNotes.push({
-                                        category: otherCategory.categoryName,
-                                        note: note.note,
-                                        addedBy: note.addedBy || "Client",
-                                        addedAt: note.addedAt,
-                                        type: "Client Note"
-                                    });
-                                    clientNotes.totalNotes++;
-                                });
-                            }
-
-                            if (otherDoc.files && Array.isArray(otherDoc.files)) {
-                                otherDoc.files.forEach(file => {
-                                    if (file.notes && file.notes.length > 0) {
-                                        file.notes.forEach(note => {
-                                            clientNotes.fileNotes.push({
-                                                category: otherCategory.categoryName,
-                                                fileName: file.fileName || "Unnamed file",
-                                                note: note.note,
-                                                addedBy: note.addedBy || "Employee",
-                                                addedAt: note.addedAt,
-                                                type: "Employee Note"
-                                            });
-                                            clientNotes.totalNotes++;
-                                        });
-                                    }
-                                });
-                            }
-                        }
-                    });
                 }
-            });
+            }
+
+            // 2. Process NEW collection
+            try {
+                const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
+                if (newDoc && newDoc.months) {
+                    for (const monthRange of dateRange.months) {
+                        const foundMonth = newDoc.months.find(m => m.year === monthRange.year && m.month === monthRange.month);
+                        if (foundMonth) {
+                            const notes = extractNotesFromMonthData(foundMonth, monthRange.year, monthRange.month, client.clientId, client.name, client.email);
+                            notes.forEach(note => {
+                                if (note.type === "Client Note") {
+                                    clientNotes.categoryNotes.push(note);
+                                } else {
+                                    clientNotes.fileNotes.push(note);
+                                }
+                                clientNotes.totalNotes++;
+                            });
+                        }
+                    }
+                }
+            } catch (err) {
+                logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION_RECENT_NOTES", { error: err.message });
+            }
 
             if (clientNotes.totalNotes > 0) {
                 notesByClient.push(clientNotes);
             }
-        });
+        }
 
         notesByClient.sort((a, b) => b.totalNotes - a.totalNotes);
         const limitedNotes = notesByClient.slice(0, parseInt(limit));
@@ -1176,11 +1241,6 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
                     totalNotes: totalNotes,
                     limit: parseInt(limit)
                 }
-            });
-
-            logToConsole("INFO", "RECENT_NOTES_ACTIVITY_LOG_CREATED", {
-                adminId: req.user.adminId,
-                action: "RECENT_NOTES_VIEWED"
             });
         } catch (logError) {
             logToConsole("ERROR", "RECENT_NOTES_ACTIVITY_LOG_FAILED", {
@@ -1228,15 +1288,17 @@ router.get("/dashboard/recent-notes", auth, async (req, res) => {
     }
 });
 
+
+
+
 /* ===============================
-   8. GET CLIENT NOTES DETAILS - NO CHANGE
+   8. GET CLIENT NOTES DETAILS - UPDATED FOR BOTH COLLECTIONS
 ================================ */
 router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
     try {
         const { clientId } = req.params;
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
         const dateRange = getDateRange(timeFilter, customStart, customEnd);
-        const currentMonth = dateRange.months[0] || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
 
         logToConsole("INFO", "CLIENT_NOTES_DETAILS_REQUEST", {
             adminId: req.user.adminId,
@@ -1270,11 +1332,11 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
 
         const allNotes = [];
 
-        dateRange.months.forEach(monthRange => {
-            const yearKey = String(monthRange.year);
-            const monthKey = String(monthRange.month);
-            const monthData = client.documents?.[yearKey]?.[monthKey];
-            if (!monthData) return;
+        // Helper function to extract notes from month data
+        const extractNotesFromMonthData = (monthData, year, month) => {
+            if (!monthData) return [];
+
+            const notes = [];
 
             ['sales', 'purchase', 'bank'].forEach(category => {
                 const categoryData = monthData[category];
@@ -1282,7 +1344,7 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
 
                 if (categoryData.categoryNotes && categoryData.categoryNotes.length > 0) {
                     categoryData.categoryNotes.forEach(note => {
-                        allNotes.push({
+                        notes.push({
                             type: "CLIENT_NOTE",
                             category,
                             fileName: null,
@@ -1290,8 +1352,9 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                             addedBy: note.addedBy || "Client",
                             addedAt: note.addedAt,
                             level: "Category",
-                            year: monthRange.year,
-                            month: monthRange.month
+                            year,
+                            month,
+                            source: "old"
                         });
                     });
                 }
@@ -1300,7 +1363,7 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                     categoryData.files.forEach(file => {
                         if (file.notes && file.notes.length > 0) {
                             file.notes.forEach(note => {
-                                allNotes.push({
+                                notes.push({
                                     type: "EMPLOYEE_NOTE",
                                     category,
                                     fileName: file.fileName || "Unnamed file",
@@ -1308,8 +1371,9 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                                     addedBy: note.addedBy || "Employee",
                                     addedAt: note.addedAt,
                                     level: "File",
-                                    year: monthRange.year,
-                                    month: monthRange.month
+                                    year,
+                                    month,
+                                    source: "old"
                                 });
                             });
                         }
@@ -1324,7 +1388,7 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
 
                         if (otherDoc.categoryNotes && otherDoc.categoryNotes.length > 0) {
                             otherDoc.categoryNotes.forEach(note => {
-                                allNotes.push({
+                                notes.push({
                                     type: "CLIENT_NOTE",
                                     category: otherCategory.categoryName,
                                     fileName: null,
@@ -1332,8 +1396,9 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                                     addedBy: note.addedBy || "Client",
                                     addedAt: note.addedAt,
                                     level: "Category",
-                                    year: monthRange.year,
-                                    month: monthRange.month
+                                    year,
+                                    month,
+                                    source: "old"
                                 });
                             });
                         }
@@ -1342,7 +1407,7 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                             otherDoc.files.forEach(file => {
                                 if (file.notes && file.notes.length > 0) {
                                     file.notes.forEach(note => {
-                                        allNotes.push({
+                                        notes.push({
                                             type: "EMPLOYEE_NOTE",
                                             category: otherCategory.categoryName,
                                             fileName: file.fileName || "Unnamed file",
@@ -1350,8 +1415,9 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                                             addedBy: note.addedBy || "Employee",
                                             addedAt: note.addedAt,
                                             level: "File",
-                                            year: monthRange.year,
-                                            month: monthRange.month
+                                            year,
+                                            month,
+                                            source: "old"
                                         });
                                     });
                                 }
@@ -1360,7 +1426,38 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                     }
                 });
             }
-        });
+
+            return notes;
+        };
+
+        // 1. Process OLD collection
+        if (client.documents) {
+            for (const monthRange of dateRange.months) {
+                const yearKey = String(monthRange.year);
+                const monthKey = String(monthRange.month);
+                const monthData = client.documents?.[yearKey]?.[monthKey];
+                if (monthData) {
+                    const notes = extractNotesFromMonthData(monthData, monthRange.year, monthRange.month);
+                    allNotes.push(...notes);
+                }
+            }
+        }
+
+        // 2. Process NEW collection
+        try {
+            const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
+            if (newDoc && newDoc.months) {
+                for (const monthRange of dateRange.months) {
+                    const foundMonth = newDoc.months.find(m => m.year === monthRange.year && m.month === monthRange.month);
+                    if (foundMonth) {
+                        const notes = extractNotesFromMonthData(foundMonth, monthRange.year, monthRange.month);
+                        allNotes.push(...notes);
+                    }
+                }
+            }
+        } catch (err) {
+            logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION_CLIENT_NOTES", { error: err.message });
+        }
 
         allNotes.sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
 
@@ -1382,12 +1479,6 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
                     clientNotes: allNotes.filter(n => n.type === "CLIENT_NOTE").length,
                     employeeNotes: allNotes.filter(n => n.type === "EMPLOYEE_NOTE").length
                 }
-            });
-
-            logToConsole("INFO", "CLIENT_NOTES_DETAILS_ACTIVITY_LOG_CREATED", {
-                adminId: req.user.adminId,
-                clientId,
-                action: "CLIENT_NOTES_DETAILS_VIEWED"
             });
         } catch (logError) {
             logToConsole("ERROR", "CLIENT_NOTES_DETAILS_ACTIVITY_LOG_FAILED", {
@@ -1437,8 +1528,11 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
     }
 });
 
+
+
+
 /* ===============================
-   9. GET CLIENTS WITH UPLOADED DOCS BUT MONTH LOCKED - NO CHANGE NEEDED (ALREADY MULTI-MONTH)
+   9. GET CLIENTS WITH UPLOADED DOCS BUT MONTH LOCKED - UPDATED FOR BOTH COLLECTIONS
 ================================ */
 router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
     try {
@@ -1466,51 +1560,62 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
 
         const monthsData = [];
 
-        for (const monthInfo of dateRange.months) {
-            const yearKey = String(monthInfo.year);
-            const monthKey = String(monthInfo.month);
-            const monthClients = [];
+        // Helper function to check if month has any files
+        const hasAnyFiles = (monthData) => {
+            if (!monthData) return false;
 
-            allClients.forEach(client => {
-                if (!client.documents) return;
+            let hasFile = false;
 
-                const monthData = client.documents?.[yearKey]?.[monthKey];
-                if (!monthData) return;
+            ['sales', 'purchase', 'bank'].forEach(category => {
+                const categoryData = monthData[category];
+                if (categoryData?.files && categoryData.files.length > 0) {
+                    hasFile = true;
+                }
+            });
 
-                if (!monthData.isLocked) return;
-
-                let hasAnyFile = false;
-
-                ['sales', 'purchase', 'bank'].forEach(category => {
-                    const categoryData = monthData[category];
-                    if (categoryData?.files && categoryData.files.length > 0) {
-                        hasAnyFile = true;
+            if (monthData.other && Array.isArray(monthData.other)) {
+                monthData.other.forEach(otherCategory => {
+                    if (otherCategory.document?.files && otherCategory.document.files.length > 0) {
+                        hasFile = true;
                     }
                 });
+            }
 
-                if (monthData.other && Array.isArray(monthData.other)) {
-                    monthData.other.forEach(otherCategory => {
-                        if (otherCategory.document?.files && otherCategory.document.files.length > 0) {
-                            hasAnyFile = true;
-                        }
-                    });
+            return hasFile;
+        };
+
+        // Helper function to count total files
+        const countTotalFiles = (monthData) => {
+            if (!monthData) return 0;
+            let count = 0;
+
+            ['sales', 'purchase', 'bank'].forEach(category => {
+                const categoryData = monthData[category];
+                if (categoryData?.files) {
+                    count += categoryData.files.length;
                 }
+            });
 
-                if (hasAnyFile) {
-                    let fileCount = 0;
-                    ['sales', 'purchase', 'bank'].forEach(category => {
-                        const categoryData = monthData[category];
-                        if (categoryData?.files) {
-                            fileCount += categoryData.files.length;
-                        }
-                    });
-                    if (monthData.other && Array.isArray(monthData.other)) {
-                        monthData.other.forEach(otherCategory => {
-                            if (otherCategory.document?.files) {
-                                fileCount += otherCategory.document.files.length;
-                            }
-                        });
+            if (monthData.other && Array.isArray(monthData.other)) {
+                monthData.other.forEach(otherCategory => {
+                    if (otherCategory.document?.files) {
+                        count += otherCategory.document.files.length;
                     }
+                });
+            }
+
+            return count;
+        };
+
+        for (const monthInfo of dateRange.months) {
+            const monthClients = [];
+
+            // Helper to process a client for a specific month
+            const processClientForMonth = async (client, monthData, source) => {
+                if (!monthData) return;
+
+                if (monthData.isLocked && hasAnyFiles(monthData)) {
+                    const fileCount = countTotalFiles(monthData);
 
                     monthClients.push({
                         clientId: client.clientId,
@@ -1519,12 +1624,43 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
                         phone: client.phone || "N/A",
                         lockedAt: monthData.lockedAt || null,
                         lockedBy: monthData.lockedBy || "Unknown",
-                        totalFiles: fileCount
+                        totalFiles: fileCount,
+                        source: source
                     });
                 }
-            });
+            };
 
-            if (monthClients.length > 0) {
+            for (const client of allClients) {
+                // 1. Check OLD collection
+                const yearKey = String(monthInfo.year);
+                const monthKey = String(monthInfo.month);
+                const oldMonthData = client.documents?.[yearKey]?.[monthKey];
+                await processClientForMonth(client, oldMonthData, "old");
+
+                // 2. Check NEW collection
+                try {
+                    const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
+                    if (newDoc && newDoc.months) {
+                        const newMonthData = newDoc.months.find(m => m.year === monthInfo.year && m.month === monthInfo.month);
+                        await processClientForMonth(client, newMonthData, "new");
+                    }
+                } catch (err) {
+                    logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION_LOCKED", { error: err.message });
+                }
+            }
+
+            // Remove duplicates (same client from both collections)
+            const uniqueClients = [];
+            const seenClientIds = new Set();
+
+            for (const client of monthClients) {
+                if (!seenClientIds.has(client.clientId)) {
+                    seenClientIds.add(client.clientId);
+                    uniqueClients.push(client);
+                }
+            }
+
+            if (uniqueClients.length > 0) {
                 const monthName = new Date(monthInfo.year, monthInfo.month - 1, 1)
                     .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 
@@ -1532,8 +1668,8 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
                     year: monthInfo.year,
                     month: monthInfo.month,
                     monthName: monthName,
-                    count: monthClients.length,
-                    clients: monthClients
+                    count: uniqueClients.length,
+                    clients: uniqueClients
                 });
             }
         }
@@ -1553,11 +1689,6 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
                     totalMonths: monthsData.length,
                     totalClients: totalClients
                 }
-            });
-
-            logToConsole("INFO", "UPLOADED_BUT_LOCKED_ACTIVITY_LOG_CREATED", {
-                adminId: req.user.adminId,
-                action: "UPLOADED_BUT_LOCKED_VIEWED"
             });
         } catch (logError) {
             logToConsole("ERROR", "UPLOADED_BUT_LOCKED_ACTIVITY_LOG_FAILED", {
@@ -1598,6 +1729,211 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
         });
     }
 });
+
+
+
+/* ===============================
+   15. GET COMPLETED TASKS (GROUPED BY MONTH) - NEW
+================================ */
+router.get("/dashboard/completed-tasks", auth, async (req, res) => {
+    try {
+        const { timeFilter = 'this_month', customStart, customEnd } = req.query;
+        const dateRange = getDateRange(timeFilter, customStart, customEnd);
+
+        logToConsole("INFO", "COMPLETED_TASKS_REQUEST", {
+            adminId: req.user.adminId,
+            timeFilter,
+            monthsCount: dateRange.months.length
+        });
+
+        // Get all active clients with their assignments
+        const clients = await Client.find(
+            { isActive: true },
+            {
+                clientId: 1,
+                name: 1,
+                email: 1,
+                employeeAssignments: 1
+            }
+        ).lean();
+
+        // Get all active employees for reference
+        const employees = await Employee.find(
+            { isActive: true },
+            {
+                employeeId: 1,
+                name: 1
+            }
+        ).lean();
+
+        // Create employee map for quick lookup
+        const employeeMap = {};
+        employees.forEach(emp => {
+            employeeMap[emp.employeeId] = emp.name;
+        });
+
+        // Structure to hold month-wise completed tasks
+        const monthsData = [];
+        let totalCompletedTasks = 0;
+        const uniqueEmployeesSet = new Set();
+
+        // Process each month in the date range (from oldest to newest first for processing)
+        const sortedMonths = [...dateRange.months].sort((a, b) => {
+            if (a.year !== b.year) return a.year - b.year;
+            return a.month - b.month;
+        });
+
+        sortedMonths.forEach(monthRange => {
+            const monthTasks = [];
+            let monthCompletedCount = 0;
+
+            // Check each client for completed tasks in this month
+            clients.forEach(client => {
+                const assignments = client.employeeAssignments || [];
+
+                // Find completed tasks for this specific month
+                const completedInMonth = assignments.filter(a =>
+                    a.year === monthRange.year &&
+                    a.month === monthRange.month &&
+                    a.isRemoved === false &&
+                    a.accountingDone === true &&
+                    a.task // Ensure task exists
+                );
+
+                if (completedInMonth.length > 0) {
+                    completedInMonth.forEach(assignment => {
+                        monthTasks.push({
+                            clientId: client.clientId,
+                            clientName: client.name,
+                            employeeId: assignment.employeeId,
+                            employeeName: assignment.employeeName || employeeMap[assignment.employeeId] || "Unknown",
+                            task: assignment.task,
+                            completedAt: assignment.accountingDoneAt,
+                            completedBy: assignment.accountingDoneBy || "employee"
+                        });
+
+                        // Add employee to unique set for dropdown
+                        if (assignment.employeeId) {
+                            uniqueEmployeesSet.add(assignment.employeeId);
+                        }
+                    });
+
+                    monthCompletedCount += completedInMonth.length;
+                }
+            });
+
+            // Only add month if there are completed tasks
+            if (monthTasks.length > 0) {
+                const monthName = new Date(monthRange.year, monthRange.month - 1, 1)
+                    .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+                monthsData.push({
+                    year: monthRange.year,
+                    month: monthRange.month,
+                    monthName: monthName,
+                    totalCompleted: monthCompletedCount,
+                    tasks: monthTasks.sort((a, b) =>
+                        new Date(b.completedAt) - new Date(a.completedAt)
+                    ) // Sort tasks within month by completion date (newest first)
+                });
+
+                totalCompletedTasks += monthCompletedCount;
+            }
+        });
+
+        // Sort months in DESCENDING order (newest first) for display
+        monthsData.sort((a, b) => {
+            if (a.year !== b.year) return b.year - a.year;
+            return b.month - a.month;
+        });
+
+        // Prepare employees list for dropdown
+        const employeesList = [];
+        uniqueEmployeesSet.forEach(empId => {
+            const empName = employeeMap[empId];
+            if (empName) {
+                employeesList.push({
+                    value: empId,
+                    label: empName
+                });
+            }
+        });
+
+        // Sort employees alphabetically by name
+        employeesList.sort((a, b) => a.label.localeCompare(b.label));
+
+        // Add "All Employees" option at the beginning
+        employeesList.unshift({
+            value: "all",
+            label: "All Employees"
+        });
+
+        // Add Activity Log
+        try {
+            await ActivityLog.create({
+                userName: req.user.name,
+                role: "ADMIN",
+                adminId: req.user.adminId,
+                action: "COMPLETED_TASKS_VIEWED",
+                details: `Viewed completed tasks for ${timeFilter}. Found ${totalCompletedTasks} completed tasks across ${monthsData.length} months`,
+                dateTime: new Date(),
+                metadata: {
+                    timeFilter,
+                    monthsInRange: dateRange.months.length,
+                    monthsWithData: monthsData.length,
+                    totalCompletedTasks,
+                    uniqueEmployees: employeesList.length - 1 // Subtract 1 for "All Employees"
+                }
+            });
+
+            logToConsole("INFO", "COMPLETED_TASKS_ACTIVITY_LOG_CREATED", {
+                adminId: req.user.adminId,
+                action: "COMPLETED_TASKS_VIEWED"
+            });
+        } catch (logError) {
+            logToConsole("ERROR", "COMPLETED_TASKS_ACTIVITY_LOG_FAILED", {
+                error: logError.message,
+                adminId: req.user.adminId
+            });
+        }
+
+        logToConsole("SUCCESS", "COMPLETED_TASKS_FETCHED", {
+            adminId: req.user.adminId,
+            totalCompletedTasks,
+            monthsWithData: monthsData.length,
+            uniqueEmployees: employeesList.length - 1,
+            timeFilter
+        });
+
+        res.json({
+            success: true,
+            timeFilter: dateRange.timeFilter,
+            monthsInRange: dateRange.months.length,
+            totalCompletedTasks,
+            monthsData,
+            employees: employeesList,
+            summary: {
+                totalCompletedTasks,
+                monthsWithData: monthsData.length,
+                uniqueEmployees: employeesList.length - 1
+            }
+        });
+
+    } catch (error) {
+        logToConsole("ERROR", "COMPLETED_TASKS_ERROR", {
+            error: error.message,
+            stack: error.stack,
+            adminId: req.user?.adminId,
+            timeFilter: req.query.timeFilter
+        });
+
+        res.status(500).json({
+            success: false,
+            message: "Error fetching completed tasks"
+        });
+    }
+});
+
 
 
 
@@ -2405,207 +2741,7 @@ router.post("/dashboard/notes/mark-all-read", auth, async (req, res) => {
 
 
 
-/* ===============================
-   15. GET COMPLETED TASKS (GROUPED BY MONTH) - NEW
-================================ */
-router.get("/dashboard/completed-tasks", auth, async (req, res) => {
-    try {
-        const { timeFilter = 'this_month', customStart, customEnd } = req.query;
-        const dateRange = getDateRange(timeFilter, customStart, customEnd);
 
-        logToConsole("INFO", "COMPLETED_TASKS_REQUEST", {
-            adminId: req.user.adminId,
-            timeFilter,
-            monthsCount: dateRange.months.length
-        });
-
-        // Get all active clients with their assignments
-        const clients = await Client.find(
-            { isActive: true },
-            {
-                clientId: 1,
-                name: 1,
-                email: 1,
-                employeeAssignments: 1
-            }
-        ).lean();
-
-        // Get all active employees for reference
-        const employees = await Employee.find(
-            { isActive: true },
-            {
-                employeeId: 1,
-                name: 1
-            }
-        ).lean();
-
-        // Create employee map for quick lookup
-        const employeeMap = {};
-        employees.forEach(emp => {
-            employeeMap[emp.employeeId] = emp.name;
-        });
-
-        // Structure to hold month-wise completed tasks
-        const monthsData = [];
-        let totalCompletedTasks = 0;
-        const uniqueEmployeesSet = new Set();
-
-        // Process each month in the date range (from oldest to newest first for processing)
-        const sortedMonths = [...dateRange.months].sort((a, b) => {
-            if (a.year !== b.year) return a.year - b.year;
-            return a.month - b.month;
-        });
-
-        sortedMonths.forEach(monthRange => {
-            const monthTasks = [];
-            let monthCompletedCount = 0;
-
-            // Check each client for completed tasks in this month
-            clients.forEach(client => {
-                const assignments = client.employeeAssignments || [];
-
-                // Find completed tasks for this specific month
-                const completedInMonth = assignments.filter(a =>
-                    a.year === monthRange.year &&
-                    a.month === monthRange.month &&
-                    a.isRemoved === false &&
-                    a.accountingDone === true &&
-                    a.task // Ensure task exists
-                );
-
-                if (completedInMonth.length > 0) {
-                    completedInMonth.forEach(assignment => {
-                        monthTasks.push({
-                            clientId: client.clientId,
-                            clientName: client.name,
-                            employeeId: assignment.employeeId,
-                            employeeName: assignment.employeeName || employeeMap[assignment.employeeId] || "Unknown",
-                            task: assignment.task,
-                            completedAt: assignment.accountingDoneAt,
-                            completedBy: assignment.accountingDoneBy || "employee"
-                        });
-
-                        // Add employee to unique set for dropdown
-                        if (assignment.employeeId) {
-                            uniqueEmployeesSet.add(assignment.employeeId);
-                        }
-                    });
-
-                    monthCompletedCount += completedInMonth.length;
-                }
-            });
-
-            // Only add month if there are completed tasks
-            if (monthTasks.length > 0) {
-                const monthName = new Date(monthRange.year, monthRange.month - 1, 1)
-                    .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-
-                monthsData.push({
-                    year: monthRange.year,
-                    month: monthRange.month,
-                    monthName: monthName,
-                    totalCompleted: monthCompletedCount,
-                    tasks: monthTasks.sort((a, b) =>
-                        new Date(b.completedAt) - new Date(a.completedAt)
-                    ) // Sort tasks within month by completion date (newest first)
-                });
-
-                totalCompletedTasks += monthCompletedCount;
-            }
-        });
-
-        // Sort months in DESCENDING order (newest first) for display
-        monthsData.sort((a, b) => {
-            if (a.year !== b.year) return b.year - a.year;
-            return b.month - a.month;
-        });
-
-        // Prepare employees list for dropdown
-        const employeesList = [];
-        uniqueEmployeesSet.forEach(empId => {
-            const empName = employeeMap[empId];
-            if (empName) {
-                employeesList.push({
-                    value: empId,
-                    label: empName
-                });
-            }
-        });
-
-        // Sort employees alphabetically by name
-        employeesList.sort((a, b) => a.label.localeCompare(b.label));
-
-        // Add "All Employees" option at the beginning
-        employeesList.unshift({
-            value: "all",
-            label: "All Employees"
-        });
-
-        // Add Activity Log
-        try {
-            await ActivityLog.create({
-                userName: req.user.name,
-                role: "ADMIN",
-                adminId: req.user.adminId,
-                action: "COMPLETED_TASKS_VIEWED",
-                details: `Viewed completed tasks for ${timeFilter}. Found ${totalCompletedTasks} completed tasks across ${monthsData.length} months`,
-                dateTime: new Date(),
-                metadata: {
-                    timeFilter,
-                    monthsInRange: dateRange.months.length,
-                    monthsWithData: monthsData.length,
-                    totalCompletedTasks,
-                    uniqueEmployees: employeesList.length - 1 // Subtract 1 for "All Employees"
-                }
-            });
-
-            logToConsole("INFO", "COMPLETED_TASKS_ACTIVITY_LOG_CREATED", {
-                adminId: req.user.adminId,
-                action: "COMPLETED_TASKS_VIEWED"
-            });
-        } catch (logError) {
-            logToConsole("ERROR", "COMPLETED_TASKS_ACTIVITY_LOG_FAILED", {
-                error: logError.message,
-                adminId: req.user.adminId
-            });
-        }
-
-        logToConsole("SUCCESS", "COMPLETED_TASKS_FETCHED", {
-            adminId: req.user.adminId,
-            totalCompletedTasks,
-            monthsWithData: monthsData.length,
-            uniqueEmployees: employeesList.length - 1,
-            timeFilter
-        });
-
-        res.json({
-            success: true,
-            timeFilter: dateRange.timeFilter,
-            monthsInRange: dateRange.months.length,
-            totalCompletedTasks,
-            monthsData,
-            employees: employeesList,
-            summary: {
-                totalCompletedTasks,
-                monthsWithData: monthsData.length,
-                uniqueEmployees: employeesList.length - 1
-            }
-        });
-
-    } catch (error) {
-        logToConsole("ERROR", "COMPLETED_TASKS_ERROR", {
-            error: error.message,
-            stack: error.stack,
-            adminId: req.user?.adminId,
-            timeFilter: req.query.timeFilter
-        });
-
-        res.status(500).json({
-            success: false,
-            message: "Error fetching completed tasks"
-        });
-    }
-});
 
 
 module.exports = router;

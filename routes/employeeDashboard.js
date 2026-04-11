@@ -996,14 +996,14 @@ router.get("/notes/all-notes", auth, async (req, res) => {
 });
 
 /* ===============================
-   1. GET EMPLOYEE DASHBOARD OVERVIEW (UPDATED WITH NOTES)
+   1. GET EMPLOYEE DASHBOARD OVERVIEW - OPTIMIZED (BATCH QUERIES)
 ================================ */
 router.get("/dashboard/overview", auth, async (req, res) => {
   try {
     const employeeId = req.user.employeeId;
     const { timeFilter = 'this_month', customStart, customEnd } = req.query;
 
-    logToConsole("INFO", "EMPLOYEE_DASHBOARD_REQUEST", {
+    logToConsole("INFO", "EMPLOYEE_DASHBOARD_REQUEST_OPTIMIZED", {
       employeeId,
       timeFilter,
       customStart,
@@ -1030,7 +1030,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
       });
     }
 
-    // Get all clients where this employee is assigned
+    // ============= OPTIMIZATION 1: Get ALL assigned clients in ONE query =============
     const clients = await Client.find(
       {
         "employeeAssignments.employeeId": employeeId,
@@ -1047,15 +1047,83 @@ router.get("/dashboard/overview", auth, async (req, res) => {
       }
     ).lean();
 
-    // Get unviewed notes count for alert card
-    const unviewedNotesCount = await countUnviewedClientNotesForEmployee(employeeId);
+    if (clients.length === 0) {
+      return res.json({
+        success: true,
+        employee: getEmployeeInfo(employee),
+        timeFilter,
+        months: [],
+        data: [],
+        summaries: {
+          totalClients: 0,
+          tasks: { totalAssigned: 0, totalCompleted: 0, pendingTasks: 0 },
+          notes: { totalNotes: 0, clientNotes: 0, employeeNotes: 0, unviewedNotes: 0 }
+        },
+        alertInfo: { hasUnviewedNotes: false, unviewedNotesCount: 0, totalNotes: 0, previewNotes: [] }
+      });
+    }
 
-    // Get notes preview for alert card
-    const notesPreview = await getAllNotesForEmployeeAlert(employeeId, 3);
+    const clientIds = clients.map(c => c.clientId);
 
-    // Get month range based on filter
+    // ============= OPTIMIZATION 2: BATCH LOAD all month data from NEW collection =============
+    const ClientMonthlyData = require("../models/ClientMonthlyData");
+    const allMonthlyData = await ClientMonthlyData.find({
+      clientId: { $in: clientIds }
+    }).lean();
+
+    // Build month data map for O(1) lookup
+    const monthDataMap = new Map(); // key: "clientId-year-month"
+    for (const record of allMonthlyData) {
+      if (record.months && Array.isArray(record.months)) {
+        for (const month of record.months) {
+          const key = `${record.clientId}-${month.year}-${month.month}`;
+          monthDataMap.set(key, month);
+        }
+      }
+    }
+
+    // ============= OPTIMIZATION 3: Build OLD documents map from clients data =============
+    // Process in memory - no extra DB calls
+    const oldDocMap = new Map();
+    for (const client of clients) {
+      if (client.documents && typeof client.documents === 'object') {
+        for (const [yearKey, yearData] of Object.entries(client.documents)) {
+          if (yearData && typeof yearData === 'object') {
+            for (const [monthKey, monthData] of Object.entries(yearData)) {
+              const key = `${client.clientId}-${yearKey}-${monthKey}`;
+              if (!monthDataMap.has(key)) {
+                oldDocMap.set(key, monthData);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Merge old into main map (new takes priority)
+    for (const [key, value] of oldDocMap) {
+      if (!monthDataMap.has(key)) {
+        monthDataMap.set(key, value);
+      }
+    }
+
+    // ============= OPTIMIZATION 4: Get months range once =============
     const months = getMonthRange(timeFilter, customStart, customEnd);
+    
+    // Build employee assignments map for quick lookup
+    const employeeAssignmentsMap = new Map(); // key: "clientId-year-month-task"
+    for (const client of clients) {
+      if (client.employeeAssignments && Array.isArray(client.employeeAssignments)) {
+        for (const assignment of client.employeeAssignments) {
+          if (assignment.employeeId === employeeId && !assignment.isRemoved) {
+            const key = `${client.clientId}-${assignment.year}-${assignment.month}-${assignment.task}`;
+            employeeAssignmentsMap.set(key, assignment);
+          }
+        }
+      }
+    }
 
+    // ============= OPTIMIZATION 5: Process all data in memory =============
     const monthData = [];
     const allTasksSummary = {
       totalAssigned: 0,
@@ -1066,40 +1134,140 @@ router.get("/dashboard/overview", auth, async (req, res) => {
       totalNotes: 0,
       clientNotes: 0,
       employeeNotes: 0,
-      unviewedNotes: unviewedNotesCount  // ADDED
+      unviewedNotes: 0
     };
 
-    // Process each month
+    // Get unviewed notes count from both collections using maps
+    const getAllUnviewedNotesCount = async () => {
+      let count = 0;
+      
+      for (const client of clients) {
+        for (const month of months) {
+          const monthKey = `${client.clientId}-${month.year}-${month.month}`;
+          const monthDataFromMap = monthDataMap.get(monthKey);
+          
+          if (monthDataFromMap) {
+            // Check month notes
+            if (monthDataFromMap.monthNotes && Array.isArray(monthDataFromMap.monthNotes)) {
+              monthDataFromMap.monthNotes.forEach(note => {
+                if (note && !note.isViewedByEmployee) count++;
+              });
+            }
+            
+            // Check category notes
+            ['sales', 'purchase', 'bank'].forEach(cat => {
+              const catData = monthDataFromMap[cat];
+              if (catData && catData.categoryNotes && Array.isArray(catData.categoryNotes)) {
+                catData.categoryNotes.forEach(note => {
+                  if (note && !note.isViewedByEmployee) count++;
+                });
+              }
+            });
+            
+            // Check other categories
+            if (monthDataFromMap.other && Array.isArray(monthDataFromMap.other)) {
+              monthDataFromMap.other.forEach(otherCat => {
+                if (otherCat && otherCat.document && otherCat.document.categoryNotes) {
+                  otherCat.document.categoryNotes.forEach(note => {
+                    if (note && !note.isViewedByEmployee) count++;
+                  });
+                }
+              });
+            }
+          }
+        }
+      }
+      return count;
+    };
+
+    const unviewedNotesCount = await getAllUnviewedNotesCount();
+
     for (const month of months) {
       const monthTasks = [];
       const monthNotes = [];
       const clientsForMonth = [];
 
-      // Process each client for this month
       for (const client of clients) {
-        const yearKey = String(month.year);
-        const monthKey = String(month.month);
-        const monthDocuments = client.documents?.[yearKey]?.[monthKey];
-
-        // Get tasks assigned to this employee for this client & month
-        const clientTasks = getEmployeeTasksForMonth(
-          employeeId,
-          client.employeeAssignments || [],
-          month.year,
-          month.month
-        );
-
-        // Filter only assigned tasks
-        const assignedTasks = clientTasks.filter(task => task.status === 'assigned');
+        const monthKey = `${client.clientId}-${month.year}-${month.month}`;
+        const monthDataFromMap = monthDataMap.get(monthKey);
+        
+        // Get tasks for this client-month
+        const taskKeys = [
+          `${client.clientId}-${month.year}-${month.month}-Bookkeeping`,
+          `${client.clientId}-${month.year}-${month.month}-VAT Filing Computation`,
+          `${client.clientId}-${month.year}-${month.month}-VAT Filing`,
+          `${client.clientId}-${month.year}-${month.month}-Financial Statement Generation`
+        ];
+        
+        const assignedTasks = [];
+        for (const taskKey of taskKeys) {
+          const assignment = employeeAssignmentsMap.get(taskKey);
+          if (assignment) {
+            assignedTasks.push({
+              taskId: assignment.task.toLowerCase().replace(/\s+/g, '_'),
+              taskName: assignment.task,
+              status: 'assigned',
+              accountingDone: assignment.accountingDone || false,
+              accountingDoneAt: assignment.accountingDoneAt,
+              accountingDoneBy: assignment.accountingDoneBy,
+              assignedAt: assignment.assignedAt,
+              assignedBy: assignment.assignedBy,
+              adminName: assignment.adminName
+            });
+          }
+        }
 
         if (assignedTasks.length > 0) {
-          // Get notes for this month WITH VIEW STATUS
-          const notes = getEmployeeNotesForMonth(monthDocuments, employeeId, client.clientId);
-          const clientNotes = notes.notes.filter(note => note.source === 'client');
-          const employeeNotes = notes.notes.filter(note => note.source === 'employee');
-          const unviewedNotes = notes.notes.filter(note => note.isUnviewedByEmployee);
+          // Extract notes from month data
+          const clientNotes = [];
+          let clientUnviewedCount = 0;
+          
+          if (monthDataFromMap) {
+            // Month notes
+            if (monthDataFromMap.monthNotes && Array.isArray(monthDataFromMap.monthNotes)) {
+              monthDataFromMap.monthNotes.forEach(note => {
+                const isUnviewed = !note.isViewedByEmployee;
+                clientNotes.push({
+                  type: 'month_note',
+                  category: 'General',
+                  note: note.note,
+                  addedBy: note.addedBy || 'Client',
+                  addedAt: note.addedAt,
+                  source: 'client',
+                  clientName: client.name,
+                  isUnviewedByEmployee: isUnviewed,
+                  isViewedByEmployee: note.isViewedByEmployee || false
+                });
+                if (isUnviewed) clientUnviewedCount++;
+              });
+            }
+            
+            // Category notes
+            ['sales', 'purchase', 'bank'].forEach(cat => {
+              const catData = monthDataFromMap[cat];
+              if (catData && catData.categoryNotes && Array.isArray(catData.categoryNotes)) {
+                catData.categoryNotes.forEach(note => {
+                  const isUnviewed = !note.isViewedByEmployee;
+                  clientNotes.push({
+                    type: 'delete_reason',
+                    category: cat.charAt(0).toUpperCase() + cat.slice(1),
+                    note: note.note,
+                    addedBy: note.addedBy || 'Client',
+                    addedAt: note.addedAt,
+                    source: 'client',
+                    clientName: client.name,
+                    isUnviewedByEmployee: isUnviewed,
+                    isViewedByEmployee: note.isViewedByEmployee || false
+                  });
+                  if (isUnviewed) clientUnviewedCount++;
+                });
+              }
+            });
+          }
 
-          // Add client info with tasks
+          const clientPendingTasks = assignedTasks.filter(t => !t.accountingDone);
+          const clientCompletedTasks = assignedTasks.filter(t => t.accountingDone);
+
           clientsForMonth.push({
             clientId: client.clientId,
             clientName: client.name,
@@ -1107,40 +1275,34 @@ router.get("/dashboard/overview", auth, async (req, res) => {
             clientPhone: client.phone,
             businessName: client.businessName,
             tasks: assignedTasks,
-            notes: {
-              clientNotes: clientNotes.length,
-              employeeNotes: employeeNotes.length,
-              unviewedNotes: unviewedNotes.length
-            }
+            pendingTasks: clientPendingTasks.length,
+            completedTasks: clientCompletedTasks.length,
+            notes: { clientNotes: clientNotes.length, employeeNotes: 0, unviewedNotes: clientUnviewedCount }
           });
 
-          // Add to month tasks
           monthTasks.push(...assignedTasks.map(task => ({
             ...task,
             clientName: client.name,
             clientId: client.clientId
           })));
 
-          // Add to month notes
-          monthNotes.push(...notes.notes.map(note => ({
+          monthNotes.push(...clientNotes.map(note => ({
             ...note,
             clientName: client.name,
             clientId: client.clientId,
-            isUnviewed: note.isUnviewedByEmployee  // ADDED
+            isUnviewed: note.isUnviewedByEmployee
           })));
 
-          // Update summaries
           allTasksSummary.totalAssigned += assignedTasks.length;
           allTasksSummary.totalCompleted += assignedTasks.filter(t => t.accountingDone).length;
           allTasksSummary.pendingTasks += assignedTasks.filter(t => !t.accountingDone).length;
 
-          allNotesSummary.totalNotes += notes.total;
+          allNotesSummary.totalNotes += clientNotes.length;
           allNotesSummary.clientNotes += clientNotes.length;
-          allNotesSummary.employeeNotes += employeeNotes.length;
+          allNotesSummary.unviewedNotes += clientUnviewedCount;
         }
       }
 
-      // Only add month if there are assigned tasks
       if (clientsForMonth.length > 0) {
         const pendingTasks = monthTasks.filter(task => !task.accountingDone);
         const completedTasks = monthTasks.filter(task => task.accountingDone);
@@ -1148,14 +1310,8 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         monthData.push({
           year: month.year,
           month: month.month,
-          monthName: new Date(month.year, month.month - 1).toLocaleString('default', {
-            month: 'long',
-            timeZone: "Europe/Helsinki"
-          }),
-
+          monthName: new Date(month.year, month.month - 1).toLocaleString('default', { month: 'long', timeZone: "Europe/Helsinki" }),
           clients: clientsForMonth,
-
-          // Task Summary
           tasks: {
             list: monthTasks.slice(0, 5),
             summary: {
@@ -1166,31 +1322,26 @@ router.get("/dashboard/overview", auth, async (req, res) => {
               completionRate: monthTasks.length > 0 ? Math.round((completedTasks.length / monthTasks.length) * 100) : 0
             }
           },
-
-          // Notes Summary WITH VIEW STATUS
           notes: {
             list: monthNotes.slice(0, 5),
             summary: {
               totalNotes: monthNotes.length,
               clientNotes: monthNotes.filter(n => n.source === 'client').length,
               employeeNotes: monthNotes.filter(n => n.source === 'employee').length,
-              unviewedNotes: monthNotes.filter(n => n.isUnviewed).length,  // ADDED
+              unviewedNotes: monthNotes.filter(n => n.isUnviewed).length,
               unviewedPercentage: monthNotes.length > 0 ? Math.round((monthNotes.filter(n => n.isUnviewed).length / monthNotes.length) * 100) : 0
             }
           },
-
-          // Month Status
           monthStatus: {
             hasPendingTasks: pendingTasks.length > 0,
             allTasksCompleted: pendingTasks.length === 0 && monthTasks.length > 0,
             noAssignments: monthTasks.length === 0,
-            hasUnviewedNotes: monthNotes.filter(n => n.isUnviewed).length > 0  // ADDED
+            hasUnviewedNotes: monthNotes.filter(n => n.isUnviewed).length > 0
           }
         });
       }
     }
 
-    // Employee info
     const employeeInfo = {
       employeeId: employee.employeeId,
       name: employee.name,
@@ -1206,7 +1357,29 @@ router.get("/dashboard/overview", auth, async (req, res) => {
       })
     };
 
-    // ===== ACTIVITY LOG: EMPLOYEE DASHBOARD VIEWED =====
+    // Get preview notes for alert
+    const previewNotes = [];
+    for (const client of clients.slice(0, 5)) {
+      for (const month of months.slice(0, 2)) {
+        const monthKey = `${client.clientId}-${month.year}-${month.month}`;
+        const monthDataFromMap = monthDataMap.get(monthKey);
+        if (monthDataFromMap && monthDataFromMap.monthNotes) {
+          monthDataFromMap.monthNotes.slice(0, 2).forEach(note => {
+            if (!note.isViewedByEmployee) {
+              previewNotes.push({
+                ...note,
+                clientName: client.name,
+                clientId: client.clientId,
+                month: `${month.month}/${month.year}`,
+                isUnviewed: true
+              });
+            }
+          });
+        }
+      }
+    }
+
+    // Activity Log
     try {
       await ActivityLog.create({
         userName: employee.name,
@@ -1214,11 +1387,9 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         employeeId: employee.employeeId,
         employeeName: employee.name,
         action: "EMPLOYEE_DASHBOARD_VIEWED",
-        details: `Employee "${employee.name}" viewed dashboard with filter: ${timeFilter}. Summary: ${allTasksSummary.totalAssigned} tasks assigned, ${allTasksSummary.pendingTasks} pending, ${unviewedNotesCount} unviewed notes`,
+        details: `Employee "${employee.name}" viewed dashboard with filter: ${timeFilter}`,
         metadata: {
           timeFilter,
-          customStart: customStart || null,
-          customEnd: customEnd || null,
           totalAssignedTasks: allTasksSummary.totalAssigned,
           totalCompletedTasks: allTasksSummary.totalCompleted,
           pendingTasks: allTasksSummary.pendingTasks,
@@ -1226,25 +1397,9 @@ router.get("/dashboard/overview", auth, async (req, res) => {
           unviewedNotesCount: unviewedNotesCount
         }
       });
-
-      logToConsole("INFO", "ACTIVITY_LOG_CREATED_EMPLOYEE_DASHBOARD", {
-        employeeId: employee.employeeId,
-        action: "EMPLOYEE_DASHBOARD_VIEWED"
-      });
     } catch (logError) {
-      logToConsole("ERROR", "ACTIVITY_LOG_FAILED_EMPLOYEE_DASHBOARD", {
-        error: logError.message,
-        employeeId: employee.employeeId
-      });
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED_EMPLOYEE_DASHBOARD", { error: logError.message });
     }
-
-    logToConsole("SUCCESS", "EMPLOYEE_DASHBOARD_FETCHED", {
-      employeeId: employee.employeeId,
-      timeFilter,
-      totalClients: clients.length,
-      totalTasks: allTasksSummary.totalAssigned,
-      unviewedNotes: unviewedNotesCount
-    });
 
     res.json({
       success: true,
@@ -1253,10 +1408,7 @@ router.get("/dashboard/overview", auth, async (req, res) => {
       months: months.map(m => ({
         year: m.year,
         month: m.month,
-        display: `${new Date(m.year, m.month - 1).toLocaleString('default', {
-          month: 'long',
-          timeZone: "Europe/Helsinki"
-        })} ${m.year}`
+        display: `${new Date(m.year, m.month - 1).toLocaleString('default', { month: 'long', timeZone: "Europe/Helsinki" })} ${m.year}`
       })),
       data: monthData,
       summaries: {
@@ -1264,12 +1416,11 @@ router.get("/dashboard/overview", auth, async (req, res) => {
         tasks: allTasksSummary,
         notes: allNotesSummary
       },
-      // NEW: Alert information with notes preview
       alertInfo: {
         hasUnviewedNotes: unviewedNotesCount > 0,
         unviewedNotesCount,
-        totalNotes: notesPreview.totalNotes,
-        previewNotes: notesPreview.preview,
+        totalNotes: allNotesSummary.totalNotes,
+        previewNotes: previewNotes.slice(0, 5),
         lastChecked: new Date().toISOString()
       }
     });
@@ -1283,8 +1434,24 @@ router.get("/dashboard/overview", auth, async (req, res) => {
   }
 });
 
+// Helper function for employee info
+const getEmployeeInfo = (employee) => ({
+  employeeId: employee.employeeId,
+  name: employee.name,
+  email: employee.email,
+  phone: employee.phone || "Not provided",
+  isActive: employee.isActive ? 'Active' : 'Inactive',
+  statusColor: employee.isActive ? '#7cd64b' : '#ff4b4b',
+  activeSince: new Date(employee.createdAt).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: "Europe/Helsinki"
+  })
+});
+
 /* ===============================
-   2. GET SPECIFIC MONTH DETAILS FOR EMPLOYEE (UPDATED)
+   2. GET SPECIFIC MONTH DETAILS FOR EMPLOYEE - OPTIMIZED
 ================================ */
 router.get("/dashboard/month-details", auth, async (req, res) => {
   try {
@@ -1298,20 +1465,15 @@ router.get("/dashboard/month-details", auth, async (req, res) => {
       });
     }
 
-    logToConsole("INFO", "EMPLOYEE_MONTH_DETAILS_REQUEST", {
+    logToConsole("INFO", "EMPLOYEE_MONTH_DETAILS_REQUEST_OPTIMIZED", {
       employeeId,
       year,
       month
     });
 
-    // Get employee data
     const employee = await Employee.findOne(
       { employeeId },
-      {
-        employeeId: 1,
-        name: 1,
-        email: 1
-      }
+      { employeeId: 1, name: 1, email: 1 }
     ).lean();
 
     if (!employee) {
@@ -1321,12 +1483,15 @@ router.get("/dashboard/month-details", auth, async (req, res) => {
       });
     }
 
-    // Get all clients where this employee is assigned for this month
+    const targetYear = parseInt(year);
+    const targetMonth = parseInt(month);
+
+    // ============= OPTIMIZATION: Get all data in batch =============
     const clients = await Client.find(
       {
         "employeeAssignments.employeeId": employeeId,
-        "employeeAssignments.year": parseInt(year),
-        "employeeAssignments.month": parseInt(month),
+        "employeeAssignments.year": targetYear,
+        "employeeAssignments.month": targetMonth,
         "employeeAssignments.isRemoved": false
       },
       {
@@ -1342,32 +1507,160 @@ router.get("/dashboard/month-details", auth, async (req, res) => {
       }
     ).lean();
 
+    if (clients.length === 0) {
+      return res.json({
+        success: true,
+        employee: { employeeId: employee.employeeId, name: employee.name, email: employee.email },
+        month: { year: targetYear, month: targetMonth, monthName: new Date(targetYear, targetMonth - 1).toLocaleString('default', { month: 'long' }) },
+        clients: [],
+        tasks: { total: 0, pending: 0, completed: 0, list: [] },
+        notes: { total: 0, clientNotes: 0, employeeNotes: 0, unviewedCount: 0, list: [] }
+      });
+    }
+
+    const clientIds = clients.map(c => c.clientId);
+
+    // Batch load month data from NEW collection
+    const ClientMonthlyData = require("../models/ClientMonthlyData");
+    const allMonthlyData = await ClientMonthlyData.find({
+      clientId: { $in: clientIds }
+    }).lean();
+
+    const monthDataMap = new Map();
+    for (const record of allMonthlyData) {
+      if (record.months && Array.isArray(record.months)) {
+        for (const monthData of record.months) {
+          if (monthData.year === targetYear && monthData.month === targetMonth) {
+            const key = `${record.clientId}-${targetYear}-${targetMonth}`;
+            monthDataMap.set(key, monthData);
+          }
+        }
+      }
+    }
+
+    // Build employee assignments map
+    const employeeAssignmentsMap = new Map();
+    for (const client of clients) {
+      if (client.employeeAssignments && Array.isArray(client.employeeAssignments)) {
+        for (const assignment of client.employeeAssignments) {
+          if (assignment.employeeId === employeeId && 
+              assignment.year === targetYear && 
+              assignment.month === targetMonth &&
+              !assignment.isRemoved) {
+            const key = `${client.clientId}-${assignment.task}`;
+            employeeAssignmentsMap.set(key, assignment);
+          }
+        }
+      }
+    }
+
     const detailedClients = [];
     const allTasks = [];
     const allNotes = [];
 
     for (const client of clients) {
-      const yearKey = String(year);
-      const monthKey = String(month);
-      const monthDocuments = client.documents?.[yearKey]?.[monthKey];
+      const monthKey = `${client.clientId}-${targetYear}-${targetMonth}`;
+      const monthDataFromMap = monthDataMap.get(monthKey);
+      
+      // Get client tasks
+      const taskNames = ['Bookkeeping', 'VAT Filing Computation', 'VAT Filing', 'Financial Statement Generation'];
+      const clientTasks = [];
+      
+      for (const taskName of taskNames) {
+        const taskKey = `${client.clientId}-${taskName}`;
+        const assignment = employeeAssignmentsMap.get(taskKey);
+        if (assignment) {
+          clientTasks.push({
+            taskId: taskName.toLowerCase().replace(/\s+/g, '_'),
+            taskName: taskName,
+            status: 'assigned',
+            accountingDone: assignment.accountingDone || false,
+            accountingDoneAt: assignment.accountingDoneAt,
+            accountingDoneBy: assignment.accountingDoneBy,
+            assignedAt: assignment.assignedAt,
+            assignedBy: assignment.assignedBy,
+            adminName: assignment.adminName
+          });
+        }
+      }
 
-      // Get tasks for this client
-      const clientTasks = getEmployeeTasksForMonth(
-        employeeId,
-        client.employeeAssignments || [],
-        parseInt(year),
-        parseInt(month)
-      );
+      if (clientTasks.length > 0) {
+        // Extract notes
+        const clientNotes = [];
+        let unviewedCount = 0;
+        
+        if (monthDataFromMap) {
+          // Month notes
+          if (monthDataFromMap.monthNotes && Array.isArray(monthDataFromMap.monthNotes)) {
+            monthDataFromMap.monthNotes.forEach(note => {
+              const isUnviewed = !note.isViewedByEmployee;
+              clientNotes.push({
+                type: 'month_note',
+                category: 'General',
+                note: note.note,
+                addedBy: note.addedBy || 'Client',
+                addedAt: note.addedAt,
+                source: 'client',
+                clientName: client.name,
+                isUnviewedByEmployee: isUnviewed,
+                isViewedByEmployee: note.isViewedByEmployee || false,
+                viewedBy: note.viewedBy || []
+              });
+              if (isUnviewed) unviewedCount++;
+            });
+          }
+          
+          // Category notes
+          ['sales', 'purchase', 'bank'].forEach(cat => {
+            const catData = monthDataFromMap[cat];
+            if (catData && catData.categoryNotes && Array.isArray(catData.categoryNotes)) {
+              catData.categoryNotes.forEach(note => {
+                const isUnviewed = !note.isViewedByEmployee;
+                clientNotes.push({
+                  type: 'delete_reason',
+                  category: cat.charAt(0).toUpperCase() + cat.slice(1),
+                  note: note.note,
+                  addedBy: note.addedBy || 'Client',
+                  addedAt: note.addedAt,
+                  source: 'client',
+                  clientName: client.name,
+                  isUnviewedByEmployee: isUnviewed,
+                  isViewedByEmployee: note.isViewedByEmployee || false,
+                  viewedBy: note.viewedBy || []
+                });
+                if (isUnviewed) unviewedCount++;
+              });
+            }
+          });
+          
+          // Other categories
+          if (monthDataFromMap.other && Array.isArray(monthDataFromMap.other)) {
+            monthDataFromMap.other.forEach(otherCat => {
+              if (otherCat && otherCat.document && otherCat.document.categoryNotes) {
+                otherCat.document.categoryNotes.forEach(note => {
+                  const isUnviewed = !note.isViewedByEmployee;
+                  clientNotes.push({
+                    type: 'delete_reason',
+                    category: otherCat.categoryName,
+                    note: note.note,
+                    addedBy: note.addedBy || 'Client',
+                    addedAt: note.addedAt,
+                    source: 'client',
+                    clientName: client.name,
+                    isUnviewedByEmployee: isUnviewed,
+                    isViewedByEmployee: note.isViewedByEmployee || false,
+                    viewedBy: note.viewedBy || []
+                  });
+                  if (isUnviewed) unviewedCount++;
+                });
+              }
+            });
+          }
+        }
 
-      const assignedTasks = clientTasks.filter(task => task.status === 'assigned');
-      const pendingTasks = assignedTasks.filter(task => !task.accountingDone);
-      const completedTasks = assignedTasks.filter(task => task.accountingDone);
+        const pendingTasks = clientTasks.filter(t => !t.accountingDone);
+        const completedTasks = clientTasks.filter(t => t.accountingDone);
 
-      // Get notes for this client WITH VIEW STATUS
-      const notes = getEmployeeNotesForMonth(monthDocuments, employeeId, client.clientId);
-      const unviewedNotes = notes.notes.filter(note => note.isUnviewedByEmployee);
-
-      if (assignedTasks.length > 0) {
         detailedClients.push({
           clientId: client.clientId,
           clientName: client.name,
@@ -1376,42 +1669,40 @@ router.get("/dashboard/month-details", auth, async (req, res) => {
           businessName: client.businessName || "Not specified",
           businessNature: client.businessNature || "Not specified",
           vatPeriod: client.vatPeriod || "Monthly",
-          tasks: assignedTasks,
+          tasks: clientTasks,
           pendingTasks: pendingTasks.length,
           completedTasks: completedTasks.length,
-          notes: notes.notes,
-          unviewedNotes: unviewedNotes.length  // ADDED
+          notes: clientNotes,
+          unviewedNotes: unviewedCount
         });
 
-        allTasks.push(...assignedTasks.map(task => ({
+        allTasks.push(...clientTasks.map(task => ({
           ...task,
           clientName: client.name,
           clientId: client.clientId
         })));
 
-        allNotes.push(...notes.notes.map(note => ({
+        allNotes.push(...clientNotes.map(note => ({
           ...note,
           clientName: client.name,
           clientId: client.clientId,
-          isUnviewed: note.isUnviewedByEmployee  // ADDED
+          isUnviewed: note.isUnviewedByEmployee
         })));
       }
     }
 
-    // ===== ACTIVITY LOG: EMPLOYEE MONTH DETAILS VIEWED =====
+    // Activity Log
     try {
-      const unviewedNotesCount = allNotes.filter(n => n.isUnviewed).length;
-
       await ActivityLog.create({
         userName: employee.name,
         role: "EMPLOYEE",
         employeeId: employee.employeeId,
         employeeName: employee.name,
         action: "EMPLOYEE_MONTH_DETAILS_VIEWED",
-        details: `Employee "${employee.name}" viewed details for ${month}/${year}. Found ${detailedClients.length} clients, ${allTasks.length} tasks, ${allNotes.length} notes (${unviewedNotesCount} unviewed)`,
+        details: `Employee "${employee.name}" viewed details for ${month}/${year}`,
         metadata: {
-          year: parseInt(year),
-          month: parseInt(month),
+          year: targetYear,
+          month: targetMonth,
           totalClients: detailedClients.length,
           totalTasks: allTasks.length,
           pendingTasks: allTasks.filter(t => !t.accountingDone).length,
@@ -1419,31 +1710,12 @@ router.get("/dashboard/month-details", auth, async (req, res) => {
           totalNotes: allNotes.length,
           clientNotes: allNotes.filter(n => n.source === 'client').length,
           employeeNotes: allNotes.filter(n => n.source === 'employee').length,
-          unviewedNotes: unviewedNotesCount
+          unviewedNotes: allNotes.filter(n => n.isUnviewed).length
         }
       });
-
-      logToConsole("INFO", "ACTIVITY_LOG_CREATED_MONTH_DETAILS", {
-        employeeId: employee.employeeId,
-        year,
-        month
-      });
     } catch (logError) {
-      logToConsole("ERROR", "ACTIVITY_LOG_FAILED_MONTH_DETAILS", {
-        error: logError.message,
-        employeeId: employee.employeeId
-      });
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED_MONTH_DETAILS", { error: logError.message });
     }
-
-    logToConsole("SUCCESS", "EMPLOYEE_MONTH_DETAILS_FETCHED", {
-      employeeId: employee.employeeId,
-      year,
-      month,
-      clientsCount: detailedClients.length,
-      tasksCount: allTasks.length,
-      notesCount: allNotes.length,
-      unviewedNotes: allNotes.filter(n => n.isUnviewed).length
-    });
 
     res.json({
       success: true,
@@ -1453,28 +1725,25 @@ router.get("/dashboard/month-details", auth, async (req, res) => {
         email: employee.email
       },
       month: {
-        year: parseInt(year),
-        month: parseInt(month),
-        monthName: new Date(year, month - 1).toLocaleString('default', {
+        year: targetYear,
+        month: targetMonth,
+        monthName: new Date(targetYear, targetMonth - 1).toLocaleString('default', {
           month: 'long',
           timeZone: "Europe/Helsinki"
         })
       },
-
       clients: detailedClients,
-
       tasks: {
         total: allTasks.length,
         pending: allTasks.filter(t => !t.accountingDone).length,
         completed: allTasks.filter(t => t.accountingDone).length,
         list: allTasks
       },
-
       notes: {
         total: allNotes.length,
         clientNotes: allNotes.filter(n => n.source === 'client').length,
         employeeNotes: allNotes.filter(n => n.source === 'employee').length,
-        unviewedCount: allNotes.filter(n => n.isUnviewed).length,  // ADDED
+        unviewedCount: allNotes.filter(n => n.isUnviewed).length,
         list: allNotes
       }
     });

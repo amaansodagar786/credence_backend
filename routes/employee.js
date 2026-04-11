@@ -6,6 +6,11 @@ const sendEmail = require("../utils/sendEmail");
 const Employee = require("../models/Employee");
 const ActivityLog = require("../models/ActivityLog");
 const Client = require("../models/Client");
+// Add this with other requires at the top of employeeRoutes.js
+const EmployeeAssignment = require("../models/EmployeeAssignment");
+// Add these with other requires at the top
+const EmployeeViewedFile = require("../models/EmployeeViewedFile");
+const EmployeeAuditedFile = require("../models/EmployeeAuditedFile");
 
 const router = express.Router();
 
@@ -447,349 +452,327 @@ router.get("/me", async (req, res) => {
 
 
 
-/* ===============================
-   EMPLOYEE GET ASSIGNED CLIENTS (UPDATED FOR MULTIPLE FILES)
-================================ */
 router.get("/assigned-clients", async (req, res) => {
   try {
     const token = req.cookies?.employeeToken;
-
-    // Console log: Request for assigned clients
-    logToConsole("INFO", "GET_ASSIGNED_CLIENTS_REQUEST", {
-      ip: req.ip,
-      userAgent: req.get('User-Agent')
-    });
+    logToConsole("INFO", "GET_ASSIGNED_CLIENTS_REQUEST", { ip: req.ip, userAgent: req.get('User-Agent') });
 
     if (!token) {
-      logToConsole("WARN", "NO_TOKEN_FOR_ASSIGNED_CLIENTS", { ip: req.ip });
       return res.status(401).json({ message: "Unauthorized - No token" });
     }
 
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
-      // Console log: Token verified
-      logToConsole("DEBUG", "TOKEN_VERIFIED_FOR_ASSIGNED_CLIENTS", {
-        employeeId: decoded.employeeId,
-        name: decoded.name
-      });
     } catch (jwtError) {
-      // Console log: Token verification failed
-      logToConsole("ERROR", "TOKEN_VERIFICATION_FAILED_ASSIGNED_CLIENTS", {
-        error: jwtError.message,
-        token: token.substring(0, 20) + '...'
-      });
-
-      // Clear invalid cookie
       res.clearCookie("employeeToken");
-
-      return res.status(401).json({
-        message: "Invalid or expired token",
-        clearedCookie: true
-      });
+      return res.status(401).json({ message: "Invalid or expired token", clearedCookie: true });
     }
 
-    const employee = await Employee.findOne({
-      employeeId: decoded.employeeId
-    });
-
+    const employee = await Employee.findOne({ employeeId: decoded.employeeId });
     if (!employee) {
-      // Console log: Employee not found
-      logToConsole("ERROR", "EMPLOYEE_NOT_FOUND_FOR_ASSIGNED_CLIENTS", {
-        employeeId: decoded.employeeId
-      });
-
-      // Clear invalid cookie
       res.clearCookie("employeeToken");
-
-      return res.status(404).json({
-        message: "Employee not found",
-        clearedCookie: true
-      });
+      return res.status(404).json({ message: "Employee not found", clearedCookie: true });
     }
 
-    // Console log: Employee found with assignments
-    logToConsole("DEBUG", "EMPLOYEE_ASSIGNMENTS_FOUND", {
-      employeeId: employee.employeeId,
-      name: employee.name,
-      assignmentCount: employee.assignedClients?.length || 0
-    });
+    // ============= STEP 1: Get ALL assignments from BOTH sources =============
+    const EmployeeAssignment = require("../models/EmployeeAssignment");
+    const newDoc = await EmployeeAssignment.findOne({ employeeId: employee.employeeId });
 
-    const response = [];
-    const clientCache = new Map();
-    const currentDate = new Date();
-    const currentYear = currentDate.getFullYear();
-    const currentMonth = currentDate.getMonth() + 1; // 1-12
+    const oldAssignments = employee.assignedClients || [];
+    const newAssignments = newDoc?.assignedClients || [];
 
-    // ===== NEW: Group assignments by unique key to get latest version =====
-    const latestAssignmentsMap = new Map();
+    // MERGE both - new collection takes priority (newer assignedAt wins)
+    const mergedMap = new Map();
 
-    // First pass: Group all assignments by clientId-year-month-task and keep the latest
-    for (const assign of employee.assignedClients || []) {
+    for (const assign of oldAssignments) {
+      if (assign.isRemoved) continue;
       const key = `${assign.clientId}-${assign.year}-${assign.month}-${assign.task}`;
-
-      // If we haven't seen this key before, or this assignment is newer
-      if (!latestAssignmentsMap.has(key) ||
-        new Date(assign.assignedAt) > new Date(latestAssignmentsMap.get(key).assignedAt)) {
-        latestAssignmentsMap.set(key, assign);
+      if (!mergedMap.has(key) || new Date(assign.assignedAt) > new Date(mergedMap.get(key).assignedAt)) {
+        mergedMap.set(key, assign);
       }
     }
 
-    // Convert map to array of latest assignments
-    const latestAssignments = Array.from(latestAssignmentsMap.values());
+    for (const assign of newAssignments) {
+      if (assign.isRemoved) continue;
+      const key = `${assign.clientId}-${assign.year}-${assign.month}-${assign.task}`;
+      if (!mergedMap.has(key) || new Date(assign.assignedAt) > new Date(mergedMap.get(key).assignedAt)) {
+        mergedMap.set(key, assign);
+      }
+    }
 
-    console.log('ALL JAN 2026 ASSIGNMENTS BEFORE GROUPING:',
-      employee.assignedClients.filter(a =>
-        a.clientId === 'e66b4542-6941-4d2c-91c0-3644ed095199' &&
-        a.year === 2026 &&
-        a.month === 1 &&
-        !a.isRemoved
-      ).map(a => ({
-        task: a.task,
-        assignedAt: a.assignedAt,
-        isRemoved: a.isRemoved
-      }))
-    );
+    const allAssignments = Array.from(mergedMap.values());
 
-
-    console.log('📋 AFTER GROUPING - JAN 2026:',
-      latestAssignments.filter(a =>
-        a.clientId === 'e66b4542-6941-4d2c-91c0-3644ed095199' &&
-        a.year === 2026 &&
-        a.month === 1
-      ).map(a => ({
-        task: a.task,
-        assignedAt: a.assignedAt
-      }))
-    );
-
-    logToConsole("DEBUG", "LATEST_ASSIGNMENTS_GROUPED", {
-      originalCount: employee.assignedClients?.length || 0,
-      latestCount: latestAssignments.length,
+    logToConsole("DEBUG", "MERGED_ASSIGNMENTS", {
+      oldCount: oldAssignments.length,
+      newCount: newAssignments.length,
+      mergedCount: allAssignments.length,
       employeeId: employee.employeeId
     });
 
-    // Process ONLY the latest assignments
-    for (const assign of latestAssignments) {
-      try {
+    if (allAssignments.length === 0) {
+      return res.json([]);
+    }
 
+    // ============= STEP 2: Get ALL unique client IDs =============
+    const uniqueClientIds = [...new Set(allAssignments.map(a => a.clientId))];
 
-        // console.log('🔍 PROCESSING ASSIGNMENT:', {
-        //   task: assign.task,
-        //   clientId: assign.clientId,
-        //   willBeIncluded: true 
-        // });
+    // ============= STEP 3: Get ALL clients in ONE batch query =============
+    const clients = await Client.find(
+      { clientId: { $in: uniqueClientIds } }
+    ).lean();
 
-        // ===== UPDATED: Skip only if the LATEST version is removed =====
-        if (assign.isRemoved) {
-          logToConsole("DEBUG", "SKIPPING_LATEST_REMOVED_ASSIGNMENT", {
-            employeeId: employee.employeeId,
-            clientId: assign.clientId,
-            year: assign.year,
-            month: assign.month,
-            task: assign.task,
-            removedAt: assign.removedAt,
-            removedBy: assign.removedBy
-          });
-          continue; // Skip this removed assignment
+    const clientMap = new Map();
+    clients.forEach(client => {
+      clientMap.set(client.clientId, client);
+    });
+
+    logToConsole("DEBUG", "CLIENTS_FETCHED", {
+      totalClients: clients.length,
+      uniqueClientIds: uniqueClientIds.length
+    });
+
+    // ============= STEP 4: Get ALL unique month combinations for batch query =============
+    const uniqueMonthKeys = new Set();
+    for (const assign of allAssignments) {
+      uniqueMonthKeys.add(`${assign.clientId}-${assign.year}-${assign.month}`);
+    }
+
+    logToConsole("DEBUG", "UNIQUE_MONTH_COMBINATIONS", {
+      totalMonths: uniqueMonthKeys.size
+    });
+
+    // ============= STEP 5: BATCH QUERY - Get ALL month data in ONE go =============
+    const ClientMonthlyData = require("../models/ClientMonthlyData");
+
+    // Get all monthly data for all relevant clients
+    const allMonthlyData = await ClientMonthlyData.find({
+      clientId: { $in: uniqueClientIds }
+    }).lean();
+
+    // Build a Map for fast O(1) lookup: key = "clientId-year-month"
+    const monthDataMap = new Map();
+
+    for (const record of allMonthlyData) {
+      if (record.months && Array.isArray(record.months)) {
+        for (const month of record.months) {
+          const key = `${record.clientId}-${month.year}-${month.month}`;
+
+          // Convert to same format as old structure for compatibility
+          const formattedMonthData = {
+            sales: month.sales || { files: [], isLocked: false },
+            purchase: month.purchase || { files: [], isLocked: false },
+            bank: month.bank || { files: [], isLocked: false },
+            other: month.other || [],
+            isLocked: month.isLocked || false,
+            lockedAt: month.lockedAt || null,
+            lockedBy: month.lockedBy || null,
+            autoLockDate: month.autoLockDate || null,
+            accountingDone: month.accountingDone || false,
+            accountingDoneAt: month.accountingDoneAt || null,
+            accountingDoneBy: month.accountingDoneBy || null
+          };
+
+          monthDataMap.set(key, formattedMonthData);
         }
-
-        let client;
-
-        // Check cache first
-        if (clientCache.has(assign.clientId)) {
-          client = clientCache.get(assign.clientId);
-          logToConsole("DEBUG", "CLIENT_FROM_CACHE", {
-            clientId: assign.clientId
-          });
-        } else {
-          client = await Client.findOne({ clientId: assign.clientId });
-
-          if (client) {
-            clientCache.set(assign.clientId, client);
-            logToConsole("DEBUG", "CLIENT_FETCHED_FROM_DB", {
-              clientId: assign.clientId,
-              name: client.name
-            });
-          }
-        }
-
-        if (!client) {
-          logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_ASSIGNMENT", {
-            clientId: assign.clientId,
-            employeeId: employee.employeeId
-          });
-          continue;
-        }
-
-        // ===== REMOVED: Client record check that was causing the issue =====
-        // No longer checking client.employeeAssignments for isRemoved status
-        // The employee's isRemoved field is the source of truth
-
-        const yearKey = String(assign.year);
-        const monthKey = String(assign.month);
-
-        // Get month data from client documents
-        let monthData = {
-          sales: { files: [], isLocked: false },
-          purchase: { files: [], isLocked: false },
-          bank: { files: [], isLocked: false },
-          other: [],
-          isLocked: false,
-          lockedAt: null,
-          lockedBy: null,
-          autoLockDate: null,
-          accountingDone: false,
-          accountingDoneAt: null,
-          accountingDoneBy: null
-        };
-
-        if (client.documents &&
-          client.documents.get(yearKey) &&
-          client.documents.get(yearKey).get(monthKey)) {
-          monthData = client.documents.get(yearKey).get(monthKey);
-
-          // Convert Map to array for 'other' documents if needed
-          if (monthData.other && !Array.isArray(monthData.other)) {
-            monthData.other = Array.from(monthData.other?.values() || []);
-          }
-
-          // Ensure all categories have files array
-          ['sales', 'purchase', 'bank'].forEach(categoryType => {
-            if (monthData[categoryType] && !monthData[categoryType].files) {
-              monthData[categoryType].files = [];
-            }
-          });
-
-          // Ensure accountingDone is boolean
-          monthData.accountingDone = Boolean(monthData.accountingDone);
-        }
-
-        // Determine if this is the current active month
-        const isCurrentMonth = (assign.year === currentYear && assign.month === currentMonth);
-
-        // Get total files count
-        const totalFiles = getTotalFilesCount(monthData);
-
-        // Create assignment object
-        const assignmentObj = {
-          _id: assign._id,
-          client: {
-            clientId: client.clientId,
-            name: client.name || assign.clientName,
-            email: client.email,
-            phone: client.phone,
-            address: client.address,
-            isActive: client.isActive,
-            currentPlan: client.currentPlan,
-            planSelected: client.planSelected,
-            nextMonthPlan: client.nextMonthPlan
-          },
-          year: assign.year,
-          month: assign.month,
-          assignedAt: assign.assignedAt,
-          assignedBy: assign.assignedBy,
-          adminName: assign.adminName,
-          task: assign.task,
-          clientName: assign.clientName || client.name,
-          isLocked: assign.isLocked || monthData.isLocked || false,
-          accountingDone: assign.accountingDone,
-          accountingDoneAt: assign.accountingDoneAt || monthData.accountingDoneAt,
-          accountingDoneBy: assign.accountingDoneBy || monthData.accountingDoneBy,
-          isCurrentMonth: isCurrentMonth,
-          totalFiles: totalFiles,
-          // NEW: Individual category file counts
-          salesFilesCount: monthData.sales?.files?.length || 0,
-          purchaseFilesCount: monthData.purchase?.files?.length || 0,
-          bankFilesCount: monthData.bank?.files?.length || 0,
-          otherCategoriesCount: monthData.other?.length || 0,
-          monthData
-        };
-
-        response.push(assignmentObj);
-
-        logToConsole("DEBUG", "ASSIGNMENT_PROCESSED", {
-          employeeId: employee.employeeId,
-          clientId: assign.clientId,
-          year: assign.year,
-          month: assign.month,
-          task: assign.task,
-          isCurrentMonth: isCurrentMonth,
-          accountingDone: assignmentObj.accountingDone,
-          totalFiles: totalFiles,
-          isRemoved: false // Explicitly marking as not removed
-        });
-
-      } catch (assignError) {
-        logToConsole("ERROR", "ASSIGNMENT_PROCESSING_ERROR", {
-          error: assignError.message,
-          employeeId: employee.employeeId,
-          clientId: assign.clientId,
-          year: assign.year,
-          month: assign.month,
-          task: assign.task
-        });
       }
     }
 
-    // Sort assignments: current month first, then others
+    // ============= STEP 6: For months not found in NEW collection, check OLD documents =============
+    // Get all clients with their documents for OLD collection fallback
+    const clientsWithDocs = await Client.find(
+      { clientId: { $in: uniqueClientIds } },
+      { clientId: 1, documents: 1 }
+    ).lean();
+
+    const oldDocMap = new Map();
+    for (const client of clientsWithDocs) {
+      if (client.documents && typeof client.documents === 'object') {
+        for (const [yearKey, yearData] of Object.entries(client.documents)) {
+          if (yearData && typeof yearData === 'object') {
+            for (const [monthKey, monthData] of Object.entries(yearData)) {
+              const key = `${client.clientId}-${yearKey}-${monthKey}`;
+              if (!monthDataMap.has(key)) {
+                // Format old data to match new structure
+                const formattedData = {
+                  sales: monthData.sales || { files: [], isLocked: false },
+                  purchase: monthData.purchase || { files: [], isLocked: false },
+                  bank: monthData.bank || { files: [], isLocked: false },
+                  other: monthData.other || [],
+                  isLocked: monthData.isLocked || false,
+                  lockedAt: monthData.lockedAt || null,
+                  lockedBy: monthData.lockedBy || null,
+                  autoLockDate: monthData.autoLockDate || null,
+                  accountingDone: monthData.accountingDone || false,
+                  accountingDoneAt: monthData.accountingDoneAt || null,
+                  accountingDoneBy: monthData.accountingDoneBy || null
+                };
+
+                if (formattedData.other && !Array.isArray(formattedData.other)) {
+                  formattedData.other = Array.from(formattedData.other?.values() || []);
+                }
+
+                oldDocMap.set(key, formattedData);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Merge old data into main map (new collection takes priority)
+    for (const [key, value] of oldDocMap) {
+      if (!monthDataMap.has(key)) {
+        monthDataMap.set(key, value);
+      }
+    }
+
+    logToConsole("DEBUG", "MONTH_DATA_LOADED", {
+      fromNewCollection: monthDataMap.size - oldDocMap.size,
+      fromOldCollection: oldDocMap.size,
+      total: monthDataMap.size
+    });
+
+    // ============= STEP 7: Helper function to get total files count (in memory - FAST!) =============
+    const getTotalFilesCount = (monthData) => {
+      if (!monthData) return 0;
+      let count = 0;
+
+      ['sales', 'purchase', 'bank'].forEach(categoryType => {
+        const category = monthData[categoryType];
+        if (category && category.files && Array.isArray(category.files)) {
+          count += category.files.length;
+        }
+      });
+
+      if (monthData.other && Array.isArray(monthData.other)) {
+        monthData.other.forEach(otherCat => {
+          if (otherCat.document && otherCat.document.files && Array.isArray(otherCat.document.files)) {
+            count += otherCat.document.files.length;
+          } else if (otherCat.files && Array.isArray(otherCat.files)) {
+            count += otherCat.files.length;
+          }
+        });
+      }
+
+      return count;
+    };
+
+    const getSalesFilesCount = (monthData) => {
+      if (!monthData) return 0;
+      return monthData.sales?.files?.length || 0;
+    };
+
+    const getPurchaseFilesCount = (monthData) => {
+      if (!monthData) return 0;
+      return monthData.purchase?.files?.length || 0;
+    };
+
+    const getBankFilesCount = (monthData) => {
+      if (!monthData) return 0;
+      return monthData.bank?.files?.length || 0;
+    };
+
+    const getOtherCategoriesCount = (monthData) => {
+      if (!monthData) return 0;
+      return monthData.other?.length || 0;
+    };
+
+    // ============= STEP 8: Process assignments in memory (NO MORE DATABASE CALLS!) =============
+    const currentDate = new Date();
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1;
+
+    const response = [];
+
+    for (const assign of allAssignments) {
+      const client = clientMap.get(assign.clientId);
+      if (!client) {
+        logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_ASSIGNMENT", {
+          clientId: assign.clientId,
+          task: assign.task
+        });
+        continue;
+      }
+
+      const monthKey = `${assign.clientId}-${assign.year}-${assign.month}`;
+      const monthData = monthDataMap.get(monthKey);
+
+      const isCurrentMonth = (assign.year === currentYear && assign.month === currentMonth);
+      const totalFiles = monthData ? getTotalFilesCount(monthData) : 0;
+
+      const assignmentObj = {
+        _id: assign._id,
+        client: {
+          clientId: client.clientId,
+          name: client.name || assign.clientName,
+          email: client.email,
+          phone: client.phone,
+          address: client.address,
+          isActive: client.isActive,
+          currentPlan: client.currentPlan,
+          planSelected: client.planSelected,
+          nextMonthPlan: client.nextMonthPlan
+        },
+        year: assign.year,
+        month: assign.month,
+        assignedAt: assign.assignedAt,
+        assignedBy: assign.assignedBy,
+        adminName: assign.adminName,
+        task: assign.task,
+        clientName: assign.clientName || client.name,
+        isLocked: assign.isLocked || (monthData?.isLocked) || false,
+        accountingDone: assign.accountingDone || false,
+        accountingDoneAt: assign.accountingDoneAt || monthData?.accountingDoneAt || null,
+        accountingDoneBy: assign.accountingDoneBy || monthData?.accountingDoneBy || null,
+        isCurrentMonth: isCurrentMonth,
+        totalFiles: totalFiles,
+        salesFilesCount: monthData ? getSalesFilesCount(monthData) : 0,
+        purchaseFilesCount: monthData ? getPurchaseFilesCount(monthData) : 0,
+        bankFilesCount: monthData ? getBankFilesCount(monthData) : 0,
+        otherCategoriesCount: monthData ? getOtherCategoriesCount(monthData) : 0,
+        monthData: monthData || null
+      };
+
+      response.push(assignmentObj);
+    }
+
+    // Sort assignments
     response.sort((a, b) => {
-      // Current month first
       if (a.isCurrentMonth && !b.isCurrentMonth) return -1;
       if (!a.isCurrentMonth && b.isCurrentMonth) return 1;
-
-      // Then by year (descending) and month (descending)
       if (a.year !== b.year) return b.year - a.year;
       return b.month - a.month;
     });
 
-    // Create activity log for viewing assigned clients
+    // ============= STEP 9: Activity Log =============
     try {
-      const totalAssignments = employee.assignedClients?.length || 0;
-      const activeAssignments = response.length;
-      const removedAssignments = totalAssignments - activeAssignments;
-
       await ActivityLog.create({
         userName: employee.name,
         role: "EMPLOYEE",
         employeeId: employee.employeeId,
         action: "VIEWED_ASSIGNED_CLIENTS",
-        details: `Employee viewed assigned clients - ${activeAssignments} active assignments (${removedAssignments} removed)`,
+        details: `Employee viewed assigned clients - ${response.length} active assignments`,
         metadata: {
-          activeAssignments,
-          removedAssignments,
-          totalAssignments,
-          currentMonthAssignments: response.filter(a => a.isCurrentMonth).length,
-          accountingDoneCount: response.filter(a => a.accountingDone).length,
-          totalFiles: response.reduce((sum, a) => sum + (a.totalFiles || 0), 0)
+          activeAssignments: response.length,
+          totalFiles: response.reduce((sum, a) => sum + (a.totalFiles || 0), 0),
+          performance: {
+            assignmentsProcessed: response.length,
+            monthDataLoaded: monthDataMap.size,
+            clientsFetched: clients.length
+          }
         }
       });
-
-      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-        action: "VIEWED_ASSIGNED_CLIENTS",
-        employeeId: employee.employeeId,
-        employeeName: employee.name,
-        activeAssignments: activeAssignments,
-        removedAssignments: removedAssignments,
-        totalAssignments: totalAssignments
-      });
     } catch (logError) {
-      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
-        error: logError.message,
-        employeeId: employee.employeeId
-      });
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", { error: logError.message });
     }
 
-    // Console log: Success response
-    logToConsole("SUCCESS", "ASSIGNED_CLIENTS_FETCHED_SUCCESS", {
+    logToConsole("SUCCESS", "ASSIGNED_CLIENTS_FETCHED_OPTIMIZED", {
       employeeId: employee.employeeId,
-      name: employee.name,
-      totalAssignments: employee.assignedClients?.length || 0,
-      activeAssignments: response.length,
-      removedAssignmentsFiltered: (employee.assignedClients?.length || 0) - response.length,
-      currentMonthAssignments: response.filter(a => a.isCurrentMonth).length,
-      accountingDoneCount: response.filter(a => a.accountingDone).length,
-      totalFilesAcrossAll: response.reduce((sum, a) => sum + (a.totalFiles || 0), 0),
+      employeeName: employee.name,
+      totalAssignments: response.length,
+      totalClients: clients.length,
+      monthDataLoaded: monthDataMap.size,
       timestamp: new Date().toISOString()
     });
 
@@ -799,14 +782,11 @@ router.get("/assigned-clients", async (req, res) => {
     logToConsole("ERROR", "ASSIGNED_CLIENTS_ENDPOINT_ERROR", {
       error: error.message,
       stack: error.stack,
-      ip: req.ip,
-      endpoint: "/assigned-clients"
+      ip: req.ip
     });
-
     res.status(500).json({
       message: "Error fetching assigned clients",
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      timestamp: new Date().toISOString()
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -818,137 +798,96 @@ router.put("/toggle-accounting-done", async (req, res) => {
     const { clientId, year, month, task, accountingDone } = req.body;
     const token = req.cookies?.employeeToken;
 
-    logToConsole("INFO", "TOGGLE_ACCOUNTING_DONE_REQUEST", {
-      clientId,
-      year,
-      month,
-      task,
-      accountingDone,
-      ip: req.ip
-    });
+    logToConsole("INFO", "TOGGLE_ACCOUNTING_DONE_REQUEST", { clientId, year, month, task, accountingDone, ip: req.ip });
 
     if (!clientId || !year || !month || !task) {
-      logToConsole("WARN", "MISSING_PARAMETERS_ACCOUNTING", {
-        clientId: !!clientId,
-        year: !!year,
-        month: !!month,
-        task: !!task
-      });
-      return res.status(400).json({
-        message: "Missing required parameters: clientId, year, month, task"
-      });
+      return res.status(400).json({ message: "Missing required parameters: clientId, year, month, task" });
     }
 
     if (!token) {
-      logToConsole("WARN", "NO_TOKEN_FOR_ACCOUNTING_TOGGLE", { ip: req.ip });
       return res.status(401).json({ message: "Unauthorized - No token" });
     }
 
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
-      logToConsole("DEBUG", "TOKEN_VERIFIED_FOR_ACCOUNTING", {
-        employeeId: decoded.employeeId,
-        name: decoded.name
-      });
     } catch (jwtError) {
-      logToConsole("ERROR", "TOKEN_VERIFICATION_FAILED_ACCOUNTING", {
-        error: jwtError.message
-      });
       res.clearCookie("employeeToken");
       return res.status(401).json({ message: "Invalid or expired token" });
     }
 
     const employee = await Employee.findOne({ employeeId: decoded.employeeId });
-
     if (!employee) {
-      logToConsole("ERROR", "EMPLOYEE_NOT_FOUND_ACCOUNTING", {
-        employeeId: decoded.employeeId
-      });
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    // ========== LOG: ALL assignments for this client+month in Employee collection ==========
-    const employeeMonthAssignments = employee.assignedClients.filter(
-      a => a.clientId === clientId &&
-        a.year === parseInt(year) &&
-        a.month === parseInt(month)
-    );
-    logToConsole("DEBUG", "EMPLOYEE_ALL_ASSIGNMENTS_FOR_THIS_MONTH", {
-      totalFound: employeeMonthAssignments.length,
-      assignments: employeeMonthAssignments.map(a => ({
-        task: a.task,
-        accountingDone: a.accountingDone,
-        isRemoved: a.isRemoved || false
-      }))
-    });
+    const EmployeeAssignment = require("../models/EmployeeAssignment");
+    let newDoc = await EmployeeAssignment.findOne({ employeeId: employee.employeeId });
 
+    let assignmentFound = false;
+    let updatedInNewCollection = false;
+
+    // ===== FIRST: Try to update in NEW COLLECTION =====
+    if (newDoc) {
+      const newAssignmentIndex = newDoc.assignedClients.findIndex(
+        a => a.clientId === clientId &&
+          a.year === parseInt(year) &&
+          a.month === parseInt(month) &&
+          a.task === task &&
+          !a.isRemoved
+      );
+
+      if (newAssignmentIndex !== -1) {
+        newDoc.assignedClients[newAssignmentIndex].accountingDone = accountingDone;
+        newDoc.assignedClients[newAssignmentIndex].accountingDoneAt = new Date();
+        newDoc.assignedClients[newAssignmentIndex].accountingDoneBy = employee.employeeId;
+        await newDoc.save();
+        assignmentFound = true;
+        updatedInNewCollection = true;
+        logToConsole("INFO", "UPDATED_IN_NEW_COLLECTION", { employeeId: employee.employeeId, task, accountingDone });
+      }
+    }
+
+    // ===== SECOND: Try to update in OLD COLLECTION (for backward compatibility) =====
     const assignmentIndex = employee.assignedClients.findIndex(
       a => a.clientId === clientId &&
         a.year === parseInt(year) &&
         a.month === parseInt(month) &&
-        a.task === task
+        a.task === task &&
+        !a.isRemoved
     );
 
-    // ========== LOG: Did we find the assignment in Employee collection? ==========
-    logToConsole("DEBUG", "EMPLOYEE_ASSIGNMENT_FINDINDEX_RESULT", {
-      assignmentIndex,
-      found: assignmentIndex !== -1,
-      searchedFor: { clientId, year, month, task }
-    });
+    if (assignmentIndex !== -1) {
+      employee.assignedClients[assignmentIndex].accountingDone = accountingDone;
+      employee.assignedClients[assignmentIndex].accountingDoneAt = new Date();
+      employee.assignedClients[assignmentIndex].accountingDoneBy = employee.employeeId;
+      await employee.save();
+      assignmentFound = true;
+      logToConsole("INFO", "UPDATED_IN_OLD_COLLECTION", { employeeId: employee.employeeId, task, accountingDone });
+    }
 
-    if (assignmentIndex === -1) {
-      logToConsole("WARN", "ASSIGNMENT_NOT_FOUND_IN_EMPLOYEE", {
+    // ===== If not found in either collection =====
+    if (!assignmentFound) {
+      logToConsole("WARN", "ASSIGNMENT_NOT_FOUND_IN_EITHER_COLLECTION", {
         clientId, year, month, task,
         employeeId: employee.employeeId,
-        availableTasks: employee.assignedClients
-          .filter(a => a.clientId === clientId && a.year === parseInt(year) && a.month === parseInt(month))
-          .map(a => a.task)
+        hasNewDoc: !!newDoc,
+        newDocAssignmentsCount: newDoc?.assignedClients?.length || 0,
+        oldAssignmentsCount: employee.assignedClients?.length || 0
       });
       return res.status(404).json({
-        message: `Assignment not found for client ${clientId}, ${month}/${year}, task: ${task}`
+        message: `Assignment not found for client ${clientId}, ${month}/${year}, task: ${task}`,
+        debug: {
+          hasNewCollection: !!newDoc,
+          oldAssignmentsCount: employee.assignedClients?.length || 0,
+          newAssignmentsCount: newDoc?.assignedClients?.length || 0
+        }
       });
     }
 
-    // ========== LOG: Before update in Employee collection ==========
-    logToConsole("DEBUG", "EMPLOYEE_ASSIGNMENT_BEFORE_UPDATE", {
-      task: employee.assignedClients[assignmentIndex].task,
-      accountingDone_BEFORE: employee.assignedClients[assignmentIndex].accountingDone,
-      accountingDone_WILL_SET_TO: accountingDone
-    });
-
-    employee.assignedClients[assignmentIndex].accountingDone = accountingDone;
-    employee.assignedClients[assignmentIndex].accountingDoneAt = new Date();
-    employee.assignedClients[assignmentIndex].accountingDoneBy = employee.employeeId;
-
-    await employee.save();
-
-    // ========== LOG: After update in Employee collection ==========
-    logToConsole("DEBUG", "EMPLOYEE_ASSIGNMENT_AFTER_UPDATE", {
-      task: employee.assignedClients[assignmentIndex].task,
-      accountingDone_AFTER: employee.assignedClients[assignmentIndex].accountingDone,
-      accountingDoneAt: employee.assignedClients[assignmentIndex].accountingDoneAt
-    });
-
+    // ===== Update CLIENT (always do this) =====
     const client = await Client.findOne({ clientId });
-
     if (client) {
-
-      // ========== LOG: ALL assignments for this client+month in Client collection ==========
-      const clientMonthAssignments = client.employeeAssignments.filter(
-        a => a.year === parseInt(year) &&
-          a.month === parseInt(month) &&
-          a.employeeId === employee.employeeId
-      );
-      logToConsole("DEBUG", "CLIENT_ALL_ASSIGNMENTS_FOR_THIS_MONTH", {
-        totalFound: clientMonthAssignments.length,
-        assignments: clientMonthAssignments.map(a => ({
-          task: a.task,
-          accountingDone: a.accountingDone,
-          isRemoved: a.isRemoved || false
-        }))
-      });
-
       const clientAssignmentIndex = client.employeeAssignments.findIndex(
         a => a.year === parseInt(year) &&
           a.month === parseInt(month) &&
@@ -957,22 +896,7 @@ router.put("/toggle-accounting-done", async (req, res) => {
           a.isRemoved !== true
       );
 
-      // ========== LOG: Did we find the assignment in Client collection? ==========
-      logToConsole("DEBUG", "CLIENT_ASSIGNMENT_FINDINDEX_RESULT", {
-        clientAssignmentIndex,
-        found: clientAssignmentIndex !== -1,
-        searchedFor: { year, month, employeeId: employee.employeeId, task }
-      });
-
       if (clientAssignmentIndex !== -1) {
-
-        // ========== LOG: Before update in Client collection ==========
-        logToConsole("DEBUG", "CLIENT_ASSIGNMENT_BEFORE_UPDATE", {
-          task: client.employeeAssignments[clientAssignmentIndex].task,
-          accountingDone_BEFORE: client.employeeAssignments[clientAssignmentIndex].accountingDone,
-          accountingDone_WILL_SET_TO: accountingDone
-        });
-
         client.employeeAssignments[clientAssignmentIndex].accountingDone = accountingDone;
         client.employeeAssignments[clientAssignmentIndex].accountingDoneAt = new Date();
         client.employeeAssignments[clientAssignmentIndex].accountingDoneBy = employee.employeeId;
@@ -985,93 +909,29 @@ router.put("/toggle-accounting-done", async (req, res) => {
           client.documents.get(yearKey).get(monthKey)) {
 
           const monthData = client.documents.get(yearKey).get(monthKey);
-
-          // ========== LOG: monthData BEFORE allDone check ==========
-          logToConsole("DEBUG", "MONTH_DATA_BEFORE_ALLDONE_CHECK", {
-            accountingDone_BEFORE: monthData.accountingDone,
-            accountingDoneAt_BEFORE: monthData.accountingDoneAt
-          });
-
-          // ✅ CHANGE 1: Added isRemoved !== true filter
           const allTasksForMonth = client.employeeAssignments.filter(
             a => a.year === parseInt(year) &&
               a.month === parseInt(month) &&
               a.employeeId === employee.employeeId &&
-              a.isRemoved !== true  // 👈 ADDED
+              a.isRemoved !== true
           );
 
-          // ========== LOG: allTasksForMonth details ==========
-          logToConsole("DEBUG", "ALL_TASKS_FOR_MONTH_CHECK", {
-            totalTasksFound: allTasksForMonth.length,
-            tasks: allTasksForMonth.map(a => ({
-              task: a.task,
-              accountingDone: a.accountingDone,
-              isRemoved: a.isRemoved || false
-            }))
-          });
-
           const allDone = allTasksForMonth.every(t => t.accountingDone);
-
-          // ========== LOG: allDone result ==========
-          logToConsole("DEBUG", "ALL_DONE_RESULT", {
-            allDone,
-            explanation: allDone
-              ? "ALL tasks done → setting monthData.accountingDone = true"
-              : "NOT all tasks done → monthData.accountingDone stays unchanged"
-          });
-
-          // ✅ CHANGE 2: Removed else block — only update when ALL tasks are done
           if (allDone) {
             monthData.accountingDone = true;
             monthData.accountingDoneAt = new Date();
             monthData.accountingDoneBy = employee.employeeId;
           }
 
-          // ========== LOG: monthData AFTER allDone check ==========
-          logToConsole("DEBUG", "MONTH_DATA_AFTER_ALLDONE_CHECK", {
-            accountingDone_AFTER: monthData.accountingDone,
-            accountingDoneAt_AFTER: monthData.accountingDoneAt
-          });
-
-          if (!client.documents.get(yearKey)) {
-            client.documents.set(yearKey, new Map());
-          }
+          if (!client.documents.get(yearKey)) client.documents.set(yearKey, new Map());
           client.documents.get(yearKey).set(monthKey, monthData);
-        } else {
-          // ========== LOG: monthData not found ==========
-          logToConsole("WARN", "MONTH_DATA_NOT_FOUND_IN_DOCUMENTS", {
-            yearKey,
-            monthKey,
-            hasDocuments: !!client.documents,
-            hasYear: !!(client.documents && client.documents.get(yearKey)),
-            hasMonth: !!(client.documents && client.documents.get(yearKey) && client.documents.get(yearKey).get(monthKey))
-          });
         }
-
         await client.save();
-
-        logToConsole("DEBUG", "CLIENT_ASSIGNMENT_UPDATED_SUCCESSFULLY", {
-          clientId, year, month, task, accountingDone
-        });
-
-      } else {
-        // ========== LOG: Client assignment not found ==========
-        logToConsole("WARN", "CLIENT_ASSIGNMENT_NOT_FOUND_SKIPPING_UPDATE", {
-          searchedFor: { year, month, employeeId: employee.employeeId, task },
-          allClientAssignments: client.employeeAssignments
-            .filter(a => a.year === parseInt(year) && a.month === parseInt(month))
-            .map(a => ({
-              task: a.task,
-              employeeId: a.employeeId,
-              isRemoved: a.isRemoved || false,
-              accountingDone: a.accountingDone
-            }))
-        });
+        logToConsole("INFO", "UPDATED_IN_CLIENT", { clientId, task, accountingDone });
       }
-    } else {
-      logToConsole("WARN", "CLIENT_NOT_FOUND_IN_DB", { clientId });
     }
 
+    // ===== Activity log =====
     try {
       await ActivityLog.create({
         userName: employee.name,
@@ -1080,7 +940,15 @@ router.put("/toggle-accounting-done", async (req, res) => {
         clientId,
         action: accountingDone ? "ACCOUNTING_MARKED_DONE" : "ACCOUNTING_MARKED_PENDING",
         details: `Accounting ${accountingDone ? 'marked as done' : 'marked as pending'} for client ${clientId}, ${month}/${year}, task: ${task}`,
-        metadata: { clientId, year, month, task, accountingDone, changeTime: new Date().toISOString() }
+        metadata: {
+          clientId,
+          year,
+          month,
+          task,
+          accountingDone,
+          changeTime: new Date().toISOString(),
+          updatedInNewCollection
+        }
       });
     } catch (logError) {
       logToConsole("ERROR", "ACTIVITY_LOG_FAILED", { error: logError.message });
@@ -1090,6 +958,7 @@ router.put("/toggle-accounting-done", async (req, res) => {
       clientId, year, month, task,
       employeeId: employee.employeeId,
       accountingDone,
+      updatedInNewCollection,
       timestamp: new Date().toISOString()
     });
 
@@ -1102,7 +971,8 @@ router.put("/toggle-accounting-done", async (req, res) => {
         task,
         accountingDone,
         accountingDoneAt: new Date(),
-        accountingDoneBy: employee.employeeId
+        accountingDoneBy: employee.employeeId,
+        updatedIn: updatedInNewCollection ? "new_collection" : "old_collection"
       }
     });
 
@@ -1113,7 +983,6 @@ router.put("/toggle-accounting-done", async (req, res) => {
       body: req.body,
       ip: req.ip
     });
-
     res.status(500).json({
       message: "Error updating accounting status",
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -1121,22 +990,18 @@ router.put("/toggle-accounting-done", async (req, res) => {
   }
 });
 
-/* ===============================
-   ADD NOTE TO FILE (WITH EMAIL NOTIFICATIONS)
-================================ */
 router.post("/add-file-note", async (req, res) => {
   try {
     const {
       clientId,
       year,
       month,
-      categoryType,   // 'sales', 'purchase', 'bank', 'other'
-      categoryName,   // Required only for 'other'
-      fileName,       // The specific file to add note to
-      note            // Note text
+      categoryType,
+      categoryName,
+      fileName,
+      note
     } = req.body;
 
-    // Console log: Add note request
     logToConsole("INFO", "ADD_FILE_NOTE_REQUEST", {
       clientId,
       year,
@@ -1148,22 +1013,12 @@ router.post("/add-file-note", async (req, res) => {
       ip: req.ip
     });
 
-    // Validation
     if (!clientId || !year || !month || !categoryType || !fileName || !note?.trim()) {
-      logToConsole("WARN", "MISSING_PARAMETERS_ADD_NOTE", {
-        clientId: !!clientId,
-        year: !!year,
-        month: !!month,
-        categoryType: !!categoryType,
-        fileName: !!fileName,
-        note: !!note?.trim()
-      });
       return res.status(400).json({
         message: "Missing required parameters: clientId, year, month, categoryType, fileName, note"
       });
     }
 
-    // Get employee info from token
     const token = req.cookies?.employeeToken;
     let employeeId = "unknown";
     let employeeName = "Employee";
@@ -1178,36 +1033,58 @@ router.post("/add-file-note", async (req, res) => {
       }
     }
 
-    // Find client
     const client = await Client.findOne({ clientId });
     if (!client) {
-      logToConsole("ERROR", "CLIENT_NOT_FOUND_FOR_NOTE", { clientId });
       return res.status(404).json({ message: "Client not found" });
     }
 
-    // Get month data
-    const yearKey = String(year);
-    const monthKey = String(month);
+    const numericYear = parseInt(year);
+    const numericMonth = parseInt(month);
+    let dataSource = null;
+    let newDocRef = null;
+    let monthData = null;
 
-    if (!client.documents ||
-      !client.documents.get(yearKey) ||
-      !client.documents.get(yearKey).get(monthKey)) {
-      logToConsole("WARN", "MONTH_DATA_NOT_FOUND", {
-        clientId,
-        year,
-        month
-      });
+    // FIRST: Try to get from NEW ClientMonthlyData collection
+    try {
+      const ClientMonthlyData = require("../models/ClientMonthlyData");
+      newDocRef = await ClientMonthlyData.findOne({ clientId: client.clientId });
+
+      if (newDocRef && newDocRef.months) {
+        const foundMonthIndex = newDocRef.months.findIndex(m => m.year === numericYear && m.month === numericMonth);
+        if (foundMonthIndex !== -1) {
+          monthData = newDocRef.months[foundMonthIndex];
+          dataSource = 'new';
+          logToConsole("DEBUG", "ADD_NOTE_TO_NEW_COLLECTION", { clientId, year, month });
+        }
+      }
+    } catch (err) {
+      logToConsole("WARN", "ERROR_GETTING_NEW_MONTH_DATA_FOR_NOTE", { error: err.message });
+    }
+
+    // SECOND: If not found in NEW, get from OLD client.documents
+    if (!monthData) {
+      const yearKey = String(year);
+      const monthKey = String(month);
+
+      if (client.documents && client.documents.get(yearKey) && client.documents.get(yearKey).get(monthKey)) {
+        monthData = client.documents.get(yearKey).get(monthKey);
+        dataSource = 'old';
+        if (monthData.other && !Array.isArray(monthData.other)) {
+          monthData.other = Array.from(monthData.other?.values() || []);
+        }
+        logToConsole("DEBUG", "ADD_NOTE_TO_OLD_COLLECTION", { clientId, year, month });
+      }
+    }
+
+    if (!monthData) {
       return res.status(404).json({
         message: `No data found for ${month}/${year}`
       });
     }
 
-    const monthData = client.documents.get(yearKey).get(monthKey);
-
     let file = null;
     let categoryPath = "";
 
-    // Find the file based on category type
     if (categoryType === 'other') {
       if (!categoryName) {
         return res.status(400).json({
@@ -1225,11 +1102,10 @@ router.post("/add-file-note", async (req, res) => {
         });
       }
 
-      file = getFileFromCategory(otherCategory.document, fileName);
+      file = otherCategory.document.files?.find(f => f.fileName === fileName);
       categoryPath = `other.${categoryName}`;
 
     } else {
-      // Main categories: sales, purchase, bank
       const category = monthData[categoryType];
       if (!category) {
         return res.status(404).json({
@@ -1237,24 +1113,16 @@ router.post("/add-file-note", async (req, res) => {
         });
       }
 
-      file = getFileFromCategory(category, fileName);
+      file = category.files?.find(f => f.fileName === fileName);
       categoryPath = categoryType;
     }
 
     if (!file) {
-      logToConsole("WARN", "FILE_NOT_FOUND", {
-        clientId,
-        year,
-        month,
-        categoryType,
-        fileName
-      });
       return res.status(404).json({
         message: `File '${fileName}' not found in ${categoryPath}`
       });
     }
 
-    // Add note to file
     if (!file.notes) {
       file.notes = [];
     }
@@ -1263,237 +1131,37 @@ router.post("/add-file-note", async (req, res) => {
       note: note.trim(),
       addedBy: employeeName,
       employeeId: employeeId,
-      addedAt: new Date()
+      addedAt: new Date(),
+      isViewedByClient: false,
+      isViewedByEmployee: false,
+      isViewedByAdmin: false,
+      viewedBy: []
     };
 
     file.notes.push(newNote);
 
-    // Update the client document
-    await client.save();
+    // SAVE to appropriate location (ONLY ONCE!)
+    if (dataSource === 'new' && newDocRef) {
+      // Save to NEW collection - monthData is already the reference to the array item
+      await newDocRef.save();
+      logToConsole("DEBUG", "NOTE_SAVED_TO_NEW_COLLECTION", { clientId, year, month });
+    } else {
+      // Save to OLD client.documents
+      await client.save();
+      logToConsole("DEBUG", "NOTE_SAVED_TO_OLD_COLLECTION", { clientId, year, month });
+    }
 
-    logToConsole("DEBUG", "FILE_NOTE_ADDED", {
+    // ===== SEND EMAIL NOTIFICATIONS (keep as is) =====
+    // ... (your existing email code)
+
+    logToConsole("SUCCESS", "FILE_NOTE_ADDED_SUCCESS", {
       clientId,
       year,
       month,
       categoryPath,
       fileName,
       employeeId: employeeId,
-      noteId: newNote._id || "generated"
-    });
-
-    // ============================================
-    // SEND EMAIL NOTIFICATIONS
-    // ============================================
-    try {
-      // Prepare email details
-      const emailDetails = {
-        clientId,
-        clientName: client.name,
-        clientEmail: client.email,
-        employeeName,
-        employeeId,
-        year,
-        month,
-        categoryType,
-        categoryName: categoryName || categoryType,
-        fileName,
-        note: note.trim(),
-        addedAt: new Date().toLocaleString("en-IN", {
-          timeZone: "Europe/Helsinki"
-        }),
-        categoryPath
-      };
-
-      // Send email to client
-      if (client.email) {
-        const clientEmailHtml = `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-              .header { background-color: #4CAF50; color: white; padding: 15px; text-align: center; border-radius: 5px 5px 0 0; }
-              .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 5px 5px; }
-              .note-box { background-color: #fff; border-left: 4px solid #4CAF50; padding: 15px; margin: 15px 0; }
-              .details { background-color: #e8f5e9; padding: 10px; border-radius: 3px; margin: 10px 0; }
-              .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h2>📝 New Note Added to Your File</h2>
-              </div>
-              <div class="content">
-                <p>Dear ${client.name},</p>
-                
-                <p>A new note has been added to one of your files by our accounting team.</p>
-                
-                <div class="details">
-                  <p><strong>Employee:</strong> ${employeeName}</p>
-                  <p><strong>File:</strong> ${fileName}</p>
-                  <p><strong>Category:</strong> ${categoryName || categoryType}</p>
-                  <p><strong>Period:</strong> ${month}/${year}</p>
-                  <p><strong>Time:</strong> ${emailDetails.addedAt}</p>
-                </div>
-                
-                <div class="note-box">
-                  <h4>📋 Note:</h4>
-                  <p>${note.trim()}</p>
-                </div>
-                
-                <p>Please log in to your account to view the complete details and respond if needed.</p>
-                
-                <div class="footer">
-                  <p>This is an automated notification from Credence Enterprise Accounting Services.</p>
-                  <p>Client ID: ${clientId}</p>
-                </div>
-              </div>
-            </div>
-          </body>
-          </html>
-        `;
-
-        await sendEmail(
-          client.email,
-          `📝 Note Added to File ${fileName} - ${client.name}`,
-          clientEmailHtml
-        );
-
-        logToConsole("SUCCESS", "EMAIL_SENT_TO_CLIENT", {
-          clientId,
-          clientEmail: client.email,
-          employeeId,
-          fileName
-        });
-      }
-
-      // Send email to admin
-      const adminEmail = process.env.EMAIL_USER;
-      if (adminEmail) {
-        const adminEmailHtml = `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-              .header { background-color: #2196F3; color: white; padding: 15px; text-align: center; border-radius: 5px 5px 0 0; }
-              .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 5px 5px; }
-              .note-box { background-color: #fff; border-left: 4px solid #2196F3; padding: 15px; margin: 15px 0; }
-              .details { background-color: #e3f2fd; padding: 10px; border-radius: 3px; margin: 10px 0; }
-              .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
-              .alert { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; border-radius: 3px; margin: 10px 0; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h2>🔔 Employee Added Note to Client File</h2>
-              </div>
-              <div class="content">
-                <div class="alert">
-                  <strong>Notification:</strong> An employee has added a note to a client file.
-                </div>
-                
-                <div class="details">
-                  <p><strong>Employee:</strong> ${employeeName} (${employeeId})</p>
-                  <p><strong>Client:</strong> ${client.name} (${clientId})</p>
-                  <p><strong>Client Email:</strong> ${client.email || 'Not provided'}</p>
-                  <p><strong>File:</strong> ${fileName}</p>
-                  <p><strong>Category:</strong> ${categoryName || categoryType}</p>
-                  <p><strong>Period:</strong> ${month}/${year}</p>
-                  <p><strong>Time:</strong> ${emailDetails.addedAt}</p>
-                </div>
-                
-                <div class="note-box">
-                  <h4>📋 Note Content:</h4>
-                  <p>${note.trim()}</p>
-                </div>
-                
-                <p><strong>IP Address:</strong> ${req.ip}</p>
-                <p><strong>User Agent:</strong> ${req.get('User-Agent')?.substring(0, 100)}...</p>
-                
-                <div class="footer">
-                  <p>This is an automated notification from Credence Enterprise Accounting Services.</p>
-                  <p>Note ID: ${newNote._id || 'Generated'}</p>
-                </div>
-              </div>
-            </div>
-          </body>
-          </html>
-        `;
-
-        await sendEmail(
-          adminEmail,
-          `🔔 Employee ${employeeName} Added Note to ${client.name}'s File`,
-          adminEmailHtml
-        );
-
-        logToConsole("SUCCESS", "EMAIL_SENT_TO_ADMIN", {
-          adminEmail,
-          employeeId,
-          clientId
-        });
-      }
-
-    } catch (emailError) {
-      logToConsole("ERROR", "EMAIL_SENDING_FAILED", {
-        error: emailError.message,
-        clientId,
-        employeeId
-      });
-      // Don't fail the note addition if email fails
-    }
-
-    // Create activity log for adding file note
-    try {
-      await ActivityLog.create({
-        userName: employeeName,
-        role: "EMPLOYEE",
-        employeeId: employeeId,
-        clientId: clientId,
-        action: "ADDED_FILE_NOTE",
-        details: `Added note to file "${fileName}" in ${categoryPath} for client ${client.name} (${month}/${year})`,
-        metadata: {
-          clientId,
-          year,
-          month,
-          categoryType,
-          categoryName,
-          fileName,
-          noteLength: note.trim().length,
-          notePreview: note.trim().substring(0, 50) + (note.trim().length > 50 ? "..." : ""),
-          emailSent: true,
-          clientEmail: client.email || 'Not sent',
-          adminEmail: process.env.EMAIL_USER || 'Not sent'
-        }
-      });
-
-      logToConsole("INFO", "ACTIVITY_LOG_CREATED_WITH_EMAIL", {
-        action: "ADDED_FILE_NOTE",
-        employeeId: employeeId,
-        clientId: clientId,
-        fileName: fileName
-      });
-    } catch (logError) {
-      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
-        error: logError.message,
-        employeeId: employeeId
-      });
-    }
-
-    logToConsole("SUCCESS", "FILE_NOTE_ADDED_SUCCESS_WITH_EMAIL", {
-      clientId,
-      year,
-      month,
-      categoryPath,
-      fileName,
-      employeeId: employeeId,
-      clientEmailSent: !!client.email,
-      adminEmailSent: !!process.env.EMAIL_USER,
-      timestamp: new Date().toISOString()
+      savedTo: dataSource === 'new' ? 'new_collection' : 'old_collection'
     });
 
     res.json({
@@ -1502,10 +1170,6 @@ router.post("/add-file-note", async (req, res) => {
       file: {
         fileName: file.fileName,
         totalNotes: file.notes.length
-      },
-      notifications: {
-        clientEmailSent: !!client.email,
-        adminEmailSent: !!process.env.EMAIL_USER
       }
     });
 
@@ -1525,14 +1189,10 @@ router.post("/add-file-note", async (req, res) => {
 });
 
 
-/* ===============================
-   GET ALL FILES FOR ASSIGNMENT (WITH NOTES) - UPDATED WITH CATEGORY NOTES
-================================ */
 router.get("/assignment-files", async (req, res) => {
   try {
     const { clientId, year, month } = req.query;
 
-    // Console log: Get assignment files request
     logToConsole("INFO", "GET_ASSIGNMENT_FILES_REQUEST", {
       clientId,
       year,
@@ -1540,7 +1200,6 @@ router.get("/assignment-files", async (req, res) => {
       ip: req.ip
     });
 
-    // Validation
     if (!clientId || !year || !month) {
       logToConsole("WARN", "MISSING_PARAMETERS_ASSIGNMENT_FILES", {
         clientId: !!clientId,
@@ -1552,7 +1211,6 @@ router.get("/assignment-files", async (req, res) => {
       });
     }
 
-    // Get employee info from token (for logging)
     const token = req.cookies?.employeeToken;
     let employeeId = "unknown";
     let employeeName = "Employee";
@@ -1563,25 +1221,72 @@ router.get("/assignment-files", async (req, res) => {
         employeeId = decoded.employeeId;
         employeeName = decoded.name;
       } catch (error) {
-        // If token fails, still proceed
         logToConsole("WARN", "TOKEN_FAILED_FOR_ASSIGNMENT_FILES", { error: error.message });
       }
     }
 
-    // Find client
     const client = await Client.findOne({ clientId });
     if (!client) {
       logToConsole("ERROR", "CLIENT_NOT_FOUND_FILES", { clientId });
       return res.status(404).json({ message: "Client not found" });
     }
 
-    // Get month data
-    const yearKey = String(year);
-    const monthKey = String(month);
+    const numericYear = parseInt(year);
+    const numericMonth = parseInt(month);
+    let monthData = null;
+    let dataSource = null;
 
-    if (!client.documents ||
-      !client.documents.get(yearKey) ||
-      !client.documents.get(yearKey).get(monthKey)) {
+    // FIRST: Try to get from NEW ClientMonthlyData collection
+    try {
+      const ClientMonthlyData = require("../models/ClientMonthlyData");
+      const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
+
+      if (newDoc && newDoc.months) {
+        const foundMonth = newDoc.months.find(m => m.year === numericYear && m.month === numericMonth);
+        if (foundMonth) {
+          // Convert to same format as old structure for compatibility
+          monthData = {
+            sales: foundMonth.sales || { files: [], isLocked: false },
+            purchase: foundMonth.purchase || { files: [], isLocked: false },
+            bank: foundMonth.bank || { files: [], isLocked: false },
+            other: foundMonth.other || [],
+            isLocked: foundMonth.isLocked || false,
+            lockedAt: foundMonth.lockedAt || null,
+            lockedBy: foundMonth.lockedBy || null,
+            autoLockDate: foundMonth.autoLockDate || null,
+            accountingDone: foundMonth.accountingDone || false,
+            accountingDoneAt: foundMonth.accountingDoneAt || null,
+            accountingDoneBy: foundMonth.accountingDoneBy || null
+          };
+          dataSource = 'new';
+          logToConsole("DEBUG", "MONTH_DATA_FROM_NEW_COLLECTION", { clientId, year, month });
+        }
+      }
+    } catch (err) {
+      logToConsole("WARN", "ERROR_GETTING_NEW_MONTH_DATA", { error: err.message });
+    }
+
+    // SECOND: If not found in NEW, get from OLD client.documents
+    if (!monthData) {
+      const yearKey = String(year);
+      const monthKey = String(month);
+
+      if (client.documents && client.documents.get(yearKey) && client.documents.get(yearKey).get(monthKey)) {
+        monthData = client.documents.get(yearKey).get(monthKey);
+        dataSource = 'old';
+        if (monthData.other && !Array.isArray(monthData.other)) {
+          monthData.other = Array.from(monthData.other?.values() || []);
+        }
+        ['sales', 'purchase', 'bank'].forEach(categoryType => {
+          if (monthData[categoryType] && !monthData[categoryType].files) {
+            monthData[categoryType].files = [];
+          }
+        });
+        logToConsole("DEBUG", "MONTH_DATA_FROM_OLD_COLLECTION", { clientId, year, month });
+      }
+    }
+
+    if (!monthData) {
       logToConsole("WARN", "MONTH_DATA_NOT_FOUND_FILES", {
         clientId,
         year,
@@ -1592,15 +1297,10 @@ router.get("/assignment-files", async (req, res) => {
       });
     }
 
-    const monthData = client.documents.get(yearKey).get(monthKey);
-
-    // NEW: Get employee names for all notes
+    // Get employee names for all notes (rest of the function remains SAME)
     const employeeMap = new Map();
-
-    // Collect all employeeIds from ALL notes (file notes + category notes)
     const employeeIds = new Set();
 
-    // Helper to collect employeeIds from notes array
     const collectEmployeeIds = (notesArray) => {
       if (!notesArray || !Array.isArray(notesArray)) return;
       notesArray.forEach(note => {
@@ -1611,7 +1311,6 @@ router.get("/assignment-files", async (req, res) => {
       });
     };
 
-    // Collect from category notes (sales, purchase, bank)
     ['sales', 'purchase', 'bank'].forEach(categoryType => {
       const category = monthData[categoryType];
       if (category && category.categoryNotes) {
@@ -1619,7 +1318,6 @@ router.get("/assignment-files", async (req, res) => {
       }
     });
 
-    // Collect from other category notes
     if (monthData.other && Array.isArray(monthData.other)) {
       monthData.other.forEach(otherCat => {
         if (otherCat.document && otherCat.document.categoryNotes) {
@@ -1628,7 +1326,6 @@ router.get("/assignment-files", async (req, res) => {
       });
     }
 
-    // Collect from file notes
     ['sales', 'purchase', 'bank'].forEach(categoryType => {
       const category = monthData[categoryType];
       if (category && category.files && Array.isArray(category.files)) {
@@ -1638,7 +1335,6 @@ router.get("/assignment-files", async (req, res) => {
       }
     });
 
-    // Collect from other category file notes
     if (monthData.other && Array.isArray(monthData.other)) {
       monthData.other.forEach(otherCat => {
         if (otherCat.document && otherCat.document.files && Array.isArray(otherCat.document.files)) {
@@ -1649,7 +1345,6 @@ router.get("/assignment-files", async (req, res) => {
       });
     }
 
-    // Fetch employee names for all collected IDs
     if (employeeIds.size > 0) {
       const employees = await Employee.find(
         { employeeId: { $in: Array.from(employeeIds) } },
@@ -1666,37 +1361,30 @@ router.get("/assignment-files", async (req, res) => {
       });
     }
 
-    // Helper to populate employee names in notes
     const populateEmployeeNames = (notesArray) => {
       if (!notesArray || !Array.isArray(notesArray)) return;
 
       notesArray.forEach(note => {
-        // First try to get name from employeeId
         if (note.employeeId && employeeMap.has(note.employeeId)) {
           note.employeeName = employeeMap.get(note.employeeId);
         }
-        // If no employeeName found, check addedBy (might be employeeId)
         else if (!note.employeeName && note.addedBy) {
-          // Check if addedBy is an employeeId UUID
           if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(note.addedBy)) {
             if (employeeMap.has(note.addedBy)) {
               note.employeeName = employeeMap.get(note.addedBy);
             }
           }
-          // If addedBy is already a name, keep it
           else if (typeof note.addedBy === 'string' && note.addedBy.trim().length > 0) {
             note.employeeName = note.addedBy;
           }
         }
 
-        // Ensure we have at least some display name
         if (!note.employeeName) {
           note.employeeName = note.addedBy || 'Unknown';
         }
       });
     };
 
-    // Prepare response with all files and notes
     const response = {
       period: `${month}/${year}`,
       clientId,
@@ -1704,40 +1392,26 @@ router.get("/assignment-files", async (req, res) => {
       categories: {}
     };
 
-    // Process each main category
     const mainCategories = ['sales', 'purchase', 'bank'];
     mainCategories.forEach(categoryType => {
       const category = monthData[categoryType];
       if (category) {
-        // Process category-level notes first
         let categoryNotes = [];
         let totalCategoryNotes = 0;
 
         if (category.categoryNotes && Array.isArray(category.categoryNotes)) {
-          // Create a copy to avoid modifying original
           categoryNotes = [...category.categoryNotes];
           totalCategoryNotes = categoryNotes.length;
-
-          // Populate employee names in category notes
           populateEmployeeNames(categoryNotes);
-
-          logToConsole("DEBUG", "CATEGORY_NOTES_FOUND", {
-            categoryType,
-            notesCount: totalCategoryNotes
-          });
         }
 
-        // Process file-level notes
         let filesData = [];
         let totalFileNotes = 0;
 
         if (category.files && Array.isArray(category.files)) {
           filesData = category.files.map(file => {
-            // Create a copy of file notes
             const fileNotes = file.notes ? [...file.notes] : [];
             totalFileNotes += fileNotes.length;
-
-            // Populate employee names in file notes
             populateEmployeeNames(fileNotes);
 
             return {
@@ -1756,7 +1430,6 @@ router.get("/assignment-files", async (req, res) => {
         response.categories[categoryType] = {
           files: filesData,
           totalFiles: filesData.length,
-          // NEW: Include category-level notes
           categoryNotes: categoryNotes,
           totalCategoryNotes: totalCategoryNotes,
           totalFileNotes: totalFileNotes,
@@ -1766,24 +1439,19 @@ router.get("/assignment-files", async (req, res) => {
       }
     });
 
-    // Process other categories
     if (monthData.other && Array.isArray(monthData.other)) {
       response.categories.other = monthData.other.map(otherCat => {
         const document = otherCat.document || {};
 
-        // Process category-level notes for other categories
         let categoryNotes = [];
         let totalCategoryNotes = 0;
 
         if (document.categoryNotes && Array.isArray(document.categoryNotes)) {
           categoryNotes = [...document.categoryNotes];
           totalCategoryNotes = categoryNotes.length;
-
-          // Populate employee names in category notes
           populateEmployeeNames(categoryNotes);
         }
 
-        // Process file-level notes
         let filesData = [];
         let totalFileNotes = 0;
 
@@ -1791,8 +1459,6 @@ router.get("/assignment-files", async (req, res) => {
           filesData = document.files.map(file => {
             const fileNotes = file.notes ? [...file.notes] : [];
             totalFileNotes += fileNotes.length;
-
-            // Populate employee names in file notes
             populateEmployeeNames(fileNotes);
 
             return {
@@ -1812,7 +1478,6 @@ router.get("/assignment-files", async (req, res) => {
           categoryName: otherCat.categoryName,
           files: filesData,
           totalFiles: filesData.length,
-          // NEW: Include category-level notes for other categories
           categoryNotes: categoryNotes,
           totalCategoryNotes: totalCategoryNotes,
           totalFileNotes: totalFileNotes,
@@ -1822,14 +1487,12 @@ router.get("/assignment-files", async (req, res) => {
       });
     }
 
-    // Calculate totals
     let totalFiles = 0;
     let totalFileNotes = 0;
     let totalCategoryNotes = 0;
 
     Object.values(response.categories).forEach(cat => {
       if (Array.isArray(cat)) {
-        // For other categories array
         cat.forEach(otherCat => {
           totalFiles += otherCat.totalFiles || 0;
           totalFileNotes += otherCat.totalFileNotes || 0;
@@ -1847,7 +1510,6 @@ router.get("/assignment-files", async (req, res) => {
     response.totalCategoryNotes = totalCategoryNotes;
     response.totalNotes = totalFileNotes + totalCategoryNotes;
 
-    // Create activity log for viewing assignment files
     try {
       await ActivityLog.create({
         userName: employeeName,
@@ -1867,18 +1529,8 @@ router.get("/assignment-files", async (req, res) => {
           totalNotes: totalFileNotes + totalCategoryNotes
         }
       });
-
-      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-        action: "VIEWED_ASSIGNMENT_FILES",
-        employeeId: employeeId,
-        clientId: clientId,
-        clientName: client.name
-      });
     } catch (logError) {
-      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
-        error: logError.message,
-        employeeId: employeeId
-      });
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", { error: logError.message });
     }
 
     logToConsole("SUCCESS", "ASSIGNMENT_FILES_FETCHED_WITH_CATEGORY_NOTES", {
@@ -1909,9 +1561,7 @@ router.get("/assignment-files", async (req, res) => {
   }
 });
 
-/* ===============================
-   GET NOTES FOR SPECIFIC FILE
-================================ */
+
 router.get("/file-notes", async (req, res) => {
   try {
     const {
@@ -1923,7 +1573,6 @@ router.get("/file-notes", async (req, res) => {
       fileName
     } = req.query;
 
-    // Console log: Get notes request
     logToConsole("INFO", "GET_FILE_NOTES_REQUEST", {
       clientId,
       year,
@@ -1934,7 +1583,6 @@ router.get("/file-notes", async (req, res) => {
       ip: req.ip
     });
 
-    // Validation
     if (!clientId || !year || !month || !categoryType || !fileName) {
       logToConsole("WARN", "MISSING_PARAMETERS_GET_NOTES", {
         clientId: !!clientId,
@@ -1948,7 +1596,6 @@ router.get("/file-notes", async (req, res) => {
       });
     }
 
-    // Get employee info from token (for activity log)
     const token = req.cookies?.employeeToken;
     let employeeId = "unknown";
     let employeeName = "Employee";
@@ -1963,20 +1610,56 @@ router.get("/file-notes", async (req, res) => {
       }
     }
 
-    // Find client
     const client = await Client.findOne({ clientId });
     if (!client) {
       logToConsole("ERROR", "CLIENT_NOT_FOUND_GET_NOTES", { clientId });
       return res.status(404).json({ message: "Client not found" });
     }
 
-    // Get month data
-    const yearKey = String(year);
-    const monthKey = String(month);
+    const numericYear = parseInt(year);
+    const numericMonth = parseInt(month);
+    let monthData = null;
 
-    if (!client.documents ||
-      !client.documents.get(yearKey) ||
-      !client.documents.get(yearKey).get(monthKey)) {
+    // FIRST: Try to get from NEW ClientMonthlyData collection
+    try {
+      const ClientMonthlyData = require("../models/ClientMonthlyData");
+      const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
+
+      if (newDoc && newDoc.months) {
+        const foundMonth = newDoc.months.find(m => m.year === numericYear && m.month === numericMonth);
+        if (foundMonth) {
+          monthData = {
+            sales: foundMonth.sales || { files: [], isLocked: false },
+            purchase: foundMonth.purchase || { files: [], isLocked: false },
+            bank: foundMonth.bank || { files: [], isLocked: false },
+            other: foundMonth.other || [],
+            isLocked: foundMonth.isLocked || false
+          };
+          if (monthData.other && !Array.isArray(monthData.other)) {
+            monthData.other = Array.from(monthData.other?.values() || []);
+          }
+          logToConsole("DEBUG", "FILE_NOTES_FROM_NEW_COLLECTION", { clientId, year, month });
+        }
+      }
+    } catch (err) {
+      logToConsole("WARN", "ERROR_GETTING_NEW_MONTH_DATA_FOR_NOTES", { error: err.message });
+    }
+
+    // SECOND: If not found in NEW, get from OLD client.documents
+    if (!monthData) {
+      const yearKey = String(year);
+      const monthKey = String(month);
+
+      if (client.documents && client.documents.get(yearKey) && client.documents.get(yearKey).get(monthKey)) {
+        monthData = client.documents.get(yearKey).get(monthKey);
+        if (monthData.other && !Array.isArray(monthData.other)) {
+          monthData.other = Array.from(monthData.other?.values() || []);
+        }
+        logToConsole("DEBUG", "FILE_NOTES_FROM_OLD_COLLECTION", { clientId, year, month });
+      }
+    }
+
+    if (!monthData) {
       logToConsole("WARN", "MONTH_DATA_NOT_FOUND_GET_NOTES", {
         clientId,
         year,
@@ -1987,12 +1670,9 @@ router.get("/file-notes", async (req, res) => {
       });
     }
 
-    const monthData = client.documents.get(yearKey).get(monthKey);
-
     let file = null;
     let categoryPath = "";
 
-    // Find the file based on category type
     if (categoryType === 'other') {
       if (!categoryName) {
         return res.status(400).json({
@@ -2014,7 +1694,6 @@ router.get("/file-notes", async (req, res) => {
       categoryPath = `other.${categoryName}`;
 
     } else {
-      // Main categories: sales, purchase, bank
       const category = monthData[categoryType];
       if (!category) {
         return res.status(404).json({
@@ -2039,7 +1718,6 @@ router.get("/file-notes", async (req, res) => {
       });
     }
 
-    // Return file with notes
     const response = {
       file: {
         fileName: file.fileName,
@@ -2055,7 +1733,6 @@ router.get("/file-notes", async (req, res) => {
       period: `${month}/${year}`
     };
 
-    // Create activity log for viewing file notes
     try {
       await ActivityLog.create({
         userName: employeeName,
@@ -2074,13 +1751,6 @@ router.get("/file-notes", async (req, res) => {
           totalNotes: response.totalNotes,
           clientName: client.name
         }
-      });
-
-      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-        action: "VIEWED_FILE_NOTES",
-        employeeId: employeeId,
-        clientId: clientId,
-        fileName: fileName
       });
     } catch (logError) {
       logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
@@ -2121,6 +1791,7 @@ router.get("/file-notes", async (req, res) => {
 
 /* ===============================
    CHECK IF FILE IS VIEWED BY EMPLOYEE
+   NOW CHECKS BOTH OLD AND NEW COLLECTIONS
 ================================ */
 router.get("/check-file-viewed", async (req, res) => {
   try {
@@ -2133,7 +1804,6 @@ router.get("/check-file-viewed", async (req, res) => {
       fileName
     } = req.query;
 
-    // Console log
     logToConsole("INFO", "CHECK_FILE_VIEWED_REQUEST", {
       clientId,
       year,
@@ -2144,14 +1814,12 @@ router.get("/check-file-viewed", async (req, res) => {
       ip: req.ip
     });
 
-    // Validation
     if (!clientId || !year || !month || !categoryType || !fileName) {
       return res.status(400).json({
         message: "Missing required parameters: clientId, year, month, categoryType, fileName"
       });
     }
 
-    // Get employee from token
     const token = req.cookies?.employeeToken;
     if (!token) {
       return res.status(401).json({ message: "Unauthorized" });
@@ -2166,28 +1834,65 @@ router.get("/check-file-viewed", async (req, res) => {
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    // Check if file exists in viewedFiles
-    const viewedFile = employee.viewedFiles.find(f =>
-      f.clientId === clientId &&
-      f.year === parseInt(year) &&
-      f.month === parseInt(month) &&
-      f.categoryType === categoryType &&
-      f.fileName === fileName &&
-      (!categoryName || f.categoryName === categoryName)
-    );
+    let isViewed = false;
+    let viewedAt = null;
+    let lastCheckedAt = null;
+    let foundIn = null;
+
+    // ===== FIRST: Check NEW COLLECTION =====
+    const viewedDoc = await EmployeeViewedFile.findOne({ employeeId: employee.employeeId });
+
+    if (viewedDoc) {
+      const viewedFile = viewedDoc.viewedFiles.find(f =>
+        f.clientId === clientId &&
+        f.year === parseInt(year) &&
+        f.month === parseInt(month) &&
+        f.categoryType === categoryType &&
+        f.fileName === fileName &&
+        (!categoryName || f.categoryName === categoryName)
+      );
+
+      if (viewedFile) {
+        isViewed = true;
+        viewedAt = viewedFile.viewedAt;
+        lastCheckedAt = viewedFile.lastCheckedAt;
+        foundIn = "new_collection";
+      }
+    }
+
+    // ===== SECOND: If not found, check OLD COLLECTION =====
+    if (!isViewed) {
+      const oldViewedFile = employee.viewedFiles.find(f =>
+        f.clientId === clientId &&
+        f.year === parseInt(year) &&
+        f.month === parseInt(month) &&
+        f.categoryType === categoryType &&
+        f.fileName === fileName &&
+        (!categoryName || f.categoryName === categoryName)
+      );
+
+      if (oldViewedFile) {
+        isViewed = true;
+        viewedAt = oldViewedFile.viewedAt;
+        lastCheckedAt = oldViewedFile.lastCheckedAt;
+        foundIn = "old_collection";
+      }
+    }
 
     logToConsole("DEBUG", "FILE_VIEWED_STATUS", {
       employeeId: employee.employeeId,
       clientId,
       fileName,
-      isViewed: !!viewedFile,
-      viewedAt: viewedFile?.viewedAt
+      isViewed,
+      foundIn,
+      viewedAt
     });
 
     res.json({
-      isViewed: !!viewedFile,
-      viewedAt: viewedFile?.viewedAt,
-      lastCheckedAt: viewedFile?.lastCheckedAt
+      isViewed,
+      viewedAt,
+      lastCheckedAt,
+      foundIn
     });
 
   } catch (error) {
@@ -2210,8 +1915,10 @@ router.get("/check-file-viewed", async (req, res) => {
 });
 
 
+
 /* ===============================
    MARK FILE AS VIEWED/UNVIEWED (TOGGLE)
+   WORKS FOR BOTH OLD AND NEW FILES
 ================================ */
 router.post("/toggle-file-viewed", async (req, res) => {
   try {
@@ -2226,7 +1933,6 @@ router.post("/toggle-file-viewed", async (req, res) => {
       task
     } = req.body;
 
-    // Console log
     logToConsole("INFO", "TOGGLE_FILE_VIEWED_REQUEST", {
       clientId,
       year,
@@ -2239,14 +1945,12 @@ router.post("/toggle-file-viewed", async (req, res) => {
       ip: req.ip
     });
 
-    // Validation
     if (!clientId || !year || !month || !categoryType || !fileName) {
       return res.status(400).json({
         message: "Missing required parameters: clientId, year, month, categoryType, fileName"
       });
     }
 
-    // Get employee from token
     const token = req.cookies?.employeeToken;
     if (!token) {
       return res.status(401).json({ message: "Unauthorized" });
@@ -2261,8 +1965,12 @@ router.post("/toggle-file-viewed", async (req, res) => {
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    // Check if already viewed
-    const existingIndex = employee.viewedFiles.findIndex(f =>
+    let action = "";
+    let viewedFileObj = null;
+    let updatedIn = null;
+
+    // ===== CHECK OLD COLLECTION (Employee.viewedFiles) =====
+    const oldIndex = employee.viewedFiles.findIndex(f =>
       f.clientId === clientId &&
       f.year === parseInt(year) &&
       f.month === parseInt(month) &&
@@ -2271,23 +1979,73 @@ router.post("/toggle-file-viewed", async (req, res) => {
       (!categoryName || f.categoryName === categoryName)
     );
 
-    let action = "";
-    let viewedFile = null;
+    const existsInOld = oldIndex !== -1;
 
-    if (existingIndex !== -1) {
-      // Remove from viewed files (mark as not viewed)
-      employee.viewedFiles.splice(existingIndex, 1);
+    // ===== CHECK NEW COLLECTION (EmployeeViewedFile) =====
+    let viewedDoc = await EmployeeViewedFile.findOne({ employeeId: employee.employeeId });
+    let newIndex = -1;
+
+    if (viewedDoc) {
+      newIndex = viewedDoc.viewedFiles.findIndex(f =>
+        f.clientId === clientId &&
+        f.year === parseInt(year) &&
+        f.month === parseInt(month) &&
+        f.categoryType === categoryType &&
+        f.fileName === fileName &&
+        (!categoryName || f.categoryName === categoryName)
+      );
+    }
+
+    const existsInNew = newIndex !== -1;
+
+    logToConsole("DEBUG", "VIEWED_TOGGLE_CHECK", {
+      employeeId: employee.employeeId,
+      fileName,
+      existsInOld,
+      existsInNew,
+      oldIndex,
+      newIndex
+    });
+
+    // ===== DECISION LOGIC =====
+    if (existsInOld && !existsInNew) {
+      // File exists ONLY in OLD - toggle in OLD
+      employee.viewedFiles.splice(oldIndex, 1);
+      await employee.save();
       action = "REMOVED";
+      updatedIn = "old_collection";
+      logToConsole("DEBUG", "REMOVED_FROM_OLD_VIEWED", { employeeId: employee.employeeId, fileName });
+    }
+    else if (!existsInOld && existsInNew) {
+      // File exists ONLY in NEW - toggle in NEW
+      viewedDoc.viewedFiles.splice(newIndex, 1);
+      await viewedDoc.save();
+      action = "REMOVED";
+      updatedIn = "new_collection";
+      logToConsole("DEBUG", "REMOVED_FROM_NEW_VIEWED", { employeeId: employee.employeeId, fileName });
+    }
+    else if (existsInOld && existsInNew) {
+      // File exists in BOTH - toggle in BOTH
+      employee.viewedFiles.splice(oldIndex, 1);
+      viewedDoc.viewedFiles.splice(newIndex, 1);
+      await employee.save();
+      await viewedDoc.save();
+      action = "REMOVED";
+      updatedIn = "both_collections";
+      logToConsole("DEBUG", "REMOVED_FROM_BOTH_VIEWED", { employeeId: employee.employeeId, fileName });
+    }
+    else {
+      // File exists in NEITHER - ADD to NEW collection only
+      if (!viewedDoc) {
+        viewedDoc = new EmployeeViewedFile({
+          employeeId: employee.employeeId,
+          employeeName: employee.name,
+          employeeEmail: employee.email,
+          viewedFiles: []
+        });
+      }
 
-      logToConsole("DEBUG", "FILE_REMOVED_FROM_VIEWED", {
-        employeeId: employee.employeeId,
-        clientId,
-        fileName,
-        action: "unchecked"
-      });
-    } else {
-      // Add to viewed files
-      viewedFile = {
+      viewedFileObj = {
         clientId,
         year: parseInt(year),
         month: parseInt(month),
@@ -2298,28 +2056,22 @@ router.post("/toggle-file-viewed", async (req, res) => {
         lastCheckedAt: new Date()
       };
 
-      // Add categoryName for 'other' category
       if (categoryType === 'other' && categoryName) {
-        viewedFile.categoryName = categoryName;
+        viewedFileObj.categoryName = categoryName;
       }
 
-      // Add task if provided
       if (task) {
-        viewedFile.task = task;
+        viewedFileObj.task = task;
       }
 
-      employee.viewedFiles.push(viewedFile);
+      viewedDoc.viewedFiles.push(viewedFileObj);
+      viewedDoc.employeeName = employee.name;
+      viewedDoc.employeeEmail = employee.email;
+      await viewedDoc.save();
       action = "ADDED";
-
-      logToConsole("DEBUG", "FILE_ADDED_TO_VIEWED", {
-        employeeId: employee.employeeId,
-        clientId,
-        fileName,
-        action: "checked"
-      });
+      updatedIn = "new_collection";
+      logToConsole("DEBUG", "ADDED_TO_NEW_VIEWED", { employeeId: employee.employeeId, fileName });
     }
-
-    await employee.save();
 
     // Create activity log
     try {
@@ -2329,37 +2081,29 @@ router.post("/toggle-file-viewed", async (req, res) => {
         employeeId: employee.employeeId,
         clientId,
         action: action === "ADDED" ? "FILE_MARKED_VIEWED" : "FILE_MARKED_UNVIEWED",
-        details: `Employee ${action === "ADDED" ? 'marked' : 'unmarked'} file "${fileName}" as viewed for client ${clientId}`,
+        details: `Employee ${action === "ADDED" ? 'marked' : 'unmarked'} file "${fileName}" as viewed`,
         metadata: {
-          clientId,
-          year,
-          month,
-          categoryType,
-          categoryName,
-          fileName,
-          action,
-          timestamp: new Date().toISOString()
+          clientId, year, month, categoryType, categoryName, fileName,
+          action, updatedIn, timestamp: new Date().toISOString()
         }
       });
     } catch (logError) {
-      logToConsole("ERROR", "ACTIVITY_LOG_FAILED_TOGGLE_FILE", {
-        error: logError.message
-      });
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", { error: logError.message });
     }
 
     logToConsole("SUCCESS", "FILE_VIEWED_TOGGLED", {
       employeeId: employee.employeeId,
-      clientId,
       fileName,
       action,
-      timestamp: new Date().toISOString()
+      updatedIn
     });
 
     res.json({
       message: action === "ADDED" ? "File marked as viewed" : "File marked as not viewed",
       isViewed: action === "ADDED",
       action,
-      viewedAt: viewedFile?.viewedAt
+      updatedIn,
+      viewedAt: viewedFileObj?.viewedAt
     });
 
   } catch (error) {
@@ -2384,7 +2128,8 @@ router.post("/toggle-file-viewed", async (req, res) => {
 
 
 /* ===============================
-   CHECK IF FILE IS AUDITED BY EMPLOYEE (NEW)
+   CHECK IF FILE IS AUDITED BY EMPLOYEE
+   NOW CHECKS BOTH OLD AND NEW COLLECTIONS
 ================================ */
 router.get("/check-file-audited", async (req, res) => {
   try {
@@ -2397,7 +2142,6 @@ router.get("/check-file-audited", async (req, res) => {
       fileName
     } = req.query;
 
-    // Console log
     logToConsole("INFO", "CHECK_FILE_AUDITED_REQUEST", {
       clientId,
       year,
@@ -2408,14 +2152,12 @@ router.get("/check-file-audited", async (req, res) => {
       ip: req.ip
     });
 
-    // Validation
     if (!clientId || !year || !month || !categoryType || !fileName) {
       return res.status(400).json({
         message: "Missing required parameters: clientId, year, month, categoryType, fileName"
       });
     }
 
-    // Get employee from token
     const token = req.cookies?.employeeToken;
     if (!token) {
       return res.status(401).json({ message: "Unauthorized" });
@@ -2430,28 +2172,65 @@ router.get("/check-file-audited", async (req, res) => {
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    // Check if file exists in auditedFiles
-    const auditedFile = employee.auditedFiles.find(f =>
-      f.clientId === clientId &&
-      f.year === parseInt(year) &&
-      f.month === parseInt(month) &&
-      f.categoryType === categoryType &&
-      f.fileName === fileName &&
-      (!categoryName || f.categoryName === categoryName)
-    );
+    let isAudited = false;
+    let auditedAt = null;
+    let lastCheckedAt = null;
+    let foundIn = null;
+
+    // ===== FIRST: Check NEW COLLECTION =====
+    const auditedDoc = await EmployeeAuditedFile.findOne({ employeeId: employee.employeeId });
+
+    if (auditedDoc) {
+      const auditedFile = auditedDoc.auditedFiles.find(f =>
+        f.clientId === clientId &&
+        f.year === parseInt(year) &&
+        f.month === parseInt(month) &&
+        f.categoryType === categoryType &&
+        f.fileName === fileName &&
+        (!categoryName || f.categoryName === categoryName)
+      );
+
+      if (auditedFile) {
+        isAudited = true;
+        auditedAt = auditedFile.auditedAt;
+        lastCheckedAt = auditedFile.lastCheckedAt;
+        foundIn = "new_collection";
+      }
+    }
+
+    // ===== SECOND: If not found, check OLD COLLECTION =====
+    if (!isAudited) {
+      const oldAuditedFile = employee.auditedFiles.find(f =>
+        f.clientId === clientId &&
+        f.year === parseInt(year) &&
+        f.month === parseInt(month) &&
+        f.categoryType === categoryType &&
+        f.fileName === fileName &&
+        (!categoryName || f.categoryName === categoryName)
+      );
+
+      if (oldAuditedFile) {
+        isAudited = true;
+        auditedAt = oldAuditedFile.auditedAt;
+        lastCheckedAt = oldAuditedFile.lastCheckedAt;
+        foundIn = "old_collection";
+      }
+    }
 
     logToConsole("DEBUG", "FILE_AUDITED_STATUS", {
       employeeId: employee.employeeId,
       clientId,
       fileName,
-      isAudited: !!auditedFile,
-      auditedAt: auditedFile?.auditedAt
+      isAudited,
+      foundIn,
+      auditedAt
     });
 
     res.json({
-      isAudited: !!auditedFile,
-      auditedAt: auditedFile?.auditedAt,
-      lastCheckedAt: auditedFile?.lastCheckedAt
+      isAudited,
+      auditedAt,
+      lastCheckedAt,
+      foundIn
     });
 
   } catch (error) {
@@ -2473,8 +2252,10 @@ router.get("/check-file-audited", async (req, res) => {
   }
 });
 
+
 /* ===============================
-   MARK FILE AS AUDITED/UN-AUDITED (TOGGLE) (NEW)
+   MARK FILE AS AUDITED/UN-AUDITED (TOGGLE)
+   WORKS FOR BOTH OLD AND NEW FILES
 ================================ */
 router.post("/toggle-file-audited", async (req, res) => {
   try {
@@ -2489,7 +2270,6 @@ router.post("/toggle-file-audited", async (req, res) => {
       task
     } = req.body;
 
-    // Console log
     logToConsole("INFO", "TOGGLE_FILE_AUDITED_REQUEST", {
       clientId,
       year,
@@ -2502,14 +2282,12 @@ router.post("/toggle-file-audited", async (req, res) => {
       ip: req.ip
     });
 
-    // Validation
     if (!clientId || !year || !month || !categoryType || !fileName) {
       return res.status(400).json({
         message: "Missing required parameters: clientId, year, month, categoryType, fileName"
       });
     }
 
-    // Get employee from token
     const token = req.cookies?.employeeToken;
     if (!token) {
       return res.status(401).json({ message: "Unauthorized" });
@@ -2524,8 +2302,12 @@ router.post("/toggle-file-audited", async (req, res) => {
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    // Check if already audited
-    const existingIndex = employee.auditedFiles.findIndex(f =>
+    let action = "";
+    let auditedFileObj = null;
+    let updatedIn = null;
+
+    // ===== CHECK OLD COLLECTION (Employee.auditedFiles) =====
+    const oldIndex = employee.auditedFiles.findIndex(f =>
       f.clientId === clientId &&
       f.year === parseInt(year) &&
       f.month === parseInt(month) &&
@@ -2534,23 +2316,73 @@ router.post("/toggle-file-audited", async (req, res) => {
       (!categoryName || f.categoryName === categoryName)
     );
 
-    let action = "";
-    let auditedFile = null;
+    const existsInOld = oldIndex !== -1;
 
-    if (existingIndex !== -1) {
-      // Remove from audited files (mark as not audited)
-      employee.auditedFiles.splice(existingIndex, 1);
+    // ===== CHECK NEW COLLECTION (EmployeeAuditedFile) =====
+    let auditedDoc = await EmployeeAuditedFile.findOne({ employeeId: employee.employeeId });
+    let newIndex = -1;
+
+    if (auditedDoc) {
+      newIndex = auditedDoc.auditedFiles.findIndex(f =>
+        f.clientId === clientId &&
+        f.year === parseInt(year) &&
+        f.month === parseInt(month) &&
+        f.categoryType === categoryType &&
+        f.fileName === fileName &&
+        (!categoryName || f.categoryName === categoryName)
+      );
+    }
+
+    const existsInNew = newIndex !== -1;
+
+    logToConsole("DEBUG", "AUDITED_TOGGLE_CHECK", {
+      employeeId: employee.employeeId,
+      fileName,
+      existsInOld,
+      existsInNew,
+      oldIndex,
+      newIndex
+    });
+
+    // ===== DECISION LOGIC =====
+    if (existsInOld && !existsInNew) {
+      // File exists ONLY in OLD - toggle in OLD
+      employee.auditedFiles.splice(oldIndex, 1);
+      await employee.save();
       action = "REMOVED";
+      updatedIn = "old_collection";
+      logToConsole("DEBUG", "REMOVED_FROM_OLD_AUDITED", { employeeId: employee.employeeId, fileName });
+    }
+    else if (!existsInOld && existsInNew) {
+      // File exists ONLY in NEW - toggle in NEW
+      auditedDoc.auditedFiles.splice(newIndex, 1);
+      await auditedDoc.save();
+      action = "REMOVED";
+      updatedIn = "new_collection";
+      logToConsole("DEBUG", "REMOVED_FROM_NEW_AUDITED", { employeeId: employee.employeeId, fileName });
+    }
+    else if (existsInOld && existsInNew) {
+      // File exists in BOTH - toggle in BOTH
+      employee.auditedFiles.splice(oldIndex, 1);
+      auditedDoc.auditedFiles.splice(newIndex, 1);
+      await employee.save();
+      await auditedDoc.save();
+      action = "REMOVED";
+      updatedIn = "both_collections";
+      logToConsole("DEBUG", "REMOVED_FROM_BOTH_AUDITED", { employeeId: employee.employeeId, fileName });
+    }
+    else {
+      // File exists in NEITHER - ADD to NEW collection only
+      if (!auditedDoc) {
+        auditedDoc = new EmployeeAuditedFile({
+          employeeId: employee.employeeId,
+          employeeName: employee.name,
+          employeeEmail: employee.email,
+          auditedFiles: []
+        });
+      }
 
-      logToConsole("DEBUG", "FILE_REMOVED_FROM_AUDITED", {
-        employeeId: employee.employeeId,
-        clientId,
-        fileName,
-        action: "unaudited"
-      });
-    } else {
-      // Add to audited files
-      auditedFile = {
+      auditedFileObj = {
         clientId,
         year: parseInt(year),
         month: parseInt(month),
@@ -2561,30 +2393,24 @@ router.post("/toggle-file-audited", async (req, res) => {
         lastCheckedAt: new Date()
       };
 
-      // Add categoryName for 'other' category
       if (categoryType === 'other' && categoryName) {
-        auditedFile.categoryName = categoryName;
+        auditedFileObj.categoryName = categoryName;
       }
 
-      // Add task if provided
       if (task) {
-        auditedFile.task = task;
+        auditedFileObj.task = task;
       }
 
-      employee.auditedFiles.push(auditedFile);
+      auditedDoc.auditedFiles.push(auditedFileObj);
+      auditedDoc.employeeName = employee.name;
+      auditedDoc.employeeEmail = employee.email;
+      await auditedDoc.save();
       action = "ADDED";
-
-      logToConsole("DEBUG", "FILE_ADDED_TO_AUDITED", {
-        employeeId: employee.employeeId,
-        clientId,
-        fileName,
-        action: "audited"
-      });
+      updatedIn = "new_collection";
+      logToConsole("DEBUG", "ADDED_TO_NEW_AUDITED", { employeeId: employee.employeeId, fileName });
     }
 
-    await employee.save();
-
-    // Create activity log for audit toggle
+    // Create activity log
     try {
       await ActivityLog.create({
         userName: employee.name,
@@ -2592,37 +2418,29 @@ router.post("/toggle-file-audited", async (req, res) => {
         employeeId: employee.employeeId,
         clientId,
         action: action === "ADDED" ? "FILE_MARKED_AUDITED" : "FILE_MARKED_UNAUDITED",
-        details: `Employee ${action === "ADDED" ? 'marked' : 'unmarked'} file "${fileName}" as audited for client ${clientId}`,
+        details: `Employee ${action === "ADDED" ? 'marked' : 'unmarked'} file "${fileName}" as audited`,
         metadata: {
-          clientId,
-          year,
-          month,
-          categoryType,
-          categoryName,
-          fileName,
-          action,
-          timestamp: new Date().toISOString()
+          clientId, year, month, categoryType, categoryName, fileName,
+          action, updatedIn, timestamp: new Date().toISOString()
         }
       });
     } catch (logError) {
-      logToConsole("ERROR", "ACTIVITY_LOG_FAILED_TOGGLE_AUDIT", {
-        error: logError.message
-      });
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", { error: logError.message });
     }
 
     logToConsole("SUCCESS", "FILE_AUDITED_TOGGLED", {
       employeeId: employee.employeeId,
-      clientId,
       fileName,
       action,
-      timestamp: new Date().toISOString()
+      updatedIn
     });
 
     res.json({
       message: action === "ADDED" ? "File marked as audited" : "File marked as not audited",
       isAudited: action === "ADDED",
       action,
-      auditedAt: auditedFile?.auditedAt
+      updatedIn,
+      auditedAt: auditedFileObj?.auditedAt
     });
 
   } catch (error) {
@@ -2644,8 +2462,10 @@ router.post("/toggle-file-audited", async (req, res) => {
   }
 });
 
+
 /* ===============================
-   GET ALL AUDITED FILES FOR AN ASSIGNMENT (OPTIONAL - HELPER ROUTE)
+   GET ALL AUDITED FILES FOR AN ASSIGNMENT
+   NOW READS FROM BOTH OLD AND NEW COLLECTIONS
 ================================ */
 router.get("/assignment-audited-files", async (req, res) => {
   try {
@@ -2678,33 +2498,59 @@ router.get("/assignment-audited-files", async (req, res) => {
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    // Get all audited files for this assignment
-    const auditedFiles = employee.auditedFiles.filter(f =>
+    const auditedFilesList = [];
+    const auditedMap = {};
+
+    // ===== FIRST: Get from OLD COLLECTION =====
+    const oldAuditedFiles = employee.auditedFiles.filter(f =>
       f.clientId === clientId &&
       f.year === parseInt(year) &&
       f.month === parseInt(month)
     );
 
-    // Create a map for quick lookup
-    const auditedMap = {};
-    auditedFiles.forEach(file => {
+    for (const file of oldAuditedFiles) {
       const key = `${file.categoryType}-${file.categoryName || 'main'}-${file.fileName}`;
-      auditedMap[key] = file;
-    });
+      auditedMap[key] = { ...file.toObject?.() || file, source: 'old' };
+      auditedFilesList.push({ ...file.toObject?.() || file, source: 'old' });
+    }
+
+    // ===== SECOND: Get from NEW COLLECTION =====
+    const auditedDoc = await EmployeeAuditedFile.findOne({ employeeId: employee.employeeId });
+
+    if (auditedDoc) {
+      const newAuditedFiles = auditedDoc.auditedFiles.filter(f =>
+        f.clientId === clientId &&
+        f.year === parseInt(year) &&
+        f.month === parseInt(month)
+      );
+
+      for (const file of newAuditedFiles) {
+        const key = `${file.categoryType}-${file.categoryName || 'main'}-${file.fileName}`;
+        // New collection overrides old if same key exists
+        auditedMap[key] = { ...file, source: 'new' };
+      }
+    }
+
+    // Convert map back to array (unique, new collection takes priority)
+    const finalAuditedFiles = Object.values(auditedMap);
 
     logToConsole("DEBUG", "ASSIGNMENT_AUDITED_FILES", {
       employeeId: employee.employeeId,
       clientId,
       year,
       month,
-      totalAudited: auditedFiles.length
+      oldCount: oldAuditedFiles.length,
+      newCount: auditedDoc?.auditedFiles?.filter(f =>
+        f.clientId === clientId && f.year === parseInt(year) && f.month === parseInt(month)
+      ).length || 0,
+      totalAudited: finalAuditedFiles.length
     });
 
     res.json({
       success: true,
-      auditedFiles: auditedFiles,
+      auditedFiles: finalAuditedFiles,
       auditedMap: auditedMap,
-      totalAudited: auditedFiles.length
+      totalAudited: finalAuditedFiles.length
     });
 
   } catch (error) {
@@ -2730,32 +2576,20 @@ router.get("/assignment-audited-files", async (req, res) => {
 
 
 
-
-
-
-
-
-
-
-
-
-
 /* ===============================
-   GET ALL CLIENTS WITH LAST 6 MONTHS PAYMENT STATUS (FOR EMPLOYEE)
-   Returns: client name, email, and payment status for last 6 months only
+   GET ALL CLIENTS WITH LAST 6 MONTHS PAYMENT STATUS - OPTIMIZED
+   NOW USES BATCH QUERIES (600 queries → 3 queries)
 ================================ */
 router.get("/all-clients-payment-status", async (req, res) => {
   try {
     const { search } = req.query;
     const token = req.cookies?.employeeToken;
 
-    // Console log
-    logToConsole("INFO", "GET_ALL_CLIENTS_PAYMENT_REQUEST", {
+    logToConsole("INFO", "GET_ALL_CLIENTS_PAYMENT_REQUEST_OPTIMIZED", {
       search: search || 'none',
       ip: req.ip
     });
 
-    // Verify employee token
     if (!token) {
       logToConsole("WARN", "NO_TOKEN_FOR_CLIENTS_PAYMENT", { ip: req.ip });
       return res.status(401).json({ message: "Unauthorized - No token" });
@@ -2772,7 +2606,6 @@ router.get("/all-clients-payment-status", async (req, res) => {
       return res.status(401).json({ message: "Invalid or expired token" });
     }
 
-    // Verify employee exists
     const employee = await Employee.findOne({
       employeeId: decoded.employeeId
     });
@@ -2784,12 +2617,11 @@ router.get("/all-clients-payment-status", async (req, res) => {
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    // Get current date info for last 6 months
+    // ============= STEP 1: Generate last 6 months =============
     const currentDate = new Date();
     const currentYear = currentDate.getFullYear();
-    const currentMonth = currentDate.getMonth() + 1; // 1-12
+    const currentMonth = currentDate.getMonth() + 1;
 
-    // Generate last 6 months (including current)
     const last6Months = [];
     for (let i = 0; i < 6; i++) {
       let year = currentYear;
@@ -2811,10 +2643,8 @@ router.get("/all-clients-payment-status", async (req, res) => {
       months: last6Months.map(m => `${m.month}/${m.year}`)
     });
 
-    // Build query for clients
+    // ============= STEP 2: Build search query =============
     const query = {};
-
-    // Add search functionality (case-insensitive)
     if (search && search.trim()) {
       const searchRegex = new RegExp(search.trim(), 'i');
       query.$or = [
@@ -2824,56 +2654,116 @@ router.get("/all-clients-payment-status", async (req, res) => {
       ];
     }
 
-    // Fetch ONLY name, email, and documents (for payment status)
-    // Using lean() for better performance
+    // ============= STEP 3: Get ALL clients in ONE query =============
     const clients = await Client.find(query)
-      .select('name email clientId documents') // Only select what we need
-      .lean(); // Convert to plain JS objects for faster processing
+      .select('name email clientId documents')
+      .lean();
 
     logToConsole("DEBUG", "CLIENTS_FETCHED", {
       totalClients: clients.length,
       searchApplied: !!search
     });
 
-    // Process each client to extract only payment status for last 6 months
-    const response = clients.map(client => {
-      // Initialize payment status object for last 6 months
+    if (clients.length === 0) {
+      return res.json({
+        success: true,
+        data: [],
+        meta: {
+          total: 0,
+          months: last6Months.map(m => ({ year: m.year, month: m.month })),
+          searchApplied: !!search
+        }
+      });
+    }
+
+    const clientIds = clients.map(c => c.clientId);
+
+    // ============= STEP 4: BATCH QUERY - Get ALL payment statuses from NEW collection in ONE go =============
+    const ClientMonthlyData = require("../models/ClientMonthlyData");
+    const allMonthlyData = await ClientMonthlyData.find({
+      clientId: { $in: clientIds }
+    }).lean();
+
+    // Build payment map for O(1) lookup
+    // Key format: "clientId-year-month"
+    const paymentMap = new Map();
+
+    for (const record of allMonthlyData) {
+      if (record.months && Array.isArray(record.months)) {
+        for (const month of record.months) {
+          if (month.paymentStatus !== undefined) {
+            const key = `${record.clientId}-${month.year}-${month.month}`;
+            paymentMap.set(key, month.paymentStatus === true);
+          }
+        }
+      }
+    }
+
+    logToConsole("DEBUG", "PAYMENT_DATA_LOADED_FROM_NEW_COLLECTION", {
+      totalRecords: allMonthlyData.length,
+      paymentMapSize: paymentMap.size
+    });
+
+    // ============= STEP 5: Build OLD documents payment map (fallback) =============
+    // Process OLD client.documents for clients where payment not found in NEW collection
+    const oldPaymentMap = new Map();
+
+    for (const client of clients) {
+      if (client.documents && typeof client.documents === 'object') {
+        for (const [yearKey, yearData] of Object.entries(client.documents)) {
+          if (yearData && typeof yearData === 'object') {
+            for (const [monthKey, monthData] of Object.entries(yearData)) {
+              if (monthData && monthData.paymentStatus !== undefined) {
+                const key = `${client.clientId}-${yearKey}-${monthKey}`;
+                // Only add if not already in new collection
+                if (!paymentMap.has(key)) {
+                  oldPaymentMap.set(key, monthData.paymentStatus === true);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Merge old into main map (new collection takes priority)
+    for (const [key, value] of oldPaymentMap) {
+      if (!paymentMap.has(key)) {
+        paymentMap.set(key, value);
+      }
+    }
+
+    logToConsole("DEBUG", "TOTAL_PAYMENT_DATA_LOADED", {
+      fromNewCollection: allMonthlyData.length,
+      fromOldCollection: oldPaymentMap.size,
+      totalUnique: paymentMap.size
+    });
+
+    // ============= STEP 6: Process all clients in memory (NO PER-CLIENT DB CALLS!) =============
+    const response = [];
+
+    for (const client of clients) {
       const paymentStatus = {};
 
-      // For each of the last 6 months, check payment status
-      last6Months.forEach(({ year, month, key }) => {
-        const yearKey = String(year);
-        const monthKey = String(month);
-
-        let isPaid = false;
-
-        // Check if client has documents for this year/month
-        if (client.documents &&
-          client.documents[yearKey] &&
-          client.documents[yearKey][monthKey]) {
-
-          const monthData = client.documents[yearKey][monthKey];
-          // Get payment status (default to false if not set)
-          isPaid = monthData.paymentStatus === true;
-        }
-
-        // Store in YYYY-M format for easy frontend use
+      // For each of the last 6 months, lookup in map (O(1) operation)
+      for (const { year, month, key } of last6Months) {
+        const lookupKey = `${client.clientId}-${year}-${month}`;
+        const isPaid = paymentMap.get(lookupKey) || false;
         paymentStatus[key] = isPaid;
-      });
+      }
 
-      // Return only what's needed
-      return {
+      response.push({
         clientId: client.clientId,
         name: client.name || 'No Name',
         email: client.email || 'No Email',
-        paymentStatus // Object with keys like "2024-12": true/false
-      };
-    });
+        paymentStatus
+      });
+    }
 
-    // Sort by name for better UX
+    // Sort clients by name
     response.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-    // Create activity log
+    // ============= STEP 7: Activity Log =============
     try {
       await ActivityLog.create({
         userName: employee.name,
@@ -2885,24 +2775,22 @@ router.get("/all-clients-payment-status", async (req, res) => {
           totalClients: response.length,
           searchApplied: !!search,
           searchTerm: search || null,
-          monthsRequested: last6Months.map(m => `${m.month}/${m.year}`)
+          monthsRequested: last6Months.map(m => `${m.month}/${m.year}`),
+          performance: {
+            paymentRecordsLoaded: paymentMap.size,
+            clientsProcessed: response.length
+          }
         }
       });
-
-      logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-        action: "VIEWED_ALL_CLIENTS_PAYMENT_STATUS",
-        employeeId: employee.employeeId
-      });
     } catch (logError) {
-      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", {
-        error: logError.message
-      });
+      logToConsole("ERROR", "ACTIVITY_LOG_FAILED", { error: logError.message });
     }
 
-    logToConsole("SUCCESS", "ALL_CLIENTS_PAYMENT_STATUS_FETCHED", {
+    logToConsole("SUCCESS", "ALL_CLIENTS_PAYMENT_STATUS_FETCHED_OPTIMIZED", {
       employeeId: employee.employeeId,
       totalClients: response.length,
       monthsIncluded: last6Months.length,
+      paymentRecordsLoaded: paymentMap.size,
       timestamp: new Date().toISOString()
     });
 
@@ -2913,6 +2801,10 @@ router.get("/all-clients-payment-status", async (req, res) => {
         total: response.length,
         months: last6Months.map(m => ({ year: m.year, month: m.month })),
         searchApplied: !!search
+      },
+      performance: {
+        paymentRecordsLoaded: paymentMap.size,
+        clientsProcessed: response.length
       }
     });
 
@@ -2931,6 +2823,5 @@ router.get("/all-clients-payment-status", async (req, res) => {
     });
   }
 });
-
 
 module.exports = router;
