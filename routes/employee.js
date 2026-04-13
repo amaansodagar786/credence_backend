@@ -1510,6 +1510,7 @@ router.get("/assignment-files", async (req, res) => {
     response.totalCategoryNotes = totalCategoryNotes;
     response.totalNotes = totalFileNotes + totalCategoryNotes;
 
+
     try {
       await ActivityLog.create({
         userName: employeeName,

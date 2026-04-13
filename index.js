@@ -60,6 +60,9 @@ const { schedulePlanChangeCron } = require('./utils/planChangeCron');
 // Import the new month lock cron job
 const { scheduleLockJob } = require('./utils/lockPreviousMonth');
 
+// Import the annual backup cron job
+const { scheduleBackupJob } = require('./utils/backupCron');
+
 // Schedule all cron jobs
 console.log("⏰ Initializing all CRON jobs...");
 
@@ -68,6 +71,9 @@ schedulePlanChangeCron();
 
 // Schedule month lock cron (runs on 26th of each month)
 scheduleLockJob();
+
+// Schedule annual backup cron (runs on Jan 1st at 12:00 AM Finland time)
+scheduleBackupJob();
 
 // ===============================
 // ROUTES
@@ -183,6 +189,7 @@ app.listen(PORT, () => {
     console.log(`💰 Payment Reminder System: ACTIVE`);
     console.log(`📄 Document Upload Reminder System: ACTIVE`);
     console.log(`🔒 Month Auto-Lock System: ACTIVE (Runs on 26th of each month at 12:00 AM Finland time)`);
+    console.log(`📦 Annual Backup System: ACTIVE (Runs on Jan 1st at 12:00 AM Finland time)`);
 });
 
 
