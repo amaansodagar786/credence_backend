@@ -270,6 +270,36 @@ router.get("/history", auth, async (req, res) => {
 /* ===============================
    DOWNLOAD PDF (FORCES DOWNLOAD)
 ================================ */
+// router.get("/download/:pdfId", auth, async (req, res) => {
+//     try {
+//         if (req.user.role !== "ADMIN") {
+//             return res.status(403).json({ message: "❌ Access denied" });
+//         }
+
+//         const { pdfId } = req.params;
+
+//         // Find the PDF by its unique ID
+//         const pdf = await AgreementPdf.findOne({ pdfId });
+
+//         if (!pdf) {
+//             return res.status(404).json({ message: "❌ PDF not found" });
+//         }
+
+//         // Return the S3 URL - frontend will handle download
+//         res.json({
+//             success: true,
+//             fileUrl: pdf.fileUrl,
+//             fileName: pdf.fileName,
+//             version: pdf.version
+//         });
+
+//     } catch (err) {
+//         logToConsole("ERROR", "DOWNLOAD_FAILED", { error: err.message });
+//         res.status(500).json({ message: "❌ Failed to get download URL" });
+//     }
+// });
+
+
 router.get("/download/:pdfId", auth, async (req, res) => {
     try {
         if (req.user.role !== "ADMIN") {
@@ -278,24 +308,197 @@ router.get("/download/:pdfId", auth, async (req, res) => {
 
         const { pdfId } = req.params;
 
-        // Find the PDF by its unique ID
         const pdf = await AgreementPdf.findOne({ pdfId });
 
         if (!pdf) {
             return res.status(404).json({ message: "❌ PDF not found" });
         }
 
-        // Return the S3 URL - frontend will handle download
-        res.json({
-            success: true,
-            fileUrl: pdf.fileUrl,
-            fileName: pdf.fileName,
-            version: pdf.version
+        // 🔥 FETCH FILE FROM S3 (SERVER SIDE)
+        const fileResponse = await fetch(pdf.fileUrl);
+
+        if (!fileResponse.ok) {
+            throw new Error("Failed to fetch file from S3");
+        }
+
+        const buffer = await fileResponse.arrayBuffer();
+
+        // 🔥 FORCE DOWNLOAD
+        res.set({
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="${pdf.fileName || "Agreement.pdf"}"`
         });
+
+        res.send(Buffer.from(buffer));
 
     } catch (err) {
         logToConsole("ERROR", "DOWNLOAD_FAILED", { error: err.message });
-        res.status(500).json({ message: "❌ Failed to get download URL" });
+        res.status(500).json({ message: "❌ Failed to download file" });
+    }
+});
+
+
+
+router.get("/public/download-current", async (req, res) => {
+    try {
+        // Log download attempt
+        logToConsole("INFO", "PUBLIC_DOWNLOAD_ATTEMPT", {
+            timestamp: new Date().toISOString(),
+            userAgent: req.headers['user-agent'],
+            ip: req.ip || req.connection.remoteAddress
+        });
+
+        // Check if PDF exists in database
+        const pdf = await AgreementPdf.findOne({ isActive: true });
+
+        if (!pdf) {
+            logToConsole("ERROR", "PUBLIC_DOWNLOAD_NO_PDF", {
+                error: "No active PDF found in database",
+                timestamp: new Date().toISOString()
+            });
+            
+            return res.status(404).json({ 
+                success: false,
+                error: "NO_PDF_FOUND",
+                message: "No active agreement PDF is available for download" 
+            });
+        }
+
+        // Log PDF details found
+        logToConsole("INFO", "PUBLIC_DOWNLOAD_PDF_FOUND", {
+            pdfId: pdf.pdfId,
+            version: pdf.version,
+            fileName: pdf.fileName,
+            fileSize: pdf.fileSize,
+            s3Key: pdf.s3Key
+        });
+
+        // Attempt to fetch from S3 with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+        let fileResponse;
+        try {
+            fileResponse = await fetch(pdf.fileUrl, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+        } catch (fetchError) {
+            clearTimeout(timeoutId);
+            
+            if (fetchError.name === 'AbortError') {
+                logToConsole("ERROR", "PUBLIC_DOWNLOAD_TIMEOUT", {
+                    error: "S3 fetch timeout after 30 seconds",
+                    pdfId: pdf.pdfId,
+                    fileUrl: pdf.fileUrl
+                });
+                
+                return res.status(504).json({
+                    success: false,
+                    error: "DOWNLOAD_TIMEOUT",
+                    message: "Download timed out. Please try again later."
+                });
+            }
+            
+            logToConsole("ERROR", "PUBLIC_DOWNLOAD_FETCH_FAILED", {
+                error: fetchError.message,
+                pdfId: pdf.pdfId,
+                fileUrl: pdf.fileUrl
+            });
+            
+            throw fetchError;
+        }
+
+        // Check if response is OK
+        if (!fileResponse.ok) {
+            logToConsole("ERROR", "PUBLIC_DOWNLOAD_S3_ERROR", {
+                status: fileResponse.status,
+                statusText: fileResponse.statusText,
+                pdfId: pdf.pdfId,
+                s3Key: pdf.s3Key
+            });
+            
+            return res.status(500).json({
+                success: false,
+                error: "S3_FETCH_FAILED",
+                message: `Failed to fetch file from storage (Status: ${fileResponse.status})`
+            });
+        }
+
+        // Check content type
+        const contentType = fileResponse.headers.get('content-type');
+        if (!contentType || !contentType.includes('pdf')) {
+            logToConsole("WARNING", "PUBLIC_DOWNLOAD_INVALID_CONTENT_TYPE", {
+                contentType: contentType,
+                pdfId: pdf.pdfId,
+                expected: "application/pdf"
+            });
+            
+            // Still try to send it, but log the warning
+        }
+
+        // Get file buffer
+        let buffer;
+        try {
+            buffer = await fileResponse.arrayBuffer();
+        } catch (bufferError) {
+            logToConsole("ERROR", "PUBLIC_DOWNLOAD_BUFFER_ERROR", {
+                error: bufferError.message,
+                pdfId: pdf.pdfId
+            });
+            
+            return res.status(500).json({
+                success: false,
+                error: "BUFFER_CREATION_FAILED",
+                message: "Failed to process the file. Please try again."
+            });
+        }
+
+        // Log success
+        logToConsole("SUCCESS", "PUBLIC_DOWNLOAD_SUCCESS", {
+            pdfId: pdf.pdfId,
+            version: pdf.version,
+            fileSize: buffer.byteLength,
+            userAgent: req.headers['user-agent'],
+            ip: req.ip || req.connection.remoteAddress
+        });
+
+        // Send file with proper headers
+        res.set({
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="Agreement_v${pdf.version}.pdf"`,
+            "Content-Length": buffer.byteLength,
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        });
+
+        res.send(Buffer.from(buffer));
+
+    } catch (err) {
+        // Comprehensive error logging
+        logToConsole("ERROR", "PUBLIC_DOWNLOAD_UNEXPECTED_ERROR", {
+            error: err.message,
+            stack: err.stack,
+            timestamp: new Date().toISOString(),
+            userAgent: req.headers['user-agent'],
+            ip: req.ip || req.connection.remoteAddress
+        });
+
+        // Send appropriate error response based on error type
+        if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+            return res.status(503).json({
+                success: false,
+                error: "NETWORK_ERROR",
+                message: "Unable to connect to storage service. Please try again later."
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            error: "DOWNLOAD_FAILED",
+            message: "An unexpected error occurred while downloading the file. Please try again."
+        });
     }
 });
 
