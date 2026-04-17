@@ -144,7 +144,7 @@ app.use("/uploads", express.static(UPLOAD_DIR));
 // BASIC ROUTE
 // ===============================
 app.get("/", (req, res) => {
-    res.send("Accounting Portal Backend is running new updated credence NEW");
+    res.send("NEW UPDATED WITH INDIAN SERVER ");
 });
 
 // ===============================
@@ -182,7 +182,7 @@ console.log(`⏰ Current Server Time (Finland): ${new Date().toLocaleString("en-
 // ===============================
 // SERVER
 // ===============================
-const PORT = process.env.PORT || 3043;
+const PORT = process.env.PORT || 3077;
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running at http://localhost:${PORT}`);
