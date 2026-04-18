@@ -1534,6 +1534,208 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
 /* ===============================
    9. GET CLIENTS WITH UPLOADED DOCS BUT MONTH LOCKED - UPDATED FOR BOTH COLLECTIONS
 ================================ */
+// router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
+//     try {
+//         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
+//         const dateRange = getDateRange(timeFilter, customStart, customEnd);
+
+//         logToConsole("INFO", "UPLOADED_BUT_LOCKED_REQUEST", {
+//             adminId: req.user.adminId,
+//             timeFilter,
+//             customStart,
+//             customEnd,
+//             monthsCount: dateRange.months.length
+//         });
+
+//         const allClients = await Client.find(
+//             { isActive: true },
+//             {
+//                 clientId: 1,
+//                 name: 1,
+//                 email: 1,
+//                 phone: 1,
+//                 documents: 1
+//             }
+//         ).lean();
+
+//         const monthsData = [];
+
+//         // Helper function to check if month has any files
+//         const hasAnyFiles = (monthData) => {
+//             if (!monthData) return false;
+
+//             let hasFile = false;
+
+//             ['sales', 'purchase', 'bank'].forEach(category => {
+//                 const categoryData = monthData[category];
+//                 if (categoryData?.files && categoryData.files.length > 0) {
+//                     hasFile = true;
+//                 }
+//             });
+
+//             if (monthData.other && Array.isArray(monthData.other)) {
+//                 monthData.other.forEach(otherCategory => {
+//                     if (otherCategory.document?.files && otherCategory.document.files.length > 0) {
+//                         hasFile = true;
+//                     }
+//                 });
+//             }
+
+//             return hasFile;
+//         };
+
+//         // Helper function to count total files
+//         const countTotalFiles = (monthData) => {
+//             if (!monthData) return 0;
+//             let count = 0;
+
+//             ['sales', 'purchase', 'bank'].forEach(category => {
+//                 const categoryData = monthData[category];
+//                 if (categoryData?.files) {
+//                     count += categoryData.files.length;
+//                 }
+//             });
+
+//             if (monthData.other && Array.isArray(monthData.other)) {
+//                 monthData.other.forEach(otherCategory => {
+//                     if (otherCategory.document?.files) {
+//                         count += otherCategory.document.files.length;
+//                     }
+//                 });
+//             }
+
+//             return count;
+//         };
+
+//         for (const monthInfo of dateRange.months) {
+//             const monthClients = [];
+
+//             // Helper to process a client for a specific month
+//             const processClientForMonth = async (client, monthData, source) => {
+//                 if (!monthData) return;
+
+//                 if (monthData.isLocked && hasAnyFiles(monthData)) {
+//                     const fileCount = countTotalFiles(monthData);
+
+//                     monthClients.push({
+//                         clientId: client.clientId,
+//                         name: client.name,
+//                         email: client.email,
+//                         phone: client.phone || "N/A",
+//                         lockedAt: monthData.lockedAt || null,
+//                         lockedBy: monthData.lockedBy || "Unknown",
+//                         totalFiles: fileCount,
+//                         source: source
+//                     });
+//                 }
+//             };
+
+//             for (const client of allClients) {
+//                 // 1. Check OLD collection
+//                 const yearKey = String(monthInfo.year);
+//                 const monthKey = String(monthInfo.month);
+//                 const oldMonthData = client.documents?.[yearKey]?.[monthKey];
+//                 await processClientForMonth(client, oldMonthData, "old");
+
+//                 // 2. Check NEW collection
+//                 try {
+//                     const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
+//                     if (newDoc && newDoc.months) {
+//                         const newMonthData = newDoc.months.find(m => m.year === monthInfo.year && m.month === monthInfo.month);
+//                         await processClientForMonth(client, newMonthData, "new");
+//                     }
+//                 } catch (err) {
+//                     logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION_LOCKED", { error: err.message });
+//                 }
+//             }
+
+//             // Remove duplicates (same client from both collections)
+//             const uniqueClients = [];
+//             const seenClientIds = new Set();
+
+//             for (const client of monthClients) {
+//                 if (!seenClientIds.has(client.clientId)) {
+//                     seenClientIds.add(client.clientId);
+//                     uniqueClients.push(client);
+//                 }
+//             }
+
+//             if (uniqueClients.length > 0) {
+//                 const monthName = new Date(monthInfo.year, monthInfo.month - 1, 1)
+//                     .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+//                 monthsData.push({
+//                     year: monthInfo.year,
+//                     month: monthInfo.month,
+//                     monthName: monthName,
+//                     count: uniqueClients.length,
+//                     clients: uniqueClients
+//                 });
+//             }
+//         }
+
+//         const totalClients = monthsData.reduce((sum, month) => sum + month.count, 0);
+
+//         try {
+//             await ActivityLog.create({
+//                 userName: req.user.name,
+//                 role: "ADMIN",
+//                 adminId: req.user.adminId,
+//                 action: "UPLOADED_BUT_LOCKED_VIEWED",
+//                 details: `Viewed clients with uploaded docs but month locked for ${timeFilter}. Found ${totalClients} clients across ${monthsData.length} months`,
+//                 dateTime: new Date(),
+//                 metadata: {
+//                     timeFilter,
+//                     totalMonths: monthsData.length,
+//                     totalClients: totalClients
+//                 }
+//             });
+//         } catch (logError) {
+//             logToConsole("ERROR", "UPLOADED_BUT_LOCKED_ACTIVITY_LOG_FAILED", {
+//                 error: logError.message,
+//                 adminId: req.user.adminId
+//             });
+//         }
+
+//         logToConsole("SUCCESS", "UPLOADED_BUT_LOCKED_FETCHED", {
+//             adminId: req.user.adminId,
+//             totalClients: totalClients,
+//             monthsCount: monthsData.length,
+//             timeFilter
+//         });
+
+//         res.json({
+//             success: true,
+//             timeFilter: dateRange.timeFilter,
+//             totalClients: totalClients,
+//             monthsData: monthsData,
+//             summary: {
+//                 monthsCount: monthsData.length,
+//                 hasData: monthsData.length > 0
+//             }
+//         });
+
+//     } catch (error) {
+//         logToConsole("ERROR", "UPLOADED_BUT_LOCKED_ERROR", {
+//             error: error.message,
+//             stack: error.stack,
+//             adminId: req.user?.adminId,
+//             timeFilter: req.query.timeFilter
+//         });
+
+//         res.status(500).json({
+//             success: false,
+//             message: "Error fetching clients with uploaded but locked docs"
+//         });
+//     }
+// });
+
+
+
+
+/* ===============================
+   9. GET CLIENTS WITH UPLOADED DOCS BUT MONTH LOCKED - UPDATED FOR BOTH COLLECTIONS
+================================ */
 router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
     try {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
@@ -1607,53 +1809,89 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
             return count;
         };
 
-        for (const monthInfo of dateRange.months) {
-            const monthClients = [];
-
-            // Helper to process a client for a specific month
-            const processClientForMonth = async (client, monthData, source) => {
-                if (!monthData) return;
-
-                if (monthData.isLocked && hasAnyFiles(monthData)) {
-                    const fileCount = countTotalFiles(monthData);
-
-                    monthClients.push({
-                        clientId: client.clientId,
-                        name: client.name,
-                        email: client.email,
-                        phone: client.phone || "N/A",
-                        lockedAt: monthData.lockedAt || null,
-                        lockedBy: monthData.lockedBy || "Unknown",
-                        totalFiles: fileCount,
-                        source: source
-                    });
-                }
-            };
-
-            for (const client of allClients) {
-                // 1. Check OLD collection
-                const yearKey = String(monthInfo.year);
-                const monthKey = String(monthInfo.month);
-                const oldMonthData = client.documents?.[yearKey]?.[monthKey];
-                await processClientForMonth(client, oldMonthData, "old");
-
-                // 2. Check NEW collection
-                try {
-                    const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
-                    if (newDoc && newDoc.months) {
-                        const newMonthData = newDoc.months.find(m => m.year === monthInfo.year && m.month === monthInfo.month);
-                        await processClientForMonth(client, newMonthData, "new");
+        // Helper to get month data from BOTH collections
+        const getMonthDataFromBoth = async (clientId, year, month) => {
+            // 1. FIRST: Check NEW ClientMonthlyData collection
+            try {
+                const ClientMonthlyData = require("../models/ClientMonthlyData");
+                const newDoc = await ClientMonthlyData.findOne({ clientId });
+                if (newDoc && newDoc.months && newDoc.months.length > 0) {
+                    const foundMonth = newDoc.months.find(m => m.year === year && m.month === month);
+                    if (foundMonth) {
+                        return { data: foundMonth, source: 'new' };
                     }
-                } catch (err) {
-                    logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION_LOCKED", { error: err.message });
+                }
+            } catch (err) {
+                logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION_LOCKED", { error: err.message, clientId, year, month });
+            }
+
+            // 2. SECOND: Check OLD client.documents
+            const client = await Client.findOne({ clientId }).lean();
+            if (client && client.documents) {
+                const yearKey = String(year);
+                const monthKey = String(month);
+                const oldMonthData = client.documents?.[yearKey]?.[monthKey];
+                if (oldMonthData) {
+                    return { data: oldMonthData, source: 'old' };
                 }
             }
 
-            // Remove duplicates (same client from both collections)
+            return null;
+        };
+
+        for (const monthInfo of dateRange.months) {
+            const monthClients = [];
+
+            for (const client of allClients) {
+                try {
+                    // Get month data from BOTH collections
+                    const monthResult = await getMonthDataFromBoth(client.clientId, monthInfo.year, monthInfo.month);
+
+                    if (monthResult && monthResult.data) {
+                        const monthData = monthResult.data;
+                        const source = monthResult.source;
+
+                        if (monthData.isLocked === true && hasAnyFiles(monthData)) {
+                            const fileCount = countTotalFiles(monthData);
+
+                            monthClients.push({
+                                clientId: client.clientId,
+                                name: client.name,
+                                email: client.email,
+                                phone: client.phone || "N/A",
+                                lockedAt: monthData.lockedAt || null,
+                                lockedBy: monthData.lockedBy || "Unknown",
+                                totalFiles: fileCount,
+                                source: source,
+                                isLocked: monthData.isLocked
+                            });
+                        }
+                    }
+                } catch (err) {
+                    logToConsole("ERROR", "PROCESS_CLIENT_FOR_MONTH_FAILED", {
+                        error: err.message,
+                        clientId: client.clientId,
+                        month: `${monthInfo.year}-${monthInfo.month}`
+                    });
+                }
+            }
+
+            // Remove duplicates (same client from both collections) - keep the one from NEW collection
             const uniqueClients = [];
             const seenClientIds = new Set();
 
-            for (const client of monthClients) {
+            // Process NEW collection first (priority)
+            const newCollectionClients = monthClients.filter(c => c.source === 'new');
+            const oldCollectionClients = monthClients.filter(c => c.source === 'old');
+
+            for (const client of newCollectionClients) {
+                if (!seenClientIds.has(client.clientId)) {
+                    seenClientIds.add(client.clientId);
+                    uniqueClients.push(client);
+                }
+            }
+
+            for (const client of oldCollectionClients) {
                 if (!seenClientIds.has(client.clientId)) {
                     seenClientIds.add(client.clientId);
                     uniqueClients.push(client);
@@ -1729,8 +1967,6 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
         });
     }
 });
-
-
 
 /* ===============================
    15. GET COMPLETED TASKS (GROUPED BY MONTH) - NEW
