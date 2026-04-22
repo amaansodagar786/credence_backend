@@ -1792,7 +1792,7 @@ router.get("/file-notes", async (req, res) => {
 
 /* ===============================
    CHECK IF FILE IS VIEWED BY EMPLOYEE
-   NOW CHECKS BOTH OLD AND NEW COLLECTIONS
+   NOW USES fileUrl AS UNIQUE IDENTIFIER
 ================================ */
 router.get("/check-file-viewed", async (req, res) => {
   try {
@@ -1802,7 +1802,8 @@ router.get("/check-file-viewed", async (req, res) => {
       month,
       categoryType,
       categoryName,
-      fileName
+      fileName,
+      fileUrl  // ← NEW: Required parameter
     } = req.query;
 
     logToConsole("INFO", "CHECK_FILE_VIEWED_REQUEST", {
@@ -1812,12 +1813,14 @@ router.get("/check-file-viewed", async (req, res) => {
       categoryType,
       categoryName,
       fileName,
+      fileUrl,
       ip: req.ip
     });
 
-    if (!clientId || !year || !month || !categoryType || !fileName) {
+    // VALIDATION: fileUrl is now required
+    if (!clientId || !year || !month || !categoryType || !fileName || !fileUrl) {
       return res.status(400).json({
-        message: "Missing required parameters: clientId, year, month, categoryType, fileName"
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName, fileUrl"
       });
     }
 
@@ -1840,7 +1843,7 @@ router.get("/check-file-viewed", async (req, res) => {
     let lastCheckedAt = null;
     let foundIn = null;
 
-    // ===== FIRST: Check NEW COLLECTION =====
+    // ===== FIRST: Check NEW COLLECTION using fileUrl =====
     const viewedDoc = await EmployeeViewedFile.findOne({ employeeId: employee.employeeId });
 
     if (viewedDoc) {
@@ -1849,8 +1852,7 @@ router.get("/check-file-viewed", async (req, res) => {
         f.year === parseInt(year) &&
         f.month === parseInt(month) &&
         f.categoryType === categoryType &&
-        f.fileName === fileName &&
-        (!categoryName || f.categoryName === categoryName)
+        f.fileUrl === fileUrl  // ← USE fileUrl INSTEAD OF fileName
       );
 
       if (viewedFile) {
@@ -1861,15 +1863,14 @@ router.get("/check-file-viewed", async (req, res) => {
       }
     }
 
-    // ===== SECOND: If not found, check OLD COLLECTION =====
+    // ===== SECOND: If not found, check OLD COLLECTION using fileUrl =====
     if (!isViewed) {
       const oldViewedFile = employee.viewedFiles.find(f =>
         f.clientId === clientId &&
         f.year === parseInt(year) &&
         f.month === parseInt(month) &&
         f.categoryType === categoryType &&
-        f.fileName === fileName &&
-        (!categoryName || f.categoryName === categoryName)
+        f.fileUrl === fileUrl  // ← USE fileUrl INSTEAD OF fileName
       );
 
       if (oldViewedFile) {
@@ -1880,14 +1881,7 @@ router.get("/check-file-viewed", async (req, res) => {
       }
     }
 
-    logToConsole("DEBUG", "FILE_VIEWED_STATUS", {
-      employeeId: employee.employeeId,
-      clientId,
-      fileName,
-      isViewed,
-      foundIn,
-      viewedAt
-    });
+
 
     res.json({
       isViewed,
@@ -1919,7 +1913,7 @@ router.get("/check-file-viewed", async (req, res) => {
 
 /* ===============================
    MARK FILE AS VIEWED/UNVIEWED (TOGGLE)
-   WORKS FOR BOTH OLD AND NEW FILES
+   NOW USES fileUrl AS UNIQUE IDENTIFIER
 ================================ */
 router.post("/toggle-file-viewed", async (req, res) => {
   try {
@@ -1930,7 +1924,7 @@ router.post("/toggle-file-viewed", async (req, res) => {
       categoryType,
       categoryName,
       fileName,
-      fileUrl,
+      fileUrl,  // ← NOW REQUIRED for unique identification
       task
     } = req.body;
 
@@ -1941,14 +1935,15 @@ router.post("/toggle-file-viewed", async (req, res) => {
       categoryType,
       categoryName,
       fileName,
-      fileUrl: !!fileUrl,
+      fileUrl,
       task,
       ip: req.ip
     });
 
-    if (!clientId || !year || !month || !categoryType || !fileName) {
+    // VALIDATION: fileUrl is now required
+    if (!clientId || !year || !month || !categoryType || !fileName || !fileUrl) {
       return res.status(400).json({
-        message: "Missing required parameters: clientId, year, month, categoryType, fileName"
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName, fileUrl"
       });
     }
 
@@ -1970,19 +1965,18 @@ router.post("/toggle-file-viewed", async (req, res) => {
     let viewedFileObj = null;
     let updatedIn = null;
 
-    // ===== CHECK OLD COLLECTION (Employee.viewedFiles) =====
+    // ===== CHECK OLD COLLECTION (Employee.viewedFiles) using fileUrl =====
     const oldIndex = employee.viewedFiles.findIndex(f =>
       f.clientId === clientId &&
       f.year === parseInt(year) &&
       f.month === parseInt(month) &&
       f.categoryType === categoryType &&
-      f.fileName === fileName &&
-      (!categoryName || f.categoryName === categoryName)
+      f.fileUrl === fileUrl  // ← USE fileUrl INSTEAD OF fileName
     );
 
     const existsInOld = oldIndex !== -1;
 
-    // ===== CHECK NEW COLLECTION (EmployeeViewedFile) =====
+    // ===== CHECK NEW COLLECTION (EmployeeViewedFile) using fileUrl =====
     let viewedDoc = await EmployeeViewedFile.findOne({ employeeId: employee.employeeId });
     let newIndex = -1;
 
@@ -1992,21 +1986,13 @@ router.post("/toggle-file-viewed", async (req, res) => {
         f.year === parseInt(year) &&
         f.month === parseInt(month) &&
         f.categoryType === categoryType &&
-        f.fileName === fileName &&
-        (!categoryName || f.categoryName === categoryName)
+        f.fileUrl === fileUrl  // ← USE fileUrl INSTEAD OF fileName
       );
     }
 
     const existsInNew = newIndex !== -1;
 
-    logToConsole("DEBUG", "VIEWED_TOGGLE_CHECK", {
-      employeeId: employee.employeeId,
-      fileName,
-      existsInOld,
-      existsInNew,
-      oldIndex,
-      newIndex
-    });
+
 
     // ===== DECISION LOGIC =====
     if (existsInOld && !existsInNew) {
@@ -2015,7 +2001,7 @@ router.post("/toggle-file-viewed", async (req, res) => {
       await employee.save();
       action = "REMOVED";
       updatedIn = "old_collection";
-      logToConsole("DEBUG", "REMOVED_FROM_OLD_VIEWED", { employeeId: employee.employeeId, fileName });
+      logToConsole("DEBUG", "REMOVED_FROM_OLD_VIEWED", { employeeId: employee.employeeId, fileName, fileUrl });
     }
     else if (!existsInOld && existsInNew) {
       // File exists ONLY in NEW - toggle in NEW
@@ -2023,7 +2009,7 @@ router.post("/toggle-file-viewed", async (req, res) => {
       await viewedDoc.save();
       action = "REMOVED";
       updatedIn = "new_collection";
-      logToConsole("DEBUG", "REMOVED_FROM_NEW_VIEWED", { employeeId: employee.employeeId, fileName });
+      logToConsole("DEBUG", "REMOVED_FROM_NEW_VIEWED", { employeeId: employee.employeeId, fileName, fileUrl });
     }
     else if (existsInOld && existsInNew) {
       // File exists in BOTH - toggle in BOTH
@@ -2033,7 +2019,7 @@ router.post("/toggle-file-viewed", async (req, res) => {
       await viewedDoc.save();
       action = "REMOVED";
       updatedIn = "both_collections";
-      logToConsole("DEBUG", "REMOVED_FROM_BOTH_VIEWED", { employeeId: employee.employeeId, fileName });
+      logToConsole("DEBUG", "REMOVED_FROM_BOTH_VIEWED", { employeeId: employee.employeeId, fileName, fileUrl });
     }
     else {
       // File exists in NEITHER - ADD to NEW collection only
@@ -2052,7 +2038,7 @@ router.post("/toggle-file-viewed", async (req, res) => {
         month: parseInt(month),
         categoryType,
         fileName,
-        fileUrl,
+        fileUrl,  // ← Store fileUrl as unique identifier
         viewedAt: new Date(),
         lastCheckedAt: new Date()
       };
@@ -2071,7 +2057,7 @@ router.post("/toggle-file-viewed", async (req, res) => {
       await viewedDoc.save();
       action = "ADDED";
       updatedIn = "new_collection";
-      logToConsole("DEBUG", "ADDED_TO_NEW_VIEWED", { employeeId: employee.employeeId, fileName });
+      logToConsole("DEBUG", "ADDED_TO_NEW_VIEWED", { employeeId: employee.employeeId, fileName, fileUrl });
     }
 
     // Create activity log
@@ -2084,7 +2070,7 @@ router.post("/toggle-file-viewed", async (req, res) => {
         action: action === "ADDED" ? "FILE_MARKED_VIEWED" : "FILE_MARKED_UNVIEWED",
         details: `Employee ${action === "ADDED" ? 'marked' : 'unmarked'} file "${fileName}" as viewed`,
         metadata: {
-          clientId, year, month, categoryType, categoryName, fileName,
+          clientId, year, month, categoryType, categoryName, fileName, fileUrl,
           action, updatedIn, timestamp: new Date().toISOString()
         }
       });
@@ -2095,6 +2081,7 @@ router.post("/toggle-file-viewed", async (req, res) => {
     logToConsole("SUCCESS", "FILE_VIEWED_TOGGLED", {
       employeeId: employee.employeeId,
       fileName,
+      fileUrl,
       action,
       updatedIn
     });
@@ -2130,7 +2117,7 @@ router.post("/toggle-file-viewed", async (req, res) => {
 
 /* ===============================
    CHECK IF FILE IS AUDITED BY EMPLOYEE
-   NOW CHECKS BOTH OLD AND NEW COLLECTIONS
+   NOW USES fileUrl AS UNIQUE IDENTIFIER
 ================================ */
 router.get("/check-file-audited", async (req, res) => {
   try {
@@ -2140,7 +2127,8 @@ router.get("/check-file-audited", async (req, res) => {
       month,
       categoryType,
       categoryName,
-      fileName
+      fileName,
+      fileUrl  // ← NEW: Required parameter
     } = req.query;
 
     logToConsole("INFO", "CHECK_FILE_AUDITED_REQUEST", {
@@ -2150,12 +2138,14 @@ router.get("/check-file-audited", async (req, res) => {
       categoryType,
       categoryName,
       fileName,
+      fileUrl,
       ip: req.ip
     });
 
-    if (!clientId || !year || !month || !categoryType || !fileName) {
+    // VALIDATION: fileUrl is now required
+    if (!clientId || !year || !month || !categoryType || !fileName || !fileUrl) {
       return res.status(400).json({
-        message: "Missing required parameters: clientId, year, month, categoryType, fileName"
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName, fileUrl"
       });
     }
 
@@ -2178,7 +2168,7 @@ router.get("/check-file-audited", async (req, res) => {
     let lastCheckedAt = null;
     let foundIn = null;
 
-    // ===== FIRST: Check NEW COLLECTION =====
+    // ===== FIRST: Check NEW COLLECTION using fileUrl =====
     const auditedDoc = await EmployeeAuditedFile.findOne({ employeeId: employee.employeeId });
 
     if (auditedDoc) {
@@ -2187,8 +2177,7 @@ router.get("/check-file-audited", async (req, res) => {
         f.year === parseInt(year) &&
         f.month === parseInt(month) &&
         f.categoryType === categoryType &&
-        f.fileName === fileName &&
-        (!categoryName || f.categoryName === categoryName)
+        f.fileUrl === fileUrl  // ← USE fileUrl INSTEAD OF fileName
       );
 
       if (auditedFile) {
@@ -2199,15 +2188,14 @@ router.get("/check-file-audited", async (req, res) => {
       }
     }
 
-    // ===== SECOND: If not found, check OLD COLLECTION =====
+    // ===== SECOND: If not found, check OLD COLLECTION using fileUrl =====
     if (!isAudited) {
       const oldAuditedFile = employee.auditedFiles.find(f =>
         f.clientId === clientId &&
         f.year === parseInt(year) &&
         f.month === parseInt(month) &&
         f.categoryType === categoryType &&
-        f.fileName === fileName &&
-        (!categoryName || f.categoryName === categoryName)
+        f.fileUrl === fileUrl  // ← USE fileUrl INSTEAD OF fileName
       );
 
       if (oldAuditedFile) {
@@ -2218,14 +2206,7 @@ router.get("/check-file-audited", async (req, res) => {
       }
     }
 
-    logToConsole("DEBUG", "FILE_AUDITED_STATUS", {
-      employeeId: employee.employeeId,
-      clientId,
-      fileName,
-      isAudited,
-      foundIn,
-      auditedAt
-    });
+
 
     res.json({
       isAudited,
@@ -2256,7 +2237,7 @@ router.get("/check-file-audited", async (req, res) => {
 
 /* ===============================
    MARK FILE AS AUDITED/UN-AUDITED (TOGGLE)
-   WORKS FOR BOTH OLD AND NEW FILES
+   NOW USES fileUrl AS UNIQUE IDENTIFIER
 ================================ */
 router.post("/toggle-file-audited", async (req, res) => {
   try {
@@ -2267,7 +2248,7 @@ router.post("/toggle-file-audited", async (req, res) => {
       categoryType,
       categoryName,
       fileName,
-      fileUrl,
+      fileUrl,  // ← NOW REQUIRED for unique identification
       task
     } = req.body;
 
@@ -2278,14 +2259,15 @@ router.post("/toggle-file-audited", async (req, res) => {
       categoryType,
       categoryName,
       fileName,
-      fileUrl: !!fileUrl,
+      fileUrl,
       task,
       ip: req.ip
     });
 
-    if (!clientId || !year || !month || !categoryType || !fileName) {
+    // VALIDATION: fileUrl is now required
+    if (!clientId || !year || !month || !categoryType || !fileName || !fileUrl) {
       return res.status(400).json({
-        message: "Missing required parameters: clientId, year, month, categoryType, fileName"
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName, fileUrl"
       });
     }
 
@@ -2307,19 +2289,18 @@ router.post("/toggle-file-audited", async (req, res) => {
     let auditedFileObj = null;
     let updatedIn = null;
 
-    // ===== CHECK OLD COLLECTION (Employee.auditedFiles) =====
+    // ===== CHECK OLD COLLECTION (Employee.auditedFiles) using fileUrl =====
     const oldIndex = employee.auditedFiles.findIndex(f =>
       f.clientId === clientId &&
       f.year === parseInt(year) &&
       f.month === parseInt(month) &&
       f.categoryType === categoryType &&
-      f.fileName === fileName &&
-      (!categoryName || f.categoryName === categoryName)
+      f.fileUrl === fileUrl  // ← USE fileUrl INSTEAD OF fileName
     );
 
     const existsInOld = oldIndex !== -1;
 
-    // ===== CHECK NEW COLLECTION (EmployeeAuditedFile) =====
+    // ===== CHECK NEW COLLECTION (EmployeeAuditedFile) using fileUrl =====
     let auditedDoc = await EmployeeAuditedFile.findOne({ employeeId: employee.employeeId });
     let newIndex = -1;
 
@@ -2329,21 +2310,13 @@ router.post("/toggle-file-audited", async (req, res) => {
         f.year === parseInt(year) &&
         f.month === parseInt(month) &&
         f.categoryType === categoryType &&
-        f.fileName === fileName &&
-        (!categoryName || f.categoryName === categoryName)
+        f.fileUrl === fileUrl  // ← USE fileUrl INSTEAD OF fileName
       );
     }
 
     const existsInNew = newIndex !== -1;
 
-    logToConsole("DEBUG", "AUDITED_TOGGLE_CHECK", {
-      employeeId: employee.employeeId,
-      fileName,
-      existsInOld,
-      existsInNew,
-      oldIndex,
-      newIndex
-    });
+
 
     // ===== DECISION LOGIC =====
     if (existsInOld && !existsInNew) {
@@ -2352,7 +2325,7 @@ router.post("/toggle-file-audited", async (req, res) => {
       await employee.save();
       action = "REMOVED";
       updatedIn = "old_collection";
-      logToConsole("DEBUG", "REMOVED_FROM_OLD_AUDITED", { employeeId: employee.employeeId, fileName });
+      logToConsole("DEBUG", "REMOVED_FROM_OLD_AUDITED", { employeeId: employee.employeeId, fileName, fileUrl });
     }
     else if (!existsInOld && existsInNew) {
       // File exists ONLY in NEW - toggle in NEW
@@ -2360,7 +2333,7 @@ router.post("/toggle-file-audited", async (req, res) => {
       await auditedDoc.save();
       action = "REMOVED";
       updatedIn = "new_collection";
-      logToConsole("DEBUG", "REMOVED_FROM_NEW_AUDITED", { employeeId: employee.employeeId, fileName });
+      logToConsole("DEBUG", "REMOVED_FROM_NEW_AUDITED", { employeeId: employee.employeeId, fileName, fileUrl });
     }
     else if (existsInOld && existsInNew) {
       // File exists in BOTH - toggle in BOTH
@@ -2370,7 +2343,7 @@ router.post("/toggle-file-audited", async (req, res) => {
       await auditedDoc.save();
       action = "REMOVED";
       updatedIn = "both_collections";
-      logToConsole("DEBUG", "REMOVED_FROM_BOTH_AUDITED", { employeeId: employee.employeeId, fileName });
+      logToConsole("DEBUG", "REMOVED_FROM_BOTH_AUDITED", { employeeId: employee.employeeId, fileName, fileUrl });
     }
     else {
       // File exists in NEITHER - ADD to NEW collection only
@@ -2389,7 +2362,7 @@ router.post("/toggle-file-audited", async (req, res) => {
         month: parseInt(month),
         categoryType,
         fileName,
-        fileUrl,
+        fileUrl,  // ← Store fileUrl as unique identifier
         auditedAt: new Date(),
         lastCheckedAt: new Date()
       };
@@ -2408,7 +2381,7 @@ router.post("/toggle-file-audited", async (req, res) => {
       await auditedDoc.save();
       action = "ADDED";
       updatedIn = "new_collection";
-      logToConsole("DEBUG", "ADDED_TO_NEW_AUDITED", { employeeId: employee.employeeId, fileName });
+      logToConsole("DEBUG", "ADDED_TO_NEW_AUDITED", { employeeId: employee.employeeId, fileName, fileUrl });
     }
 
     // Create activity log
@@ -2421,7 +2394,7 @@ router.post("/toggle-file-audited", async (req, res) => {
         action: action === "ADDED" ? "FILE_MARKED_AUDITED" : "FILE_MARKED_UNAUDITED",
         details: `Employee ${action === "ADDED" ? 'marked' : 'unmarked'} file "${fileName}" as audited`,
         metadata: {
-          clientId, year, month, categoryType, categoryName, fileName,
+          clientId, year, month, categoryType, categoryName, fileName, fileUrl,
           action, updatedIn, timestamp: new Date().toISOString()
         }
       });
@@ -2432,6 +2405,7 @@ router.post("/toggle-file-audited", async (req, res) => {
     logToConsole("SUCCESS", "FILE_AUDITED_TOGGLED", {
       employeeId: employee.employeeId,
       fileName,
+      fileUrl,
       action,
       updatedIn
     });
@@ -2535,17 +2509,7 @@ router.get("/assignment-audited-files", async (req, res) => {
     // Convert map back to array (unique, new collection takes priority)
     const finalAuditedFiles = Object.values(auditedMap);
 
-    logToConsole("DEBUG", "ASSIGNMENT_AUDITED_FILES", {
-      employeeId: employee.employeeId,
-      clientId,
-      year,
-      month,
-      oldCount: oldAuditedFiles.length,
-      newCount: auditedDoc?.auditedFiles?.filter(f =>
-        f.clientId === clientId && f.year === parseInt(year) && f.month === parseInt(month)
-      ).length || 0,
-      totalAudited: finalAuditedFiles.length
-    });
+    
 
     res.json({
       success: true,

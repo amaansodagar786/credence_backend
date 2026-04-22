@@ -182,8 +182,8 @@ console.log(`⏰ Current Server Time (Finland): ${new Date().toLocaleString("en-
 // ===============================
 // SERVER
 // ===============================
-// const PORT = process.env.PORT || 3043; 
-const PORT = process.env.PORT || 3077;
+const PORT = process.env.PORT || 3043; 
+// const PORT = process.env.PORT || 3077;
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running at http://localhost:${PORT}`);
