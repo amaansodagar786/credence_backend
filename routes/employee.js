@@ -2509,7 +2509,7 @@ router.get("/assignment-audited-files", async (req, res) => {
     // Convert map back to array (unique, new collection takes priority)
     const finalAuditedFiles = Object.values(auditedMap);
 
-    
+
 
     res.json({
       success: true,

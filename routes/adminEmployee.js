@@ -396,7 +396,7 @@ router.get("/all-clients", auth, async (req, res) => {
 
 /* ===============================
    ASSIGN CLIENT TO EMPLOYEE (UPDATED FOR MULTIPLE TASKS)
-   NOW CHECKS DOCUMENTS FROM BOTH OLD AND NEW COLLECTIONS
+   DOCUMENT CHECK REMOVED - ASSIGNMENT ALLOWED WITHOUT DOCUMENTS
 ================================ */
 router.post("/assign-client", auth, async (req, res) => {
     const { clientId, employeeId, year, month, tasks } = req.body;
@@ -489,93 +489,7 @@ router.post("/assign-client", auth, async (req, res) => {
             return res.status(400).json({ message: "Invalid year" });
         }
 
-        // ===== CHECK IF CLIENT HAS DOCUMENTS FOR SELECTED MONTH =====
-        // CHECK BOTH OLD AND NEW COLLECTIONS
-        let hasDocuments = false;
-        const yearKey = numericYear.toString();
-        const monthKey = numericMonth.toString();
-
-        // 1. CHECK OLD client.documents (Map structure)
-        if (client.documents && client.documents instanceof Map) {
-            const yearMap = client.documents.get(yearKey);
-            if (yearMap && yearMap instanceof Map) {
-                const monthData = yearMap.get(monthKey);
-                if (monthData) {
-                    const standardCategories = ['sales', 'purchase', 'bank'];
-                    for (const category of standardCategories) {
-                        if (monthData[category] &&
-                            monthData[category].files &&
-                            Array.isArray(monthData[category].files) &&
-                            monthData[category].files.length > 0) {
-                            hasDocuments = true;
-                            break;
-                        }
-                    }
-                    if (!hasDocuments && monthData.other && Array.isArray(monthData.other)) {
-                        for (const otherCat of monthData.other) {
-                            if (otherCat.document &&
-                                otherCat.document.files &&
-                                Array.isArray(otherCat.document.files) &&
-                                otherCat.document.files.length > 0) {
-                                hasDocuments = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. IF NOT FOUND IN OLD, CHECK NEW ClientMonthlyData collection
-        if (!hasDocuments) {
-            try {
-                const ClientMonthlyData = require("../models/ClientMonthlyData");
-                const newDoc = await ClientMonthlyData.findOne({ clientId: client.clientId });
-
-                if (newDoc && newDoc.months && Array.isArray(newDoc.months)) {
-                    const monthData = newDoc.months.find(m => m.year === numericYear && m.month === numericMonth);
-                    if (monthData) {
-                        // Check sales files
-                        if (monthData.sales && monthData.sales.files && monthData.sales.files.length > 0) {
-                            hasDocuments = true;
-                        }
-                        // Check purchase files
-                        else if (monthData.purchase && monthData.purchase.files && monthData.purchase.files.length > 0) {
-                            hasDocuments = true;
-                        }
-                        // Check bank files
-                        else if (monthData.bank && monthData.bank.files && monthData.bank.files.length > 0) {
-                            hasDocuments = true;
-                        }
-                        // Check other categories
-                        else if (monthData.other && Array.isArray(monthData.other)) {
-                            for (const otherCat of monthData.other) {
-                                if (otherCat.document && otherCat.document.files && otherCat.document.files.length > 0) {
-                                    hasDocuments = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (newDocError) {
-                logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION", { error: newDocError.message });
-            }
-        }
-
-        if (!hasDocuments) {
-            logToConsole("WARN", "NO_DOCUMENTS_FOR_MONTH", {
-                clientId,
-                clientName: client.name,
-                year: numericYear,
-                month: numericMonth,
-                monthName: getMonthName(numericMonth),
-                adminId: req.user.adminId
-            });
-            return res.status(400).json({
-                message: `Cannot assign tasks. No documents uploaded for ${getMonthName(numericMonth)} ${numericYear}. Please upload documents first.`
-            });
-        }
+        // ===== DOCUMENT CHECK REMOVED - NO LONGER VALIDATING DOCUMENTS =====
 
         // ===== CHECK FOR DUPLICATE AND ALREADY ASSIGNED TASKS =====
         const alreadyAssignedTasks = [];
@@ -724,14 +638,14 @@ router.post("/assign-client", auth, async (req, res) => {
                 clientId,
                 clientName: client.name,
                 action: "TASKS_ASSIGNED_BULK",
-                details: `Tasks [${assignableTasks.join(', ')}] assigned to employee "${employee.name}" for client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')}) - Saved to new collection only`,
+                details: `Tasks [${assignableTasks.join(', ')}] assigned to employee "${employee.name}" for client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')}) - Document check skipped`,
                 dateTime: new Date(),
                 metadata: {
                     tasks: assignableTasks,
                     year: numericYear,
                     month: numericMonth,
                     totalTasksAssigned: existingAssignments.length + assignableTasks.length,
-                    documentsVerified: true,
+                    documentsVerified: false,  // CHANGED: No longer verifying documents
                     alreadyAssignedTasks: alreadyAssignedTasks.length > 0 ? alreadyAssignedTasks : undefined,
                     storageLocation: "EmployeeAssignment collection (new)"
                 }
@@ -780,7 +694,7 @@ router.post("/assign-client", auth, async (req, res) => {
                 tasksSkipped: alreadyAssignedTasks,
                 assignedAt: assignmentDate,
                 totalTasksForMonth: existingAssignments.length + assignableTasks.length,
-                documentsVerified: true,
+                documentsVerified: false,  // CHANGED: No longer verifying documents
                 storageLocation: "EmployeeAssignment collection (new)"
             }
         });
