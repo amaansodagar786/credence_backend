@@ -794,6 +794,177 @@ router.post("/upload-and-lock", auth, upload.array("files"), async (req, res) =>
     }
 });
 
+
+/* ===============================
+   NEW: LOCK CATEGORY ONLY (No Upload)
+   ADD THIS NEW ROUTE - DOES NOT AFFECT EXISTING CODE
+================================ */
+router.post("/lock-category", auth, async (req, res) => {
+    try {
+        const { year, month, type, categoryName, note } = req.body;
+        
+        // Validate required fields
+        if (!year || !month || !type) {
+            return res.status(400).json({ message: "❌ Year, month, and type are required" });
+        }
+
+        const client = await Client.findOne({ clientId: req.user.clientId });
+        if (!client) {
+            return res.status(404).json({ message: "❌ Client not found" });
+        }
+
+        // Get month data using existing helper function
+        const { data: monthData, source: dataSource, client: existingClient, yearKey, monthKey, newDoc } =
+            await getMonthData(client.clientId, year, month, client);
+
+        // Check if month is inactive
+        if (monthData.monthActiveStatus === 'inactive') {
+            return res.status(403).json({ message: `❌ Cannot lock. Month ${month}/${year} was inactive.` });
+        }
+
+        let targetCategory = null;
+        let categoryDisplayName = "";
+
+        // Find and lock the appropriate category
+        if (type === "other") {
+            // Handle "other" category
+            if (!categoryName) {
+                return res.status(400).json({ message: "❌ Category name required for other categories" });
+            }
+            
+            const otherCategory = monthData.other?.find(x => x.categoryName === categoryName);
+            if (!otherCategory) {
+                return res.status(404).json({ message: "❌ Category not found" });
+            }
+            
+            if (otherCategory.document.isLocked) {
+                return res.status(403).json({ message: "❌ Category already locked" });
+            }
+            
+            targetCategory = otherCategory.document;
+            categoryDisplayName = categoryName;
+            
+            // Lock the category
+            targetCategory.isLocked = true;
+            targetCategory.wasLockedOnce = true;
+            targetCategory.lockedAt = new Date();
+            targetCategory.lockedBy = client.clientId;
+            
+            // Add note if provided
+            if (note && note.trim()) {
+                targetCategory.categoryNotes = targetCategory.categoryNotes || [];
+                targetCategory.categoryNotes.push({ 
+                    note: note.trim(), 
+                    addedBy: client.clientId, 
+                    addedAt: new Date() 
+                });
+            }
+        } else {
+            // Handle main categories: sales, purchase, bank
+            if (!monthData[type]) {
+                return res.status(404).json({ message: `❌ Category ${type} not found` });
+            }
+            
+            if (monthData[type].isLocked) {
+                return res.status(403).json({ message: "❌ Category already locked" });
+            }
+            
+            targetCategory = monthData[type];
+            categoryDisplayName = type === 'sales' ? 'Sales' : type === 'purchase' ? 'Purchase' : 'Bank';
+            
+            // Lock the category
+            targetCategory.isLocked = true;
+            targetCategory.wasLockedOnce = true;
+            targetCategory.lockedAt = new Date();
+            targetCategory.lockedBy = client.clientId;
+            
+            // Add note if provided
+            if (note && note.trim()) {
+                targetCategory.categoryNotes = targetCategory.categoryNotes || [];
+                targetCategory.categoryNotes.push({ 
+                    note: note.trim(), 
+                    addedBy: client.clientId, 
+                    addedAt: new Date() 
+                });
+            }
+        }
+
+        // Save using existing helper function
+        await saveMonthData(client.clientId, year, month, monthData, dataSource, { 
+            client: existingClient, 
+            yearKey, 
+            monthKey, 
+            newDoc 
+        });
+
+        // Send email notification using existing helper
+        try {
+            await sendNotificationEmails({
+                client, 
+                employeeName: client.name, 
+                actionType: "CATEGORY LOCKED",
+                details: `Locked ${categoryDisplayName} category ${type === 'other' ? `(${categoryName})` : ''} without uploading new files`,
+                year, 
+                month, 
+                fileName: "No new files uploaded", 
+                categoryType: type, 
+                categoryName: categoryName,
+                note: note || "Category locked by client"
+            });
+        } catch (emailError) { 
+            console.error("Email notification error:", emailError); 
+            // Don't fail the request if email fails
+        }
+
+        // Log activity using existing model
+        await ActivityLog.create({
+            userName: client.name, 
+            role: "CLIENT", 
+            clientId: client.clientId, 
+            clientName: client.name,
+            action: "CLIENT_CATEGORY_LOCKED",
+            details: `Locked ${categoryDisplayName} category ${type === 'other' ? `(${categoryName})` : ''}`,
+            dateTime: new Date(),
+            metadata: { 
+                year, 
+                month, 
+                type, 
+                categoryName: categoryName || null, 
+                noteProvided: !!(note && note.trim()),
+                lockedVia: "lock-category-only-route"
+            }
+        });
+
+        logToConsole("INFO", "CATEGORY_LOCKED_SUCCESS", { 
+            clientId: client.clientId, 
+            year, 
+            month, 
+            type, 
+            categoryName,
+            noteProvided: !!(note && note.trim())
+        });
+
+        res.json({ 
+            success: true,
+            message: `✅ ${categoryDisplayName} category locked successfully!`, 
+            monthData 
+        });
+        
+    } catch (err) {
+        logToConsole("ERROR", "LOCK_CATEGORY_FAILED", { error: err.message, stack: err.stack });
+        
+        // Handle specific errors
+        if (err.message?.includes("not found")) {
+            return res.status(404).json({ message: "❌ Category or data not found" });
+        }
+        
+        res.status(500).json({ 
+            success: false,
+            message: "❌ Failed to lock category. Please try again." 
+        });
+    }
+});
+
 /* ===============================
    GET DELETED FILES
 ================================ */
