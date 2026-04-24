@@ -601,6 +601,248 @@ router.delete("/delete-file", auth, async (req, res) => {
     }
 });
 
+
+/* ===============================
+   DELETE MULTIPLE FILES (BULK DELETE) - FIXED
+================================ */
+router.post("/delete-multiple-files", auth, async (req, res) => {
+    try {
+        const { year, month, files, deleteNote } = req.body;
+
+        // Validate input
+        if (!year || !month || !files || !Array.isArray(files) || files.length === 0) {
+            return res.status(400).json({ message: "❌ Invalid request. Please provide year, month, and files array." });
+        }
+
+        if (!deleteNote || !deleteNote.trim()) {
+            return res.status(400).json({ message: "❌ Please provide a reason for deletion." });
+        }
+
+        const client = await Client.findOne({ clientId: req.user.clientId });
+        if (!client) {
+            return res.status(404).json({ message: "❌ Client not found." });
+        }
+
+        // Get month data
+        const { data: monthData, source: dataSource, client: existingClient, yearKey, monthKey, newDoc } =
+            await getMonthData(client.clientId, year, month, client);
+
+        // Check if month is inactive
+        if (monthData.monthActiveStatus === 'inactive') {
+            return res.status(403).json({ message: `❌ Cannot delete. Month ${month}/${year} was inactive.` });
+        }
+
+        const deletedFilesInfo = [];
+        const errors = [];
+
+        // Process each file
+        for (const fileInfo of files) {
+            const { type, fileName, categoryName } = fileInfo;
+
+            // Find the category
+            let category = null;
+            let categoryPath = null;
+
+            if (type === "other") {
+                const otherIndex = monthData.other?.findIndex(x => x.categoryName === categoryName);
+                if (otherIndex !== -1 && otherIndex >= 0) {
+                    category = monthData.other[otherIndex].document;
+                    categoryPath = { type: "other", index: otherIndex };
+                }
+            } else {
+                if (monthData[type]) {
+                    category = monthData[type];
+                    categoryPath = { type: type, index: null };
+                }
+            }
+
+            // Check if category exists
+            if (!category) {
+                errors.push(`Category not found for file: ${fileName}`);
+                continue;
+            }
+
+            // Check if category is locked
+            if (category.isLocked) {
+                errors.push(`Cannot delete "${fileName}" - Category is locked`);
+                continue;
+            }
+
+            // Find and remove the file
+            let deletedFileData = null;
+            let fileIndex = -1;
+
+            if (type === "other" && categoryPath && categoryPath.index !== undefined) {
+                fileIndex = monthData.other[categoryPath.index].document.files.findIndex(f => f.fileName === fileName);
+                if (fileIndex >= 0) {
+                    deletedFileData = monthData.other[categoryPath.index].document.files[fileIndex];
+                    monthData.other[categoryPath.index].document.files.splice(fileIndex, 1);
+                }
+            } else {
+                if (monthData[type]?.files) {
+                    fileIndex = monthData[type].files.findIndex(f => f.fileName === fileName);
+                    if (fileIndex >= 0) {
+                        deletedFileData = monthData[type].files[fileIndex];
+                        monthData[type].files.splice(fileIndex, 1);
+                    }
+                }
+            }
+
+            if (!deletedFileData) {
+                errors.push(`File not found: ${fileName}`);
+                continue;
+            }
+
+            // Store deleted file info with correct field names
+            deletedFilesInfo.push({
+                fileName: deletedFileData.fileName,
+                url: deletedFileData.url,
+                fileSize: deletedFileData.fileSize,
+                fileType: deletedFileData.fileType,
+                uploadedBy: deletedFileData.uploadedBy,
+                uploadedAt: deletedFileData.uploadedAt,
+                type: type,
+                categoryName: categoryName
+            });
+        }
+
+        // If no files were deleted successfully
+        if (deletedFilesInfo.length === 0) {
+            return res.status(404).json({
+                message: "❌ No files were deleted",
+                errors: errors
+            });
+        }
+
+        // Create bulk delete note with all filenames
+        const fileNamesList = deletedFilesInfo.map(f => f.fileName).join(", ");
+        const bulkDeleteNote = `Bulk delete (${deletedFilesInfo.length} files): [${fileNamesList}]. Reason: ${deleteNote.trim()}`;
+
+        // Create DeletedFile records for each deleted file
+        for (const deletedFile of deletedFilesInfo) {
+            await DeletedFile.create({
+                clientId: client.clientId,
+                fileName: deletedFile.fileName,
+                fileUrl: deletedFile.url,
+                fileSize: deletedFile.fileSize,
+                fileType: deletedFile.fileType,
+                year: parseInt(year),
+                month: parseInt(month),
+                categoryType: deletedFile.type,
+                categoryName: deletedFile.categoryName || null,
+                uploadedBy: deletedFile.uploadedBy,
+                uploadedAt: deletedFile.uploadedAt,
+                deletedBy: client.clientId,
+                deleteNote: bulkDeleteNote,
+                wasReplaced: false
+            });
+        }
+
+        // Add note to category about bulk delete
+        // Group files by category to add notes
+        const filesByCategory = {};
+        for (const deletedFile of deletedFilesInfo) {
+            const categoryKey = deletedFile.type === "other" ? `other-${deletedFile.categoryName}` : deletedFile.type;
+            if (!filesByCategory[categoryKey]) {
+                filesByCategory[categoryKey] = {
+                    type: deletedFile.type,
+                    categoryName: deletedFile.categoryName,
+                    files: []
+                };
+            }
+            filesByCategory[categoryKey].files.push(deletedFile.fileName);
+        }
+
+        // Add note to each affected category
+        for (const categoryKey in filesByCategory) {
+            const catInfo = filesByCategory[categoryKey];
+            let targetCategory = null;
+
+            if (catInfo.type === "other") {
+                const otherCategory = monthData.other?.find(x => x.categoryName === catInfo.categoryName);
+                if (otherCategory) {
+                    targetCategory = otherCategory.document;
+                }
+            } else {
+                targetCategory = monthData[catInfo.type];
+            }
+
+            if (targetCategory) {
+                targetCategory.categoryNotes = targetCategory.categoryNotes || [];
+                targetCategory.categoryNotes.push({
+                    note: `Bulk delete (${catInfo.files.length} files): [${catInfo.files.join(", ")}]. Reason: ${deleteNote.trim()}`,
+                    addedBy: client.clientId,
+                    addedAt: new Date()
+                });
+            }
+        }
+
+        // Save month data
+        await saveMonthData(client.clientId, year, month, monthData, dataSource, {
+            client: existingClient,
+            yearKey,
+            monthKey,
+            newDoc
+        });
+
+        // Send email notification
+        try {
+            await sendNotificationEmails({
+                client,
+                employeeName: client.name,
+                actionType: "BULK FILES DELETED",
+                details: `Deleted ${deletedFilesInfo.length} file(s)`,
+                year,
+                month,
+                fileName: fileNamesList,
+                categoryType: "multiple",
+                categoryName: "various categories",
+                note: bulkDeleteNote
+            });
+        } catch (emailError) {
+            console.error("Email error:", emailError);
+        }
+
+        // Log activity
+        await ActivityLog.create({
+            userName: client.name,
+            role: "CLIENT",
+            clientId: client.clientId,
+            clientName: client.name,
+            action: "CLIENT_BULK_FILES_DELETED",
+            details: `Bulk deleted ${deletedFilesInfo.length} file(s)`,
+            dateTime: new Date(),
+            metadata: {
+                year,
+                month,
+                filesCount: deletedFilesInfo.length,
+                fileNames: fileNamesList,
+                deleteNote: deleteNote.trim(),
+                errors: errors.length > 0 ? errors : null
+            }
+        });
+
+        logToConsole("INFO", "BULK_DELETE_SUCCESS", {
+            clientId: client.clientId,
+            year,
+            month,
+            filesDeleted: deletedFilesInfo.length,
+            errors: errors.length
+        });
+
+        res.json({
+            success: true,
+            message: `✅ Successfully deleted ${deletedFilesInfo.length} file(s)`,
+            deletedCount: deletedFilesInfo.length,
+            errors: errors.length > 0 ? errors : null,
+            monthData
+        });
+
+    } catch (err) {
+        logToConsole("ERROR", "BULK_DELETE_FAILED", { error: err.message, stack: err.stack });
+        res.status(500).json({ message: "❌ Failed to delete files. Please try again." });
+    }
+});
 /* ===============================
    SAVE & LOCK MONTH
 ================================ */
@@ -802,7 +1044,7 @@ router.post("/upload-and-lock", auth, upload.array("files"), async (req, res) =>
 router.post("/lock-category", auth, async (req, res) => {
     try {
         const { year, month, type, categoryName, note } = req.body;
-        
+
         // Validate required fields
         if (!year || !month || !type) {
             return res.status(400).json({ message: "❌ Year, month, and type are required" });
@@ -831,32 +1073,32 @@ router.post("/lock-category", auth, async (req, res) => {
             if (!categoryName) {
                 return res.status(400).json({ message: "❌ Category name required for other categories" });
             }
-            
+
             const otherCategory = monthData.other?.find(x => x.categoryName === categoryName);
             if (!otherCategory) {
                 return res.status(404).json({ message: "❌ Category not found" });
             }
-            
+
             if (otherCategory.document.isLocked) {
                 return res.status(403).json({ message: "❌ Category already locked" });
             }
-            
+
             targetCategory = otherCategory.document;
             categoryDisplayName = categoryName;
-            
+
             // Lock the category
             targetCategory.isLocked = true;
             targetCategory.wasLockedOnce = true;
             targetCategory.lockedAt = new Date();
             targetCategory.lockedBy = client.clientId;
-            
+
             // Add note if provided
             if (note && note.trim()) {
                 targetCategory.categoryNotes = targetCategory.categoryNotes || [];
-                targetCategory.categoryNotes.push({ 
-                    note: note.trim(), 
-                    addedBy: client.clientId, 
-                    addedAt: new Date() 
+                targetCategory.categoryNotes.push({
+                    note: note.trim(),
+                    addedBy: client.clientId,
+                    addedAt: new Date()
                 });
             }
         } else {
@@ -864,103 +1106,103 @@ router.post("/lock-category", auth, async (req, res) => {
             if (!monthData[type]) {
                 return res.status(404).json({ message: `❌ Category ${type} not found` });
             }
-            
+
             if (monthData[type].isLocked) {
                 return res.status(403).json({ message: "❌ Category already locked" });
             }
-            
+
             targetCategory = monthData[type];
             categoryDisplayName = type === 'sales' ? 'Sales' : type === 'purchase' ? 'Purchase' : 'Bank';
-            
+
             // Lock the category
             targetCategory.isLocked = true;
             targetCategory.wasLockedOnce = true;
             targetCategory.lockedAt = new Date();
             targetCategory.lockedBy = client.clientId;
-            
+
             // Add note if provided
             if (note && note.trim()) {
                 targetCategory.categoryNotes = targetCategory.categoryNotes || [];
-                targetCategory.categoryNotes.push({ 
-                    note: note.trim(), 
-                    addedBy: client.clientId, 
-                    addedAt: new Date() 
+                targetCategory.categoryNotes.push({
+                    note: note.trim(),
+                    addedBy: client.clientId,
+                    addedAt: new Date()
                 });
             }
         }
 
         // Save using existing helper function
-        await saveMonthData(client.clientId, year, month, monthData, dataSource, { 
-            client: existingClient, 
-            yearKey, 
-            monthKey, 
-            newDoc 
+        await saveMonthData(client.clientId, year, month, monthData, dataSource, {
+            client: existingClient,
+            yearKey,
+            monthKey,
+            newDoc
         });
 
         // Send email notification using existing helper
         try {
             await sendNotificationEmails({
-                client, 
-                employeeName: client.name, 
+                client,
+                employeeName: client.name,
                 actionType: "CATEGORY LOCKED",
                 details: `Locked ${categoryDisplayName} category ${type === 'other' ? `(${categoryName})` : ''} without uploading new files`,
-                year, 
-                month, 
-                fileName: "No new files uploaded", 
-                categoryType: type, 
+                year,
+                month,
+                fileName: "No new files uploaded",
+                categoryType: type,
                 categoryName: categoryName,
                 note: note || "Category locked by client"
             });
-        } catch (emailError) { 
-            console.error("Email notification error:", emailError); 
+        } catch (emailError) {
+            console.error("Email notification error:", emailError);
             // Don't fail the request if email fails
         }
 
         // Log activity using existing model
         await ActivityLog.create({
-            userName: client.name, 
-            role: "CLIENT", 
-            clientId: client.clientId, 
+            userName: client.name,
+            role: "CLIENT",
+            clientId: client.clientId,
             clientName: client.name,
             action: "CLIENT_CATEGORY_LOCKED",
             details: `Locked ${categoryDisplayName} category ${type === 'other' ? `(${categoryName})` : ''}`,
             dateTime: new Date(),
-            metadata: { 
-                year, 
-                month, 
-                type, 
-                categoryName: categoryName || null, 
+            metadata: {
+                year,
+                month,
+                type,
+                categoryName: categoryName || null,
                 noteProvided: !!(note && note.trim()),
                 lockedVia: "lock-category-only-route"
             }
         });
 
-        logToConsole("INFO", "CATEGORY_LOCKED_SUCCESS", { 
-            clientId: client.clientId, 
-            year, 
-            month, 
-            type, 
+        logToConsole("INFO", "CATEGORY_LOCKED_SUCCESS", {
+            clientId: client.clientId,
+            year,
+            month,
+            type,
             categoryName,
             noteProvided: !!(note && note.trim())
         });
 
-        res.json({ 
+        res.json({
             success: true,
-            message: `✅ ${categoryDisplayName} category locked successfully!`, 
-            monthData 
+            message: `✅ ${categoryDisplayName} category locked successfully!`,
+            monthData
         });
-        
+
     } catch (err) {
         logToConsole("ERROR", "LOCK_CATEGORY_FAILED", { error: err.message, stack: err.stack });
-        
+
         // Handle specific errors
         if (err.message?.includes("not found")) {
             return res.status(404).json({ message: "❌ Category or data not found" });
         }
-        
-        res.status(500).json({ 
+
+        res.status(500).json({
             success: false,
-            message: "❌ Failed to lock category. Please try again." 
+            message: "❌ Failed to lock category. Please try again."
         });
     }
 });
