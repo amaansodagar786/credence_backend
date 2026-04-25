@@ -999,6 +999,7 @@ router.post("/add-file-note", async (req, res) => {
       categoryType,
       categoryName,
       fileName,
+      fileUrl,      // ✅ ADDED: Unique identifier for the file
       note
     } = req.body;
 
@@ -1009,13 +1010,15 @@ router.post("/add-file-note", async (req, res) => {
       categoryType,
       categoryName,
       fileName,
+      fileUrl,      // ✅ ADDED: Log the fileUrl
       noteLength: note?.length || 0,
       ip: req.ip
     });
 
-    if (!clientId || !year || !month || !categoryType || !fileName || !note?.trim()) {
+    // ✅ UPDATED: Include fileUrl in validation
+    if (!clientId || !year || !month || !categoryType || !fileName || !fileUrl || !note?.trim()) {
       return res.status(400).json({
-        message: "Missing required parameters: clientId, year, month, categoryType, fileName, note"
+        message: "Missing required parameters: clientId, year, month, categoryType, fileName, fileUrl, note"
       });
     }
 
@@ -1102,7 +1105,8 @@ router.post("/add-file-note", async (req, res) => {
         });
       }
 
-      file = otherCategory.document.files?.find(f => f.fileName === fileName);
+      // ✅ CHANGED: Find by fileUrl instead of fileName
+      file = otherCategory.document.files?.find(f => f.url === fileUrl);
       categoryPath = `other.${categoryName}`;
 
     } else {
@@ -1113,13 +1117,14 @@ router.post("/add-file-note", async (req, res) => {
         });
       }
 
-      file = category.files?.find(f => f.fileName === fileName);
+      // ✅ CHANGED: Find by fileUrl instead of fileName
+      file = category.files?.find(f => f.url === fileUrl);
       categoryPath = categoryType;
     }
 
     if (!file) {
       return res.status(404).json({
-        message: `File '${fileName}' not found in ${categoryPath}`
+        message: `File with url '${fileUrl}' not found in ${categoryPath}`
       });
     }
 
@@ -1140,19 +1145,17 @@ router.post("/add-file-note", async (req, res) => {
 
     file.notes.push(newNote);
 
-    // SAVE to appropriate location (ONLY ONCE!)
+    // SAVE to appropriate location
     if (dataSource === 'new' && newDocRef) {
-      // Save to NEW collection - monthData is already the reference to the array item
       await newDocRef.save();
       logToConsole("DEBUG", "NOTE_SAVED_TO_NEW_COLLECTION", { clientId, year, month });
     } else {
-      // Save to OLD client.documents
       await client.save();
       logToConsole("DEBUG", "NOTE_SAVED_TO_OLD_COLLECTION", { clientId, year, month });
     }
 
-    // ===== SEND EMAIL NOTIFICATIONS (keep as is) =====
-    // ... (your existing email code)
+    // ===== SEND EMAIL NOTIFICATIONS =====
+    // (Keep your existing email notification code here unchanged)
 
     logToConsole("SUCCESS", "FILE_NOTE_ADDED_SUCCESS", {
       clientId,
@@ -1160,6 +1163,7 @@ router.post("/add-file-note", async (req, res) => {
       month,
       categoryPath,
       fileName,
+      fileUrl,
       employeeId: employeeId,
       savedTo: dataSource === 'new' ? 'new_collection' : 'old_collection'
     });
@@ -1169,6 +1173,7 @@ router.post("/add-file-note", async (req, res) => {
       note: newNote,
       file: {
         fileName: file.fileName,
+        fileUrl: file.url,
         totalNotes: file.notes.length
       }
     });
@@ -1187,7 +1192,6 @@ router.post("/add-file-note", async (req, res) => {
     });
   }
 });
-
 
 router.get("/assignment-files", async (req, res) => {
   try {
