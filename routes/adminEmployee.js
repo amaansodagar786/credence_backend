@@ -142,65 +142,39 @@ router.post("/create", auth, async (req, res) => {
     }
 });
 
-/* ===============================
-   LIST EMPLOYEES (ADMIN ONLY)
-================================ */
 router.get("/all", auth, async (req, res) => {
     try {
-        // Console log: Request received
-        logToConsole("INFO", "LIST_EMPLOYEES_REQUEST", {
-            adminId: req.user.adminId,
-            adminName: req.user.name
-        });
-
+        // Get employees from old schema
         const employees = await Employee.find().select("-password");
 
-        // Console log: Employees fetched
-        logToConsole("SUCCESS", "EMPLOYEES_FETCHED", {
-            count: employees.length,
-            adminId: req.user.adminId
+        // Get new assignments from EmployeeAssignment schema
+        const newAssignments = await EmployeeAssignment.find();
+
+        // Create map for quick lookup
+        const newMap = new Map();
+        newAssignments.forEach(ass => {
+            newMap.set(ass.employeeId, ass.assignedClients || []);
         });
 
-        // Create activity log for listing employees
-        await ActivityLog.create({
-            userName: req.user.name,
-            role: "ADMIN",
-            adminId: req.user.adminId,
-            action: "EMPLOYEES_LISTED",
-            details: `Admin listed all employees (${employees.length} employees)`,
-            dateTime: new Date()  // FIXED: Use Date object instead of String
+        // Combine data - frontend still sees only "assignedClients"
+        const finalEmployees = employees.map(emp => {
+            const empObj = emp.toObject();
+            const oldList = empObj.assignedClients || [];
+            const newList = newMap.get(emp.employeeId) || [];
+
+            // Combine both into assignedClients (what frontend expects)
+            empObj.assignedClients = [...oldList, ...newList];
+
+            return empObj;
         });
 
-        // Console log: Activity log created
-        logToConsole("INFO", "ACTIVITY_LOG_CREATED", {
-            action: "EMPLOYEES_LISTED",
-            adminId: req.user.adminId,
-            employeeCount: employees.length
-        });
+        res.json(finalEmployees);
 
-        res.json(employees);
-
-        // Console log: Request completed
-        logToConsole("INFO", "LIST_EMPLOYEES_COMPLETE", {
-            count: employees.length,
-            status: "success",
-            adminId: req.user.adminId
-        });
     } catch (error) {
-        // Console log: Error occurred
-        logToConsole("ERROR", "LIST_EMPLOYEES_FAILED", {
-            error: error.message,
-            stack: error.stack,
-            adminId: req.user?.adminId
-        });
-
-        res.status(500).json({
-            message: "Error fetching employees",
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
-        });
+        console.error("Error in /all:", error);
+        res.status(500).json({ message: "Error fetching employees" });
     }
 });
-
 /* ===============================
    UPDATE EMPLOYEE (ADMIN ONLY)
 ================================ */
