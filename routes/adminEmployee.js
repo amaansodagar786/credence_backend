@@ -932,167 +932,113 @@ router.get("/check-client-documents/:clientId", auth, async (req, res) => {
 });
 
 
-/* ===============================
-   REMOVE ASSIGNMENT (UPDATED FOR TASK-SPECIFIC REMOVAL)
-   NOW WITH DUAL UPDATE TO NEW COLLECTION
-================================ */
 router.delete("/remove-assignment", auth, async (req, res) => {
     const { clientId, employeeId, year, month, task } = req.body;
 
     if (!clientId || !employeeId || !year || !month || !task) {
-        logToConsole("WARN", "REMOVE_ASSIGNMENT_MISSING_FIELDS", {
-            ...req.body,
-            adminId: req.user.adminId
-        });
         return res.status(400).json({
             message: "Missing required fields: clientId, employeeId, year, month, task"
         });
     }
 
     try {
-        logToConsole("INFO", "REMOVE_TASK_ASSIGNMENT_REQUEST", {
-            adminId: req.user.adminId,
-            adminName: req.user.name,
-            clientId,
-            employeeId,
-            year,
-            month,
-            task
-        });
-
         const numericYear = parseInt(year);
         const numericMonth = parseInt(month);
 
+        // Fetch client
         const client = await Client.findOne({ clientId });
         if (!client) {
-            logToConsole("WARN", "CLIENT_NOT_FOUND_FOR_REMOVAL", { clientId, adminId: req.user.adminId });
             return res.status(404).json({ message: "Client not found" });
         }
 
+        // Fetch employee (old schema)
         const employee = await Employee.findOne({ employeeId });
-        if (!employee) {
-            logToConsole("WARN", "EMPLOYEE_NOT_FOUND_FOR_REMOVAL", { employeeId, adminId: req.user.adminId });
-            return res.status(404).json({ message: "Employee not found" });
-        }
 
-        const clientAssignment = client.employeeAssignments.find(
-            a => a.year === numericYear && a.month === numericMonth && a.employeeId === employeeId && a.task === task && !a.isRemoved
-        );
+        // Fetch new schema
+        const newDoc = await EmployeeAssignment.findOne({ employeeId });
 
-        if (!clientAssignment) {
-            logToConsole("WARN", "TASK_ASSIGNMENT_NOT_FOUND_IN_CLIENT", { clientId, employeeId, year: numericYear, month: numericMonth, task, adminId: req.user.adminId });
-            return res.status(404).json({ message: `Task "${task}" assignment not found for specified employee` });
-        }
+        let removed = false;
 
-        if (clientAssignment.accountingDone) {
-            logToConsole("WARN", "CANNOT_REMOVE_DONE_TASK", { clientId, employeeId, task, adminId: req.user.adminId });
-            return res.status(400).json({ message: `Cannot remove "${task}" assignment because it's already marked as DONE` });
-        }
-
-        const employeeAssignment = employee.assignedClients.find(
-            a => a.clientId === clientId && a.year === numericYear && a.month === numericMonth && a.task === task && !a.isRemoved
-        );
-
-        if (!employeeAssignment) {
-            logToConsole("WARN", "TASK_ASSIGNMENT_NOT_FOUND_IN_EMPLOYEE", { clientId, employeeId, year: numericYear, month: numericMonth, task, adminId: req.user.adminId });
-            return res.status(404).json({ message: `Task "${task}" assignment not found in employee records` });
-        }
-
-        // Save to history
-        try {
-            const removalDate = new Date();
-            const originallyAssignedAt = clientAssignment.assignedAt;
-            const durationDays = originallyAssignedAt ? Math.floor((removalDate - originallyAssignedAt) / (1000 * 60 * 60 * 24)) : null;
-            await RemovedAssignment.create({
-                clientId, clientName: client.name, employeeId, employeeName: employee.name,
-                year: numericYear, month: numericMonth, task: task,
-                originallyAssignedAt: clientAssignment.assignedAt, originallyAssignedBy: clientAssignment.assignedBy,
-                adminName: clientAssignment.adminName, removedAt: removalDate, removedBy: req.user.adminId,
-                removerName: req.user.name, removalReason: `Admin removed "${task}" assignment`,
-                wasAccountingDone: clientAssignment.accountingDone, durationDays,
-                notes: `Task "${task}" removed by admin ${req.user.name}`
-            });
-        } catch (historyError) {
-            logToConsole("ERROR", "REMOVED_TASK_ASSIGNMENT_HISTORY_FAILED", { error: historyError.message });
-        }
-
-        // Mark as removed in CLIENT
-        clientAssignment.isRemoved = true;
-        clientAssignment.removedAt = new Date();
-        clientAssignment.removedBy = req.user.adminId;
-        clientAssignment.removalReason = `Admin removed "${task}" assignment`;
-        await client.save();
-
-        // Mark as removed in EMPLOYEE (OLD COLLECTION)
-        employeeAssignment.isRemoved = true;
-        employeeAssignment.removedAt = new Date();
-        employeeAssignment.removedBy = req.user.adminId;
-        employeeAssignment.removalReason = `Admin removed "${task}" assignment`;
-        await employee.save();
-
-        // ===== [NEW] ALSO UPDATE NEW COLLECTION =====
-        try {
-            const EmployeeAssignment = require("../models/EmployeeAssignment");
-            await EmployeeAssignment.updateOne(
-                { employeeId: employee.employeeId },
-                {
-                    $set: {
-                        "assignedClients.$[elem].isRemoved": true,
-                        "assignedClients.$[elem].removedAt": new Date(),
-                        "assignedClients.$[elem].removedBy": req.user.adminId,
-                        "assignedClients.$[elem].removalReason": `Admin removed "${task}" assignment`
-                    }
-                },
-                {
-                    arrayFilters: [{
-                        "elem.clientId": clientId,
-                        "elem.year": numericYear,
-                        "elem.month": numericMonth,
-                        "elem.task": task
-                    }]
-                }
+        // === CHECK AND REMOVE FROM OLD SCHEMA (Employee.assignedClients) ===
+        if (employee) {
+            const oldIndex = employee.assignedClients.findIndex(
+                a => a.clientId === clientId &&
+                    a.year === numericYear &&
+                    a.month === numericMonth &&
+                    a.task === task &&
+                    !a.isRemoved
             );
-            logToConsole("INFO", "NEW_COLLECTION_UPDATE_SUCCESS", { employeeId: employee.employeeId, task });
-        } catch (newErr) {
-            logToConsole("WARN", "NEW_COLLECTION_UPDATE_FAILED", { error: newErr.message, employeeId: employee.employeeId });
+
+            if (oldIndex !== -1) {
+                if (employee.assignedClients[oldIndex].accountingDone) {
+                    return res.status(400).json({
+                        message: `Cannot remove "${task}" assignment because it's already marked as DONE`
+                    });
+                }
+                employee.assignedClients[oldIndex].isRemoved = true;
+                employee.assignedClients[oldIndex].removedAt = new Date();
+                employee.assignedClients[oldIndex].removedBy = req.user.adminId;
+                await employee.save();
+                removed = true;
+            }
         }
 
-        // Activity log
-        await ActivityLog.create({
-            userName: req.user.name, role: "ADMIN", adminId: req.user.adminId,
-            employeeId, employeeName: employee.name, clientId, clientName: client.name,
-            action: "TASK_ASSIGNMENT_REMOVED",
-            details: `Task "${task}" assignment removed: Employee "${employee.name}" from client "${client.name}" (${numericYear}-${numericMonth.toString().padStart(2, '0')})`,
-            dateTime: new Date(), metadata: { task, year: numericYear, month: numericMonth, wasAccountingDone: false }
-        });
+        // === CHECK AND REMOVE FROM NEW SCHEMA (EmployeeAssignment) ===
+        if (newDoc) {
+            const newIndex = newDoc.assignedClients.findIndex(
+                a => a.clientId === clientId &&
+                    a.year === numericYear &&
+                    a.month === numericMonth &&
+                    a.task === task &&
+                    !a.isRemoved
+            );
 
-        // Send email
-        try {
-            await sendEmail(employee.email, `Task Assignment Removed: ${task}`, `
-                <p>Hello ${employee.name},</p>
-                <p>Your task assignment has been removed by admin.</p>
-                <p><b>Task:</b> ${task}</p>
-                <p><b>Client:</b> ${client.name}</p>
-                <p><b>Period:</b> ${numericYear}-${numericMonth.toString().padStart(2, '0')}</p>
-                <p><b>Removed By:</b> ${req.user.name}</p>
-                <p><b>Removed At:</b> ${new Date().toLocaleString("en-IN")}</p>
-            `);
-        } catch (emailError) {
-            logToConsole("WARN", "EMAIL_FAILED", { error: emailError.message });
+            if (newIndex !== -1) {
+                if (newDoc.assignedClients[newIndex].accountingDone) {
+                    return res.status(400).json({
+                        message: `Cannot remove "${task}" assignment because it's already marked as DONE`
+                    });
+                }
+                newDoc.assignedClients[newIndex].isRemoved = true;
+                newDoc.assignedClients[newIndex].removedAt = new Date();
+                newDoc.assignedClients[newIndex].removedBy = req.user.adminId;
+                await newDoc.save();
+                removed = true;
+            }
+        }
+
+        // === REMOVE FROM CLIENT (always required) ===
+        const clientIndex = client.employeeAssignments.findIndex(
+            a => a.year === numericYear &&
+                a.month === numericMonth &&
+                a.employeeId === employeeId &&
+                a.task === task &&
+                !a.isRemoved
+        );
+
+        if (clientIndex !== -1) {
+            client.employeeAssignments[clientIndex].isRemoved = true;
+            client.employeeAssignments[clientIndex].removedAt = new Date();
+            client.employeeAssignments[clientIndex].removedBy = req.user.adminId;
+            await client.save();
+            removed = true;
+        }
+
+        if (!removed) {
+            return res.status(404).json({
+                message: `Task "${task}" assignment not found`
+            });
         }
 
         res.json({
-            message: `Task "${task}" assignment removed successfully`,
-            data: {
-                clientId, clientName: client.name, employeeId, employeeName: employee.name,
-                year: numericYear, month: numericMonth, task,
-                removedAt: new Date(), removedBy: req.user.name,
-                remainingTasksForMonth: client.employeeAssignments.filter(a => a.year === numericYear && a.month === numericMonth && !a.isRemoved).length
-            }
+            message: `Task "${task}" assignment removed successfully`
         });
+
     } catch (error) {
-        logToConsole("ERROR", "REMOVE_TASK_ASSIGNMENT_FAILED", { error: error.message, stack: error.stack, adminId: req.user?.adminId, requestBody: req.body });
-        res.status(500).json({ message: "Error removing task assignment", error: process.env.NODE_ENV === "development" ? error.message : undefined });
+        console.error("Error removing assignment:", error);
+        res.status(500).json({
+            message: "Error removing task assignment"
+        });
     }
 });
 
