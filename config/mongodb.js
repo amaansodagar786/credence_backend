@@ -5,7 +5,7 @@ const connectDB = async () => {
   try {
     await mongoose.connect(
       // "mongodb://admin:Admin%402025@93.127.167.226:27017/credencetransferdb1704?authSource=admin&authMechanism=SCRAM-SHA-256",  
-      "mongodb://admin:Admin%402025@187.77.66.6:27017/credencetransferdb0505?authSource=admin&authMechanism=SCRAM-SHA-256",
+      "mongodb://admin:Admin%402025@187.77.66.6:27017/credencetransferdb050526?authSource=admin&authMechanism=SCRAM-SHA-256",
       // {
       //   useNewUrlParser: true,
       //   useUnifiedTopology: true
