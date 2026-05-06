@@ -6,6 +6,8 @@ const Client = require("../models/Client");
 const Employee = require("../models/Employee");
 const ActivityLog = require("../models/ActivityLog");
 const FinancialStatementRequest = require("../models/FinancialStatementRequest");
+const ClientMonthlyData = require("../models/ClientMonthlyData");
+
 
 const router = express.Router();
 
