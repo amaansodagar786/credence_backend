@@ -1733,9 +1733,6 @@ router.get("/dashboard/client-notes/:clientId", auth, async (req, res) => {
 
 
 
-/* ===============================
-   9. GET CLIENTS WITH UPLOADED DOCS BUT MONTH LOCKED - UPDATED FOR BOTH COLLECTIONS
-================================ */
 router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
     try {
         const { timeFilter = 'this_month', customStart, customEnd } = req.query;
@@ -1744,11 +1741,10 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
         logToConsole("INFO", "UPLOADED_BUT_LOCKED_REQUEST", {
             adminId: req.user.adminId,
             timeFilter,
-            customStart,
-            customEnd,
             monthsCount: dateRange.months.length
         });
 
+        // ✅ OPTIMIZATION 1: Get ALL clients in ONE query
         const allClients = await Client.find(
             { isActive: true },
             {
@@ -1760,127 +1756,94 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
             }
         ).lean();
 
+        // ✅ OPTIMIZATION 2: Get ALL new collection data in ONE query
+        const allClientIds = allClients.map(c => c.clientId);
+        const allNewDocs = await ClientMonthlyData.find(
+            { clientId: { $in: allClientIds } },
+            { clientId: 1, months: 1 }
+        ).lean();
+
+        // Create a MAP for O(1) lookup
+        const newDocsMap = new Map();
+        allNewDocs.forEach(doc => {
+            newDocsMap.set(doc.clientId, doc);
+        });
+
         const monthsData = [];
 
-        // Helper function to check if month has any files
+        // Helper functions (same as before)
         const hasAnyFiles = (monthData) => {
             if (!monthData) return false;
-
             let hasFile = false;
-
             ['sales', 'purchase', 'bank'].forEach(category => {
                 const categoryData = monthData[category];
-                if (categoryData?.files && categoryData.files.length > 0) {
-                    hasFile = true;
-                }
+                if (categoryData?.files && categoryData.files.length > 0) hasFile = true;
             });
-
             if (monthData.other && Array.isArray(monthData.other)) {
                 monthData.other.forEach(otherCategory => {
-                    if (otherCategory.document?.files && otherCategory.document.files.length > 0) {
-                        hasFile = true;
-                    }
+                    if (otherCategory.document?.files && otherCategory.document.files.length > 0) hasFile = true;
                 });
             }
-
             return hasFile;
         };
 
-        // Helper function to count total files
         const countTotalFiles = (monthData) => {
             if (!monthData) return 0;
             let count = 0;
-
             ['sales', 'purchase', 'bank'].forEach(category => {
                 const categoryData = monthData[category];
-                if (categoryData?.files) {
-                    count += categoryData.files.length;
-                }
+                if (categoryData?.files) count += categoryData.files.length;
             });
-
             if (monthData.other && Array.isArray(monthData.other)) {
                 monthData.other.forEach(otherCategory => {
-                    if (otherCategory.document?.files) {
-                        count += otherCategory.document.files.length;
-                    }
+                    if (otherCategory.document?.files) count += otherCategory.document.files.length;
                 });
             }
-
             return count;
         };
 
-        // Helper to get month data from BOTH collections
-        const getMonthDataFromBoth = async (clientId, year, month) => {
-            // 1. FIRST: Check NEW ClientMonthlyData collection
-            try {
-                const ClientMonthlyData = require("../models/ClientMonthlyData");
-                const newDoc = await ClientMonthlyData.findOne({ clientId });
-                if (newDoc && newDoc.months && newDoc.months.length > 0) {
-                    const foundMonth = newDoc.months.find(m => m.year === year && m.month === month);
-                    if (foundMonth) {
-                        return { data: foundMonth, source: 'new' };
-                    }
-                }
-            } catch (err) {
-                logToConsole("WARN", "ERROR_CHECKING_NEW_COLLECTION_LOCKED", { error: err.message, clientId, year, month });
-            }
-
-            // 2. SECOND: Check OLD client.documents
-            const client = await Client.findOne({ clientId }).lean();
-            if (client && client.documents) {
-                const yearKey = String(year);
-                const monthKey = String(month);
-                const oldMonthData = client.documents?.[yearKey]?.[monthKey];
-                if (oldMonthData) {
-                    return { data: oldMonthData, source: 'old' };
-                }
-            }
-
-            return null;
-        };
-
+        // ✅ OPTIMIZATION 3: Process all clients WITHOUT individual DB calls
         for (const monthInfo of dateRange.months) {
             const monthClients = [];
 
             for (const client of allClients) {
-                try {
-                    // Get month data from BOTH collections
-                    const monthResult = await getMonthDataFromBoth(client.clientId, monthInfo.year, monthInfo.month);
+                let foundMonthData = null;
+                let source = null;
 
-                    if (monthResult && monthResult.data) {
-                        const monthData = monthResult.data;
-                        const source = monthResult.source;
+                // Check NEW collection using MAP (NO DATABASE CALL!)
+                const newDoc = newDocsMap.get(client.clientId);
+                if (newDoc && newDoc.months) {
+                    foundMonthData = newDoc.months.find(m => m.year === monthInfo.year && m.month === monthInfo.month);
+                    if (foundMonthData) source = 'new';
+                }
 
-                        if (monthData.isLocked === true && hasAnyFiles(monthData)) {
-                            const fileCount = countTotalFiles(monthData);
+                // Check OLD collection (already in memory - NO DATABASE CALL!)
+                if (!foundMonthData && client.documents) {
+                    const yearKey = String(monthInfo.year);
+                    const monthKey = String(monthInfo.month);
+                    foundMonthData = client.documents?.[yearKey]?.[monthKey];
+                    if (foundMonthData) source = 'old';
+                }
 
-                            monthClients.push({
-                                clientId: client.clientId,
-                                name: client.name,
-                                email: client.email,
-                                phone: client.phone || "N/A",
-                                lockedAt: monthData.lockedAt || null,
-                                lockedBy: monthData.lockedBy || "Unknown",
-                                totalFiles: fileCount,
-                                source: source,
-                                isLocked: monthData.isLocked
-                            });
-                        }
-                    }
-                } catch (err) {
-                    logToConsole("ERROR", "PROCESS_CLIENT_FOR_MONTH_FAILED", {
-                        error: err.message,
+                if (foundMonthData && foundMonthData.isLocked === true && hasAnyFiles(foundMonthData)) {
+                    const fileCount = countTotalFiles(foundMonthData);
+                    monthClients.push({
                         clientId: client.clientId,
-                        month: `${monthInfo.year}-${monthInfo.month}`
+                        name: client.name,
+                        email: client.email,
+                        phone: client.phone || "N/A",
+                        lockedAt: foundMonthData.lockedAt || null,
+                        lockedBy: foundMonthData.lockedBy || "Unknown",
+                        totalFiles: fileCount,
+                        source: source,
+                        isLocked: foundMonthData.isLocked
                     });
                 }
             }
 
-            // Remove duplicates (same client from both collections) - keep the one from NEW collection
+            // Remove duplicates (NEW collection takes priority)
             const uniqueClients = [];
             const seenClientIds = new Set();
-
-            // Process NEW collection first (priority)
             const newCollectionClients = monthClients.filter(c => c.source === 'new');
             const oldCollectionClients = monthClients.filter(c => c.source === 'old');
 
@@ -1890,7 +1853,6 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
                     uniqueClients.push(client);
                 }
             }
-
             for (const client of oldCollectionClients) {
                 if (!seenClientIds.has(client.clientId)) {
                     seenClientIds.add(client.clientId);
@@ -1901,7 +1863,6 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
             if (uniqueClients.length > 0) {
                 const monthName = new Date(monthInfo.year, monthInfo.month - 1, 1)
                     .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-
                 monthsData.push({
                     year: monthInfo.year,
                     month: monthInfo.month,
@@ -1914,6 +1875,7 @@ router.get("/dashboard/uploaded-but-locked", auth, async (req, res) => {
 
         const totalClients = monthsData.reduce((sum, month) => sum + month.count, 0);
 
+        // Activity logging (same as before)
         try {
             await ActivityLog.create({
                 userName: req.user.name,
